@@ -1,15 +1,23 @@
-import { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { 
-    AlertCircle, 
     Facebook, 
     Check, 
     Copy, 
@@ -17,23 +25,31 @@ import {
     Database, 
     Settings, 
     Trash2, 
-    CreditCard, 
     Gift,
-    Sparkles,
-    Users,
-    FileText
+    FileText,
+    Terminal
 } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 import { useMessenger } from "@/context/MessengerContext";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
+    MESSENGER_MOBILE_CALLBACK_KEY,
+    MESSENGER_MOBILE_FLOW_STATE_KEY,
+    beginMessengerMobileOAuth,
+    consumeCallbackPayload,
+    readFlowState,
+    getMessengerMobileRedirectUri,
+    clearFlowState,
+} from "@/lib/facebookMobileAuth";
+import { secureFetch } from "@/lib/api";
 import { logFrontendError } from "../../../lib/logger";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // --- Types & Interfaces ---
 
 interface FacebookPage {
     id: string;
     name: string;
-    access_token: string;
+    access_token?: string;
     tasks?: string[];
 }
 
@@ -60,16 +76,29 @@ declare global {
 }
 
 // --- Constants ---
+interface ConnectionLog {
+    timestamp: string;
+    type: 'info' | 'success' | 'error' | 'warning';
+    action: string;
+    message: string;
+    details?: any;
+}
+
 
 export default function MessengerIntegrationPage() {
     const navigate = useNavigate();
+    const { platform } = useParams();
+    const isInstagram = platform === 'instagram';
+    const platformName = isInstagram ? 'Instagram' : 'Messenger';
+    const channelName = isInstagram ? 'Instagram' : 'Facebook';
+    const controlPath = isInstagram ? '/dashboard/instagram/control' : '/dashboard/messenger/control';
+    const isMobile = useIsMobile();
     const { 
         refreshPages, 
         pages: contextPages, 
         isTeamMember, 
         activeTeam, 
-        viewMode, 
-        switchViewMode 
+        viewMode
     } = useMessenger();
     
     // --- State ---
@@ -77,7 +106,7 @@ export default function MessengerIntegrationPage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [connecting, setConnecting] = useState(false);
-    const [copySuccess, setCopySuccess] = useState(false);
+    const mobileCallbackProcessedRef = useRef(false);
 
     // Direct Connect State
     const [directPageName, setDirectPageName] = useState("");
@@ -85,6 +114,16 @@ export default function MessengerIntegrationPage() {
     const [directAccessToken, setDirectAccessToken] = useState("");
     const [directLoading, setDirectLoading] = useState(false);
     const [isManualSetupOpen, setIsManualSetupOpen] = useState(false);
+    const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
+
+    // Logs State
+    const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([]);
+    const [isLogsOpen, setIsLogsOpen] = useState(false);
+    
+    // Webhook Monitor State
+    const [webhookLogs, setWebhookLogs] = useState<any[]>([]);
+    const [isWebhookMonitorOpen, setIsWebhookMonitorOpen] = useState(false);
+    const [isFetchingWebhooks, setIsFetchingWebhooks] = useState(false);
 
     // Subscription Modal State - DEPRECATED/REMOVED
     // const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
@@ -113,7 +152,7 @@ export default function MessengerIntegrationPage() {
                 appId      : import.meta.env.VITE_FACEBOOK_APP_ID || 'YOUR_APP_ID_HERE',
                 cookie     : true,
                 xfbml      : true,
-                version    : 'v19.0'
+                version    : 'v25.0'
             });
         };
 
@@ -143,12 +182,21 @@ export default function MessengerIntegrationPage() {
 
     // --- Helper Functions ---
 
+    const addLog = (type: ConnectionLog['type'], action: string, message: string, details?: any) => {
+        const newLog: ConnectionLog = {
+            timestamp: new Date().toISOString(),
+            type,
+            action,
+            message,
+            details
+        };
+        setConnectionLogs(prev => [newLog, ...prev].slice(0, 50)); // Keep last 50 logs
+    };
+
     const copyWebhook = () => {
         const webhookUrl = `${BACKEND_URL}/webhook`;
         navigator.clipboard.writeText(webhookUrl);
-        setCopySuccess(true);
         toast.success("Webhook URL copied!");
-        setTimeout(() => setCopySuccess(false), 2000);
     };
 
     const fetchPages = async () => {
@@ -157,88 +205,67 @@ export default function MessengerIntegrationPage() {
         setLoading(false);
     };
 
-    const subscribeAppToPage = (pageId: string, accessToken: string, fields: string[] = []) => {
-        return new Promise((resolve) => {
-            // Add timeout to prevent hanging
-            const timeoutId = setTimeout(() => {
-                console.error(`Timeout subscribing app to page ${pageId}`);
-                resolve({ success: false, error: 'timeout' });
-            }, 10000); // 10 seconds timeout
-
-            // Extended Fields for Professional Bot & Handover Protocol
-            const defaultFields = [
-                'messages', 
-                'messaging_postbacks', 
-                'messaging_optins', 
-                'message_deliveries', 
-                'message_reads', 
-                'messaging_referrals', 
-                'standby', // Critical for Handover Protocol
-                'feed', 
-                'changes'
-            ];
+    const fetchWebhookLogs = async () => {
+        setIsWebhookMonitorOpen(true);
+        setIsFetchingWebhooks(true);
+        try {
+            const token = localStorage.getItem("auth_token");
+            const activePageId = localStorage.getItem("active_fb_page_id");
             
-            const targetFields = fields.length > 0 ? fields : defaultFields;
-            const fieldsStr = targetFields.join(',');
+            let url = `${BACKEND_URL}/api/webhook/monitor`;
+            if (activePageId) {
+                url += `?sourceId=${activePageId}`;
+            }
 
-            // Try using SDK FIRST to avoid CORS issues on client side
-            if (window.FB) {
-                 window.FB.api(
-                    `/${pageId}/subscribed_apps`,
-                    'post',
-                    {
-                        access_token: accessToken,
-                        subscribed_fields: fieldsStr // Send as string for compatibility
-                    },
-                    function(response: any) {
-                        clearTimeout(timeoutId);
-                        if (!response || response.error) {
-                            console.warn('SDK Subscription failed, trying direct fetch:', response?.error);
-                            
-                            // Fallback to Direct Fetch
-                            fetch(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps?access_token=${accessToken}&subscribed_fields=${fieldsStr}`, {
-                                method: 'POST'
-                            })
-                            .then(res => res.json())
-                            .then(data => {
-                                if (data.error) {
-                                    resolve({ error: data.error });
-                                } else {
-                                    console.log('Direct fetch successfully subscribed app to page:', data);
-                                    resolve({ success: true });
-                                }
-                            })
-                            .catch(err => {
-                                resolve({ error: err.message });
-                            });
-
-                        } else {
-                            console.log('SDK Successfully subscribed app to page:', response);
-                            resolve(response);
-                        }
-                    }
-                );
+            const res = await fetch(url, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setWebhookLogs(data.logs || []);
             } else {
-                // Fallback if SDK not ready
-                fetch(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps?access_token=${accessToken}&subscribed_fields=${fieldsStr}`, {
-                    method: 'POST'
+                toast.error("Failed to fetch webhook logs");
+            }
+        } catch (error) {
+            console.error("Error fetching webhook logs:", error);
+            toast.error("Network error fetching webhooks");
+        } finally {
+            setIsFetchingWebhooks(false);
+        }
+    };
+
+    // Auto-refresh effect for Webhook Monitor
+    useEffect(() => {
+        let interval: any;
+        if (isWebhookMonitorOpen) {
+            interval = setInterval(() => {
+                const token = localStorage.getItem("auth_token");
+                const activePageId = localStorage.getItem("active_fb_page_id");
+                
+                let url = `${BACKEND_URL}/api/webhook/monitor`;
+                if (activePageId) {
+                    url += `?sourceId=${activePageId}`;
+                }
+
+                secureFetch(url, {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
                 })
                 .then(res => res.json())
                 .then(data => {
-                    clearTimeout(timeoutId);
-                    if (data.error) {
-                        resolve({ error: data.error });
-                    } else {
-                        resolve({ success: true });
-                    }
+                    setWebhookLogs(data.logs || []);
                 })
-                .catch(err => {
-                    clearTimeout(timeoutId);
-                    resolve({ error: err.message });
-                });
-            }
-        });
-    };
+                .catch(err => console.warn("Auto-refresh failed:", err));
+            }, 3000); // 3 seconds interval
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isWebhookMonitorOpen]);
+
 
     const unsubscribeAppFromPage = (pageId: string, accessToken: string) => {
         return new Promise((resolve) => {
@@ -288,16 +315,10 @@ export default function MessengerIntegrationPage() {
         });
     };
 
-    const savePagesToBackend = async (facebookPages: FacebookPage[]) => {
+    const savePagesToBackend = async (facebookPages: FacebookPage[], userAccessToken?: string) => {
+        console.log('🔍 [DEBUG] savePagesToBackend starting with pages:', facebookPages);
         if (!userEmail) {
             toast.error("User email not found. Please reload.");
-            setConnecting(false);
-            return;
-        }
-
-        const isGmail = userEmail.toLowerCase().endsWith('@gmail.com');
-        if (!isGmail) {
-            toast.error("Integration is restricted to Gmail accounts only for security.");
             setConnecting(false);
             return;
         }
@@ -310,83 +331,19 @@ export default function MessengerIntegrationPage() {
         }
 
         let successCount = 0;
-        for (const page of facebookPages) {
+        let skippedTokenlessCount = 0;
+        for (const [index, page] of facebookPages.entries()) {
+            console.log(`🔄 [DEBUG] Processing page ${index + 1}/${facebookPages.length}:`, page.name, page.id);
+            if (!page.access_token) {
+                skippedTokenlessCount++;
+                addLog('warning', 'Page Token', `Skipping ${page.name || page.id} because Meta did not return a Page access token`, { pageId: page.id, tasks: page.tasks });
+                continue;
+            }
+
             try {
                 let dbId: number | null = null;
 
-                // 1.5 Subscribe App to Page (Critical for Webhooks/n8n)
-                try {
-                    console.log(`Attempting to subscribe app to page ${page.name}...`);
-                    
-                    // Define Field Sets
-                    // 'messaging_referrals' requires special permission, 'feed' requires pages_manage_posts
-                    // REMOVED 'changes' as it causes (#100) Param subscribed_fields error
-                    const allFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'messaging_optins', 'messaging_referrals', 'feed', 'standby', 'message_echoes'];
-                    const basicFields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes'];
-
-                    // Attempt 1: Try ALL Fields
-                    let subResult: any = await subscribeAppToPage(page.id, page.access_token, allFields);
-                    
-                    // Attempt 2: Fallback to BASIC Fields if first attempt failed
-                    if (subResult?.error) {
-                         console.warn(`Full subscription failed for ${page.name}:`, subResult.error);
-                         
-                         // Silent Log to Backend (User requested NO TOAST on frontend for this retry)
-                         logFrontendError({
-                            message: `Full connection failed (${subResult.error.message || subResult.error.code}). Retrying with basic chat features...`,
-                            context: 'MessengerIntegrationPage:subscribeAppToPage:Retry',
-                            pageName: page.name,
-                            pageId: page.id
-                         });
-                         
-                         // Retry with minimal fields
-                         subResult = await subscribeAppToPage(page.id, page.access_token, basicFields);
-                    }
-
-                    if (subResult?.error) {
-                        // Final Failure
-                        console.error(`Basic subscription failed for ${page.name}`, subResult.error);
-                        
-                        // Log to Backend
-                        logFrontendError({
-                            message: `Subscription Failed for ${page.name}: ${JSON.stringify(subResult.error)}`,
-                            context: 'MessengerIntegrationPage:subscribeAppToPage',
-                            pageName: page.name,
-                            pageId: page.id
-                        });
-
-                        toast.error(`${page.name}: Connection Failed. ${subResult.error.message || 'Check Permissions'}`);
-                    } else {
-                        console.log(`Subscribed app to page ${page.name}`);
-                        
-                        // VERIFY SUBSCRIPTION FROM SOURCE
-                        try {
-                            const verifySub = await fetch(`https://graph.facebook.com/v19.0/${page.id}/subscribed_apps?access_token=${page.access_token}`);
-                            const verifyData = await verifySub.json();
-                            console.log(`[Verify] Subscribed Apps for ${page.name}:`, verifyData);
-                            
-                            if (verifyData.data && verifyData.data.length > 0) {
-                                toast.success(`${page.name}: Connected Successfully!`);
-                            } else {
-                                toast.success(`${page.name}: Connected (Verification Pending)`);
-                            }
-                        } catch (vErr) {
-                            console.warn('Verification check failed:', vErr);
-                            // Assume success if fetch failed (network issue) but subscribe returned success
-                            toast.success(`${page.name}: Connected (Verification Skipped)`);
-                        }
-                    }
-                } catch (subError: any) {
-                    console.error(`Failed to subscribe app to page ${page.name}`, subError);
-                    logFrontendError({
-                        message: `Subscription Exception: ${subError.message}`,
-                        stack: subError.stack,
-                        context: 'MessengerIntegrationPage:subscribeAppToPage:Exception',
-                        pageName: page.name,
-                        pageId: page.id
-                    });
-                }
-
+                console.log(`✅ [DEBUG] Sending page data to backend for authoritative subscription...`);
                 const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
                     method: "POST",
                     headers: {
@@ -397,15 +354,18 @@ export default function MessengerIntegrationPage() {
                         page_id: page.id,
                         name: page.name,
                         page_access_token: page.access_token,
+                        user_access_token: userAccessToken,
                         email: userEmail,
                         user_id: userId,
                     }),
                 });
 
+                console.log(`✅ [DEBUG] Backend response status:`, res.status);
                 const body = await res.json().catch(() => ({}));
+                console.log(`✅ [DEBUG] Backend response body:`, body);
                 if (!res.ok) {
                     const msg = body.error || "Failed to save page";
-                    console.error(`Error saving page ${page.name}:`, msg);
+                    console.error(`❌ [DEBUG] Error saving page ${page.name}:`, msg);
                     toast.error(`DB Error (${page.name}): ${msg}`);
                     logFrontendError({
                         message: `Backend Save Error: ${msg}`,
@@ -422,8 +382,9 @@ export default function MessengerIntegrationPage() {
                 }
 
                 successCount++;
+                console.log(`✅ [DEBUG] Page ${page.name} successfully processed! Total success so far: ${successCount}`);
             } catch (err: any) {
-                console.error(`Failed to process page ${page.name}`, err);
+                console.error(`❌ [DEBUG] Critical exception processing page ${page.name}`, err);
                 logFrontendError({
                     message: `Process Page Exception: ${err.message}`,
                     stack: err.stack,
@@ -437,24 +398,179 @@ export default function MessengerIntegrationPage() {
         if (successCount > 0) {
             toast.success(`Successfully connected ${successCount} pages!`);
             fetchPages();
+        } else if (skippedTokenlessCount > 0) {
+            toast.error("Meta returned pages without Page access tokens. Assign yourself Page access/tasks in Business Settings, then reconnect.");
         } else {
             toast.error("Failed to connect pages.");
         }
     };
 
+    const handleMessengerMobileCallback = async (code: string) => {
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+            toast.error("Please login again");
+            return;
+        }
+
+        setConnecting(true);
+        try {
+            const response = await secureFetch(`${BACKEND_URL}/api/auth/facebook/messenger/complete-code`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    code,
+                    redirectUri: getMessengerMobileRedirectUri(),
+                }),
+            });
+
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || data.details?.error?.message || "Failed to complete Facebook login.");
+            }
+
+            const facebookPages = Array.isArray(data.pages) ? data.pages : [];
+            if (facebookPages.length === 0) {
+                throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
+            }
+
+            await savePagesToBackend(facebookPages, data.access_token);
+        } catch (error: any) {
+            console.error("Messenger mobile callback error:", error);
+            logFrontendError({
+                message: `Messenger Mobile Callback Error: ${error.message}`,
+                stack: error.stack,
+                context: "MessengerIntegrationPage:handleMessengerMobileCallback"
+            });
+            toast.error(error.message || "Failed to complete Facebook connection");
+        } finally {
+            setConnecting(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!userEmail || !userId || mobileCallbackProcessedRef.current) {
+            return;
+        }
+
+        const handleMobileMessage = (event: MessageEvent) => {
+            if (event.origin !== window.location.origin) return;
+            if (event.data?.type === "MESSENGER_MOBILE_CALLBACK_COMPLETE") {
+                const callbackPayload = consumeCallbackPayload(MESSENGER_MOBILE_CALLBACK_KEY);
+                if (callbackPayload) {
+                    if (callbackPayload.error || !callbackPayload.code) {
+                        toast.error(callbackPayload.errorDescription || "Facebook login was cancelled.");
+                        setConnecting(false);
+                    } else {
+                        void handleMessengerMobileCallback(callbackPayload.code);
+                    }
+                }
+            }
+        };
+
+        window.addEventListener("message", handleMobileMessage);
+
+        // POLLING FOR MOBILE OAUTH COMPLETION (Failsafe for App Hijacking)
+        let pollInterval: number | null = null;
+
+        const runPoll = async () => {
+            const flowState = readFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY);
+            if (!flowState?.state) return;
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/auth/facebook/poll?state=${flowState.state}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.completed) {
+                        console.log("Mobile Messenger OAuth completed via polling!");
+                        if (data.error) {
+                            toast.error(data.errorDescription || "Messenger connection failed.");
+                            setConnecting(false);
+                        } else if (data.code) {
+                            void handleMessengerMobileCallback(data.code);
+                        }
+                        if (pollInterval) window.clearInterval(pollInterval);
+                        pollInterval = null;
+                        clearFlowState(MESSENGER_MOBILE_FLOW_STATE_KEY); 
+                    }
+                }
+            } catch (e) {
+                // Silent poll error
+            }
+        };
+
+        if (isMobile) {
+            pollInterval = window.setInterval(runPoll, 3000);
+
+            // ACCELERATE POLLING ON FOCUS
+            const handleFocus = () => {
+                console.log("Messenger window focused, accelerating poll...");
+                void runPoll();
+            };
+            window.addEventListener("focus", handleFocus);
+            window.addEventListener("visibilitychange", handleFocus);
+            window.addEventListener("pageshow", handleFocus);
+
+            return () => {
+                window.removeEventListener("message", handleMobileMessage);
+                if (pollInterval) window.clearInterval(pollInterval);
+                window.removeEventListener("focus", handleFocus);
+                window.removeEventListener("visibilitychange", handleFocus);
+                window.removeEventListener("pageshow", handleFocus);
+            };
+        }
+
+        const callbackPayload = consumeCallbackPayload(MESSENGER_MOBILE_CALLBACK_KEY);
+        if (!callbackPayload) {
+            return;
+        }
+
+        mobileCallbackProcessedRef.current = true;
+
+        if (callbackPayload.error || !callbackPayload.code) {
+            toast.error(callbackPayload.errorDescription || "Facebook login was cancelled or blocked.");
+            setConnecting(false); // Ensure loading is reset
+            return;
+        }
+
+        void handleMessengerMobileCallback(callbackPayload.code);
+
+        return () => {
+            window.removeEventListener("message", handleMobileMessage);
+            if (pollInterval) window.clearInterval(pollInterval);
+        };
+    }, [userEmail, userId]);
+
     // --- Action Handlers ---
 
+    const startMessengerMobileConnect = () => {
+        setIsMobileConnectDialogOpen(false);
+        setConnecting(true);
+        beginMessengerMobileOAuth();
+    };
+
     const handleConnectFacebook = async () => {
+        if (isMobile) {
+            setIsMobileConnectDialogOpen(true);
+            return;
+        }
+
         if (!window.FB) {
+            addLog('error', 'SDK Check', 'Facebook SDK not loaded');
             toast.error("Facebook SDK not loaded yet. Please refresh or check your connection.");
             return;
         }
 
         if (!import.meta.env.VITE_FACEBOOK_APP_ID) {
+            addLog('warning', 'Config Check', 'VITE_FACEBOOK_APP_ID is missing');
             toast.warning("Facebook App ID not configured. Please set VITE_FACEBOOK_APP_ID in your environment variables.");
         }
 
         setConnecting(true);
+        setIsLogsOpen(true); // Open logs to show progress
+        addLog('info', 'FB Login', 'Initiating Facebook OAuth Login Popup...');
 
         try {
             const loginResponse: any = await new Promise((resolve, reject) => {
@@ -462,18 +578,21 @@ export default function MessengerIntegrationPage() {
                     if (response.authResponse) {
                         resolve(response);
                     } else {
-                        reject(new Error("User cancelled login or did not fully authorize."));
+                        reject(new Error('User cancelled login or did not fully authorize.'));
                     }
-                }, {scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content'});
+                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,business_management'});
             });
 
             console.log('Successfully logged in, exchanging token...');
+            addLog('success', 'FB Login', 'User authorized app successfully', { scopes: loginResponse.authResponse?.grantedScopes });
+            
             const shortLivedToken = loginResponse.authResponse.accessToken;
             let finalToken = shortLivedToken;
 
             // Exchange for Long-Lived Token via Backend
+            addLog('info', 'Token Exchange', 'Requesting long-lived token from backend...');
             try {
-                const exchangeResponse = await fetch(`${BACKEND_URL}/api/auth/facebook/exchange-token`, {
+                const exchangeResponse = await secureFetch(`${BACKEND_URL}/api/auth/facebook/exchange-token`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ shortLivedToken })
@@ -483,13 +602,16 @@ export default function MessengerIntegrationPage() {
                     const exchangeData = await exchangeResponse.json();
                     if (exchangeData.access_token) {
                         console.log('Obtained long-lived token');
+                        addLog('success', 'Token Exchange', 'Successfully received long-lived token');
                         finalToken = exchangeData.access_token;
                     } else {
                         console.warn('Backend returned no token:', exchangeData);
+                        addLog('warning', 'Token Exchange', 'Backend OK but no token in response', { data: exchangeData });
                     }
                 } else {
                     const errorText = await exchangeResponse.text();
                     console.warn('Backend exchange failed:', errorText);
+                    addLog('error', 'Token Exchange', `Exchange failed with status ${exchangeResponse.status}`, { responseText: errorText });
                     try {
                         const errorJson = JSON.parse(errorText);
                         toast.warning(`Token Exchange Failed: ${errorJson.error || 'Unknown Error'}`);
@@ -498,27 +620,47 @@ export default function MessengerIntegrationPage() {
                     }
                 }
 
-            } catch (err) {
+            } catch (err: any) {
                 console.error('Error contacting backend for token exchange:', err);
+                addLog('error', 'Token Exchange', 'Network error reaching backend for token exchange', { error: err.message });
                 toast.warning("Backend connection failed. Using short-lived token.");
             }
 
-            // Fetch User's Pages
-            const pageResponse: any = await new Promise((resolve, reject) => {
-                window.FB.api('/me/accounts', 'get', { access_token: finalToken }, (response: any) => {
-                    if (response && response.data) {
-                        resolve(response);
-                    } else {
-                        reject(response?.error || new Error("No pages found or permission denied."));
-                    }
-                });
+            addLog('info', 'Backend API', 'Resolving accessible pages, including Business Portfolio pages...');
+            const authToken = localStorage.getItem("auth_token");
+            if (!authToken) {
+                throw new Error("Please login again");
+            }
+
+            const pagesResponse = await secureFetch(`${BACKEND_URL}/api/auth/facebook/messenger/pages`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ access_token: finalToken })
+            });
+            const pageResolution = await pagesResponse.json().catch(() => ({}));
+            if (!pagesResponse.ok) {
+                throw new Error(pageResolution.error || 'Failed to resolve Facebook pages.');
+            }
+
+            const facebookPages: FacebookPage[] = Array.isArray(pageResolution.pages) ? pageResolution.pages : [];
+            if (facebookPages.length === 0) {
+                addLog('warning', 'Backend API', 'No accessible pages were resolved.', { diagnostics: pageResolution.diagnostics });
+                throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
+            }
+
+            addLog('success', 'Backend API', `Found ${facebookPages.length} pages`, {
+                pages: facebookPages.map((page) => page.name),
+                diagnostics: pageResolution.diagnostics
             });
 
-            console.log('Pages fetched:', pageResponse);
-            await savePagesToBackend(pageResponse.data);
+            await savePagesToBackend(facebookPages, finalToken);
 
         } catch (error: any) {
             console.error("Facebook Connect Error:", error);
+            addLog('error', 'Connection Process', `Process aborted due to error`, { error: error.message });
             logFrontendError({
                 message: `Facebook Connect Error: ${error.message}`,
                 stack: error.stack,
@@ -537,36 +679,81 @@ export default function MessengerIntegrationPage() {
         }
         
         setDirectLoading(true);
+        setIsLogsOpen(true);
+        addLog('info', 'Manual Connect', `Starting manual connection for Page ID: ${directPageId}`);
+        
         try {
             // Verify token validity by calling FB Graph API manually
-            const verifyRes = await fetch(`https://graph.facebook.com/v19.0/${directPageId}?fields=name&access_token=${directAccessToken}`);
+            addLog('info', 'FB Graph API', 'Verifying provided access token...');
+            const verifyRes = await fetch(`https://graph.facebook.com/v25.0/${directPageId}?fields=name&access_token=${directAccessToken}`);
             const verifyData = await verifyRes.json();
             
             if (verifyData.error) {
+                addLog('error', 'FB Graph API', 'Token verification failed', { error: verifyData.error });
                 throw new Error(`Invalid Token or Page ID: ${verifyData.error.message}`);
             }
             
             if (verifyData.id !== directPageId) {
+                addLog('error', 'Validation', 'Token is valid but belongs to a different Page ID', { 
+                    provided: directPageId, 
+                    found: verifyData.id 
+                });
                 throw new Error("Page ID mismatch");
             }
+
+            addLog('success', 'FB Graph API', `Token verified successfully. Verified Page Name: ${verifyData.name}`);
 
             // Use the verified name if provided name is generic
             const finalName = verifyData.name || directPageName;
 
-            const pageObj: FacebookPage = {
-                id: directPageId,
-                name: finalName,
-                access_token: directAccessToken
-            };
+            const token = localStorage.getItem("auth_token");
+            if (!token) {
+                throw new Error("Please login again");
+            }
 
-            await savePagesToBackend([pageObj]);
+            addLog('info', 'Backend API', 'Saving credentials and checking webhook subscription');
+            const res = await fetch(`${BACKEND_URL}/api/messenger/pages/manual`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    page_id: directPageId,
+                    name: finalName,
+                    page_access_token: directAccessToken,
+                    email: userEmail,
+                    user_id: userId,
+                }),
+            });
+
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                addLog('error', 'Backend API', `Failed to save page to database`, { status: res.status, response: body });
+                throw new Error(body.error || "Failed to save page to database");
+            }
             
+            if (body.subscription_status === 'saved_subscription_failed') {
+                addLog('warning', 'Webhook Subscription', 'Page connected, but automatic webhook field subscription failed', { error: body.subscription_error });
+                toast.warning(`${finalName} connected. Webhook field subscription needs review in Meta.`);
+            } else {
+                addLog('success', 'Process Completed', `${finalName} connected successfully`);
+                toast.success(`${finalName} connected successfully!`);
+            }
+            
+            // Set the active page directly into LocalStorage to immediately show it
+            localStorage.setItem("active_fb_page_id", directPageId);
+            window.dispatchEvent(new Event("storage")); 
+            window.dispatchEvent(new Event("db-connection-changed"));
+
             setDirectPageName("");
             setDirectPageId("");
             setDirectAccessToken("");
+            fetchPages();
             
         } catch (error: any) {
             console.error("Direct Connect Error:", error);
+            addLog('error', 'Manual Connect', `Process aborted`, { error: error.message });
             logFrontendError({
                 message: `Direct Connect Error: ${error.message}`,
                 stack: error.stack,
@@ -575,6 +762,7 @@ export default function MessengerIntegrationPage() {
             toast.error(error.message || "Failed to connect page");
         } finally {
             setDirectLoading(false);
+            setIsManualSetupOpen(false);
         }
     };
 
@@ -639,13 +827,6 @@ export default function MessengerIntegrationPage() {
         }
     };
 
-    const openSubscriptionModal = (page: PageData) => {
-        // setSelectedPageForSub(page);
-        // setCouponCode("");
-        // setSelectedPlan("3_months");
-        // setIsSubscriptionOpen(true);
-    };
-
     const handleManage = async (page: PageData) => {
         console.log("handleManage page object:", page); // Debug log
         // ALWAYS ALLOW MANAGE (Free Integration)
@@ -663,28 +844,24 @@ export default function MessengerIntegrationPage() {
             localStorage.setItem("active_fb_db_id", String(targetId));
             localStorage.setItem("active_fb_page_id", page.page_id || "");
             toast.success(`Connected to ${page.name}`);
-            navigate("/dashboard/messenger/control");
+            navigate(controlPath);
         } catch (error) {
             console.error("Error connecting to page:", error);
             toast.error("Failed to connect to page database");
         }
     };
 
-    const handleSubscribe = async () => {
-        // FUNCTION REMOVED - FREE INTEGRATION
-    };
-
     return (
-        <div className="space-y-6">
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
             {/* Header Section */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
                 <div>
                     <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-                        <Facebook className="text-[#0084FF] h-8 w-8" />
-                        Messenger Integration
+                        <Facebook className={isInstagram ? "text-pink-500 h-8 w-8" : "text-[#0084FF] h-8 w-8"} />
+                        {platformName} Integration
                     </h1>
                     <p className="text-gray-400 mt-2 font-medium">
-                        Connect your Facebook Pages to enable AI-powered automated replies.
+                        Connect your {channelName} pages to enable AI-powered automated replies.
                     </p>
                 </div>
                 
@@ -708,23 +885,53 @@ export default function MessengerIntegrationPage() {
                             API
                         </Link>
                     </Button>
+                    <Button variant="outline" onClick={() => setIsLogsOpen(true)} className="w-full sm:w-auto border-gray-700 text-gray-300 hover:text-white">
+                        <Terminal className="mr-2 h-4 w-4" />
+                        Connection Logs
+                    </Button>
+                    <Button variant="outline" onClick={fetchWebhookLogs} className="w-full sm:w-auto border-indigo-700 text-indigo-300 hover:text-indigo-100 hover:bg-indigo-900/30">
+                        {isFetchingWebhooks ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
+                        Live Monitor
+                    </Button>
                     <Button variant="outline" onClick={() => setIsManualSetupOpen(true)} className="w-full sm:w-auto">
                         <Settings className="mr-2 h-4 w-4" />
                         Manual Setup
                     </Button>
                     <Button onClick={handleConnectFacebook} disabled={connecting} className="w-full sm:w-auto">
                         {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Facebook className="mr-2 h-4 w-4" />}
-                        {connecting ? "Connecting..." : "Connect Facebook"}
+                        {connecting ? "Connecting..." : `Connect ${channelName}`}
                     </Button>
                 </div>
             </div>
+            {isMobile && (
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-slate-200">
+                    Use Chrome or your phone's main browser. If Facebook opens its app, finish login there and return to this browser tab so we can complete the {platformName} connection.
+                </div>
+            )}
+
+            <AlertDialog open={isMobileConnectDialogOpen} onOpenChange={setIsMobileConnectDialogOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Continue {platformName} connection in browser</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            On Android, avoid in-app browsers. Tap continue, sign in with Facebook, then return to this browser tab if Facebook opens its app.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={connecting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={startMessengerMobileConnect} disabled={connecting}>
+                            Continue in Browser
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <Dialog open={isManualSetupOpen} onOpenChange={setIsManualSetupOpen}>
                 <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>Manual Page Connection</DialogTitle>
+                        <DialogTitle>Manual {channelName} Page Connection</DialogTitle>
                         <DialogDescription>
-                            Use this if the automatic Facebook Login button doesn't work. You'll need your Page ID and Access Token.
+                            Use this if the automatic {channelName} login button doesn't work. You'll need your Page ID and Access Token.
                         </DialogDescription>
                     </DialogHeader>
 
@@ -780,7 +987,7 @@ export default function MessengerIntegrationPage() {
 
                     <div className="space-y-4 py-4 border-t">
                         <div className="space-y-2">
-                            <Label>Page Name</Label>
+                            <Label>{channelName} Page Name</Label>
                             <Input 
                                 placeholder="My Business Page" 
                                 value={directPageName}
@@ -788,7 +995,7 @@ export default function MessengerIntegrationPage() {
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Page ID</Label>
+                            <Label>{channelName} Page ID</Label>
                             <Input 
                                 placeholder="123456789012345" 
                                 value={directPageId}
@@ -796,7 +1003,7 @@ export default function MessengerIntegrationPage() {
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Page Access Token</Label>
+                            <Label>{channelName} Page Access Token</Label>
                             <Input 
                                 type="password"
                                 placeholder="EAA..." 
@@ -808,7 +1015,7 @@ export default function MessengerIntegrationPage() {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsManualSetupOpen(false)}>Cancel</Button>
                         <Button onClick={handleDirectConnect} disabled={directLoading}>
-                            {directLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Connect Page"}
+                            {directLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : `Connect ${channelName} Page`}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -816,9 +1023,9 @@ export default function MessengerIntegrationPage() {
 
             <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
                 <CardHeader>
-                    <CardTitle>Connected Pages</CardTitle>
+                    <CardTitle>Connected {channelName} Pages</CardTitle>
                     <CardDescription>
-                        Pages you have connected to the bot.
+                        {channelName} pages you have connected to the bot.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -828,7 +1035,7 @@ export default function MessengerIntegrationPage() {
                         </div>
                     ) : pages.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
-                            No pages connected yet. Click "Connect with Facebook" to get started.
+                            No pages connected yet. Click "Connect {channelName}" to get started.
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
@@ -846,7 +1053,7 @@ export default function MessengerIntegrationPage() {
                                         <TableRow key={page.page_id}>
                                             <TableCell className="font-medium">
                                                 <div className="flex items-center gap-2">
-                                                    <Facebook className="h-4 w-4 text-blue-600" />
+                                                    <Facebook className={isInstagram ? "h-4 w-4 text-pink-500" : "h-4 w-4 text-blue-600"} />
                                                     <span className="whitespace-nowrap">{page.name}</span>
                                                 </div>
                                             </TableCell>
@@ -879,6 +1086,147 @@ export default function MessengerIntegrationPage() {
                     )}
                 </CardContent>
             </Card>
+            {/* Logs Dialog */}
+            <AlertDialog open={isLogsOpen} onOpenChange={setIsLogsOpen}>
+                <AlertDialogContent className="max-w-3xl h-[80vh] flex flex-col p-0 overflow-hidden bg-gray-50/50 backdrop-blur-xl border border-gray-200 shadow-2xl">
+                    <div className="p-6 border-b border-gray-200 bg-white flex justify-between items-center">
+                        <div>
+                            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-gray-900">
+                                <Terminal className="w-5 h-5 text-gray-500" />
+                                Connection Activity Logs
+                            </AlertDialogTitle>
+                            <AlertDialogDescription className="text-sm text-gray-500 mt-1">
+                                Real-time logs for debugging {channelName} connection and webhook setup issues.
+                            </AlertDialogDescription>
+                        </div>
+                        <button 
+                            onClick={() => setConnectionLogs([])}
+                            className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1.5 rounded-md hover:bg-red-50 transition-colors"
+                        >
+                            Clear Logs
+                        </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-6 bg-gray-950 font-mono text-sm shadow-inner">
+                        {connectionLogs.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-gray-500 flex-col gap-3">
+                                <Terminal className="w-10 h-10 opacity-20" />
+                                <p>No connection attempts yet.</p>
+                                <p className="text-xs">Click 'Connect {channelName}' or 'Manual Setup' to see logs here.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {connectionLogs.map((log, index) => (
+                                    <div 
+                                        key={index} 
+                                        className={`rounded border p-3 ${
+                                            log.type === 'error' ? 'bg-red-950/30 border-red-900/50 text-red-400' :
+                                            log.type === 'warning' ? 'bg-yellow-950/30 border-yellow-900/50 text-yellow-400' :
+                                            log.type === 'success' ? 'bg-green-950/30 border-green-900/50 text-green-400' :
+                                            'bg-gray-900/50 border-gray-800 text-gray-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between mb-1">
+                                            <span className="font-bold flex items-center gap-2">
+                                                <span className={`w-2 h-2 rounded-full ${
+                                                    log.type === 'error' ? 'bg-red-500' :
+                                                    log.type === 'warning' ? 'bg-yellow-500' :
+                                                    log.type === 'success' ? 'bg-green-500' :
+                                                    'bg-blue-500'
+                                                }`} />
+                                                [{log.action}]
+                                            </span>
+                                            <span className="text-xs opacity-50">
+                                                {new Date(log.timestamp).toLocaleTimeString()}
+                                            </span>
+                                        </div>
+                                        <div className="mb-2">{log.message}</div>
+                                        {log.details && (
+                                            <pre className="text-xs bg-black/40 p-3 rounded overflow-x-auto text-gray-400 mt-2 border border-white/5">
+                                                {JSON.stringify(log.details, null, 2)}
+                                            </pre>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-4 border-t border-gray-200 bg-white flex justify-end">
+                        <AlertDialogCancel className="bg-gray-100 hover:bg-gray-200 text-gray-700 border-0 font-medium px-6">
+                            Close
+                        </AlertDialogCancel>
+                    </div>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Webhook Monitor Dialog */}
+            <AlertDialog open={isWebhookMonitorOpen} onOpenChange={setIsWebhookMonitorOpen}>
+                <AlertDialogContent className="max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden bg-[#0A0A0A] border border-gray-800 shadow-2xl">
+                    <div className="p-4 border-b border-gray-800 bg-[#111] flex justify-between items-center">
+                        <div>
+                            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2 text-indigo-400">
+                                <Database className="w-5 h-5" />
+                                Live Incoming Event Monitor
+                            </AlertDialogTitle>
+                            <AlertDialogDescription className="text-sm text-gray-500 mt-1">
+                                Real-time view of the last 50 payloads received from Meta. (Auto-refreshes every 3 seconds)
+                            </AlertDialogDescription>
+                        </div>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={fetchWebhookLogs}
+                                disabled={isFetchingWebhooks}
+                                className="text-sm bg-indigo-900/50 text-indigo-300 hover:text-indigo-200 hover:bg-indigo-800/50 font-medium px-4 py-2 rounded-md transition-colors flex items-center gap-2"
+                            >
+                                {isFetchingWebhooks ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                                Refresh
+                            </button>
+                            <AlertDialogCancel className="bg-gray-800 hover:bg-gray-700 text-gray-300 border-0 font-medium px-4 py-2">
+                                Close
+                            </AlertDialogCancel>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
+                        {webhookLogs.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-gray-600 flex-col gap-3">
+                                <Database className="w-12 h-12 opacity-20" />
+                                <p>Waiting for incoming events...</p>
+                                <p className="text-xs max-w-md text-center opacity-70">Send a message to your connected Facebook page to see the real-time payload.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {webhookLogs.map((log: any, index: number) => (
+                                    <div key={log.id || index} className="rounded-lg border border-gray-800 bg-[#151515] overflow-hidden">
+                                        <div className="flex items-center justify-between p-3 border-b border-gray-800 bg-[#1A1A1A]">
+                                            <div className="flex items-center gap-3">
+                                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-800/50">
+                                                    POST /webhook
+                                                </span>
+                                                <span className="text-gray-400 text-xs">
+                                                    Object: <span className="text-blue-400 font-semibold">{log.object || 'unknown'}</span>
+                                                </span>
+                                                <span className="text-gray-400 text-xs">
+                                                    Entries: <span className="text-yellow-400 font-semibold">{log.entry_count || 0}</span>
+                                                </span>
+                                            </div>
+                                            <span className="text-xs text-gray-500">
+                                                {new Date(log.timestamp).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <div className="p-4 overflow-x-auto">
+                                            <pre className="text-xs text-gray-300 leading-relaxed">
+                                                {JSON.stringify(log.payload, null, 2)}
+                                            </pre>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

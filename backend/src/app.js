@@ -3,6 +3,7 @@ const cors = require('cors');
 const webhookRoutes = require('./routes/webhookRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const messengerRoutes = require('./routes/messengerRoutes');
+const instagramRoutes = require('./routes/instagramRoutes');
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
 const adsRoutes = require('./routes/adsRoutes');
@@ -16,15 +17,20 @@ const teamRoutes = require('./routes/teamRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const marketingRoutes = require('./routes/marketingRoutes');
+const shopifyRoutes = require('./routes/shopifyRoutes');
+const runtimeHealthRoutes = require('./routes/runtimeHealthRoutes');
+const businessProfileRoutes = require('./routes/businessProfileRoutes');
+const runtimeMonitor = require('./services/runtimeMonitor');
 
 const path = require('path');
 const app = express();
 
-// Enable trust proxy for Coolify/Nginx/Load Balancers
+// CORS Configuration - Original Simple Working State
+app.use(cors());
+
+// Enable trust proxy
 app.set('trust proxy', 1);
 
-// Middleware
-app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -42,60 +48,68 @@ const cacheOptions = {
 
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), cacheOptions));
 
-// Serve Frontend Dist (Production)
-const distPath = path.join(__dirname, '../../dist');
-if (require('fs').existsSync(distPath)) {
-    app.use(express.static(distPath, cacheOptions));
-    // SPA Fallback: handle client-side routing
-    app.get('*', (req, res, next) => {
-        if (req.path.startsWith('/api')) return next();
-        res.sendFile(path.join(distPath, 'index.html'));
-    });
-}
-
 // Routes
 // We mount the webhook route at /webhook or /api/webhook based on preference
-// The user's n8n.json used /webhook
 app.use('/webhook', webhookRoutes);
-app.use('/api/webhook', webhookRoutes); // Alias for consistency
+app.use('/api/webhook', webhookRoutes);
 
 // Register other routes
+app.use('/api/v1/dev/chat', apiEngineRoutes);
+app.use('/api/api-engine', apiEngineRoutes);
+app.use('/api-engine', apiEngineRoutes);
+
 app.use('/whatsapp', whatsappRoutes);
-app.use('/api/whatsapp', whatsappRoutes); // Alias for /api prefix
+app.use('/api/whatsapp', whatsappRoutes);
 
 app.use('/messenger', messengerRoutes);
-app.use('/api/messenger', messengerRoutes); // Alias for /api prefix
+app.use('/api/messenger', messengerRoutes);
+app.use('/api/instagram', instagramRoutes);
 
-app.use('/api/auth', authRoutes); // Matches frontend call /api/auth/facebook/exchange-token
+app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/ads', adsRoutes);
 app.use('/api/external', externalApiRoutes);
+app.use('/v1', externalApiRoutes);
 app.use('/api/lite', liteEngineRoutes);
 app.use('/api/openrouter', openrouterEngineRoutes);
 app.use('/api/db-admin', dbAdminRoutes);
-app.use('/db-admin', dbAdminRoutes); // Alias for both
+app.use('/db-admin', dbAdminRoutes);
 app.use('/api/api-list', apiListRoutes);
-app.use('/api/api-engine', apiEngineRoutes);
-app.use('/api-engine', apiEngineRoutes); // Alias for easier n8n connection
 
 app.use('/teams', teamRoutes);
-app.use('/api/teams', teamRoutes); // Alias for /api prefix
+app.use('/api/teams', teamRoutes);
 
 app.use('/stats', statsRoutes);
-app.use('/api/stats', statsRoutes); // Alias for /api prefix
+app.use('/api/stats', statsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
+app.use('/api/shopify', shopifyRoutes);
+app.use('/api/runtime-health', runtimeHealthRoutes);
+app.use('/api/business-profiles', businessProfileRoutes);
 
 // Basic health check
-
 app.get('/', (req, res) => {
     res.send('AI Agent Backend Running');
 });
 
 // Global Error Handler
 app.use((err, req, res, next) => {
+    runtimeMonitor.recordError('express_global_error', err, { type: 'runtime_exception' });
     console.error('Unhandled Application Error:', err);
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });
+
+// SPA Fallback: handle client-side routing (MUST BE AT THE END)
+const distPath = path.join(__dirname, '../../dist');
+if (require('fs').existsSync(distPath)) {
+    app.use(express.static(distPath, cacheOptions));
+    app.use((req, res, next) => {
+        // If it's an API request that wasn't handled by routes above, let it pass to 404
+        if (req.path.startsWith('/api') || req.path.startsWith('/v1') || req.path.startsWith('/webhook')) {
+            return next();
+        }
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+}
 
 module.exports = app;

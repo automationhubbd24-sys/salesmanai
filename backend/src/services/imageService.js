@@ -1,7 +1,8 @@
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const crypto = require('crypto');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { createClient } = require('@supabase/supabase-js');
 
 // Configure S3 Client if env vars are present
@@ -19,31 +20,118 @@ console.log("Supabase Config:", {
 
 let s3Client = null;
 // Only enable S3 if Supabase is NOT the intended primary, or if we want S3 specifically.
-// For now, if Supabase Bucket is set, we PREFER Supabase to fix the user's issue.
-const PREFER_SUPABASE = process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL;
+// For now, we want to prioritize S3/R2 over Supabase for migration
+const PREFER_S3 = process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY;
+const PREFER_SUPABASE = !PREFER_S3 && process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL;
 
-if (!PREFER_SUPABASE && process.env.S3_ENDPOINT && process.env.S3_ACCESS_KEY && process.env.S3_SECRET_KEY) {
-    console.log("[ImageService] Initializing S3 Client...");
+if (PREFER_S3) {
+    console.log("[ImageService] Initializing S3 Client (R2/S3 Priority)...");
     s3Client = new S3Client({
-        region: process.env.S3_REGION || 'us-east-1',
+        region: process.env.S3_REGION || 'auto',
         endpoint: process.env.S3_ENDPOINT,
         credentials: {
             accessKeyId: process.env.S3_ACCESS_KEY,
             secretAccessKey: process.env.S3_SECRET_KEY
         },
-        forcePathStyle: true // Required for MinIO/Coolify usually
+        forcePathStyle: true
     });
 }
 
-// Configure Supabase Client (if S3 is not available or Supabase is preferred)
+// Configure Supabase Client (only if S3 is not available)
 let supabase = null;
-if ((!s3Client || PREFER_SUPABASE) && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+if (!s3Client && process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
     console.log("[ImageService] Initializing Supabase Client...");
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 }
 
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-const UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-images');
+const IMAGE_UPLOAD_ROOT = process.env.IMAGE_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-images');
+const VIDEO_UPLOAD_ROOT = process.env.VIDEO_UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads', 'product-videos');
+
+function getExtensionFromMimeType(mimeType, fallback = 'bin') {
+    const map = {
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'image/gif': 'gif',
+        'video/mp4': 'mp4',
+        'video/webm': 'webm',
+        'video/quicktime': 'mov',
+        'video/x-msvideo': 'avi',
+        'video/x-matroska': 'mkv'
+    };
+    return map[mimeType] || fallback;
+}
+
+function buildUniqueAssetName(extension) {
+    const timestamp = Date.now();
+    const randomSuffix = crypto.randomBytes(8).toString('hex');
+    return `${timestamp}-${randomSuffix}.${extension}`;
+}
+
+async function uploadProductAsset(finalBuffer, contentType, userId, baseUrl, options = {}) {
+    const {
+        folder = 'product-images',
+        uploadRoot = IMAGE_UPLOAD_ROOT,
+        extension = getExtensionFromMimeType(contentType)
+    } = options;
+
+    const userFolder = String(userId || 'anonymous');
+    const fileName = buildUniqueAssetName(extension);
+
+    if (s3Client && process.env.S3_BUCKET) {
+        const key = `${folder}/${userFolder}/${fileName}`;
+        const command = new PutObjectCommand({
+            Bucket: process.env.S3_BUCKET,
+            Key: key,
+            Body: finalBuffer,
+            ContentType: contentType
+        });
+
+        await s3Client.send(command);
+
+        if (process.env.S3_PUBLIC_URL) {
+            const publicUrlBase = process.env.S3_PUBLIC_URL.replace(/\/$/, '');
+            return `${publicUrlBase}/${key}`;
+        }
+
+        const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
+        return `${endpoint}/${process.env.S3_BUCKET}/${key}`;
+    }
+
+    if (supabase && process.env.SUPABASE_BUCKET) {
+        const key = `${folder}/${userFolder}/${fileName}`;
+        const { error } = await supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .upload(key, finalBuffer, {
+                contentType,
+                upsert: true
+            });
+
+        if (error) {
+            console.error("[ImageService] Supabase Upload Error:", error);
+            throw error;
+        }
+
+        const { data: publicUrlData } = supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .getPublicUrl(key);
+
+        return publicUrlData.publicUrl;
+    }
+
+    const dirPath = path.join(uploadRoot, userFolder);
+    const filePath = path.join(dirPath, fileName);
+
+    await fs.promises.mkdir(dirPath, { recursive: true });
+    await fs.promises.writeFile(filePath, finalBuffer);
+
+    const base = baseUrl ? baseUrl.replace(/\/$/, '') : PUBLIC_BASE_URL.replace(/\/$/, '');
+    const relativeUrl = `/uploads/${folder}/${encodeURIComponent(userFolder)}/${encodeURIComponent(fileName)}`;
+
+    return `${base}${relativeUrl}`;
+}
 
 /**
  * Uploads and optimizes an image for product entry.
@@ -77,68 +165,11 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
             contentType = 'image/jpeg';
         }
 
-        // 2. Generate Unique Filename
-        const timestamp = Date.now();
-        const userFolder = String(userId || 'anonymous');
-        const fileName = `${timestamp}.${extension}`;
-
-        // 3. Upload to S3 (if configured and NOT preferring Supabase)
-        if (s3Client && process.env.S3_BUCKET && !process.env.SUPABASE_BUCKET) {
-            const key = `product-images/${userFolder}/${fileName}`;
-            const command = new PutObjectCommand({
-                Bucket: process.env.S3_BUCKET,
-                Key: key,
-                Body: finalBuffer,
-                ContentType: contentType
-            });
-
-            await s3Client.send(command);
-
-            // Construct S3 URL
-            if (process.env.S3_PUBLIC_URL) {
-                return `${process.env.S3_PUBLIC_URL}/${key}`;
-            } else {
-                const endpoint = process.env.S3_ENDPOINT.replace(/\/$/, '');
-                return `${endpoint}/${process.env.S3_BUCKET}/${key}`;
-            }
-
-        } else if (supabase && process.env.SUPABASE_BUCKET) {
-            // 4. Upload to Supabase Storage (Directly)
-            console.log("[ImageService] Uploading to Supabase Storage...");
-            const key = `${userFolder}/${fileName}`;
-            const { data, error } = await supabase.storage
-                .from(process.env.SUPABASE_BUCKET)
-                .upload(key, finalBuffer, {
-                    contentType: contentType,
-                    upsert: true
-                });
-
-            if (error) {
-                console.error("[ImageService] Supabase Upload Error:", error);
-                throw error;
-            }
-
-            const { data: publicUrlData } = supabase.storage
-                .from(process.env.SUPABASE_BUCKET)
-                .getPublicUrl(key);
-
-            console.log("[ImageService] Supabase Public URL:", publicUrlData.publicUrl);
-            return publicUrlData.publicUrl;
-
-        } else {
-            // 5. Local Disk Fallback
-            const dirPath = path.join(UPLOAD_ROOT, userFolder);
-            const filePath = path.join(dirPath, fileName);
-
-            await fs.promises.mkdir(dirPath, { recursive: true });
-            await fs.promises.writeFile(filePath, finalBuffer);
-
-            // Construct URL
-            const base = baseUrl ? baseUrl.replace(/\/$/, '') : PUBLIC_BASE_URL.replace(/\/$/, '');
-            const relativeUrl = `/uploads/product-images/${encodeURIComponent(userFolder)}/${encodeURIComponent(fileName)}`;
-
-            return `${base}${relativeUrl}`;
-        }
+        return await uploadProductAsset(finalBuffer, contentType, userId, baseUrl, {
+            folder: 'product-images',
+            uploadRoot: IMAGE_UPLOAD_ROOT,
+            extension
+        });
 
     } catch (error) {
         console.error("[ImageService] Upload Failed:", error);
@@ -146,6 +177,152 @@ async function uploadProductImage(fileBuffer, mimeType, userId, baseUrl) {
     }
 }
 
+async function uploadProductVideo(fileBuffer, mimeType, userId, baseUrl) {
+    try {
+        return await uploadProductAsset(fileBuffer, mimeType, userId, baseUrl, {
+            folder: 'product-videos',
+            uploadRoot: VIDEO_UPLOAD_ROOT,
+            extension: getExtensionFromMimeType(mimeType, 'mp4')
+        });
+    } catch (error) {
+        console.error("[ImageService] Video Upload Failed:", error);
+        throw error;
+    }
+}
+
+function extractSupabaseKey(assetUrl) {
+    if (!assetUrl || !process.env.SUPABASE_BUCKET) return null;
+
+    try {
+        const parsedUrl = new URL(String(assetUrl));
+        const pathname = decodeURIComponent(parsedUrl.pathname || '');
+        const bucket = process.env.SUPABASE_BUCKET.replace(/^\/+|\/+$/g, '');
+        const match = pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/]+)\/(.+)$/);
+        if (!match) return null;
+        if (match[1] !== bucket) return null;
+        return match[2];
+    } catch {
+        return null;
+    }
+}
+
+function extractS3Key(assetUrl) {
+    if (!assetUrl || !process.env.S3_BUCKET) return null;
+
+    try {
+        const rawUrl = String(assetUrl);
+        const publicBase = String(process.env.S3_PUBLIC_URL || '').replace(/\/$/, '');
+        if (publicBase && rawUrl.startsWith(`${publicBase}/`)) {
+            return decodeURIComponent(rawUrl.slice(publicBase.length + 1));
+        }
+
+        const parsedUrl = new URL(rawUrl);
+        const pathname = decodeURIComponent(parsedUrl.pathname || '');
+        const bucketPrefix = `/${String(process.env.S3_BUCKET).replace(/^\/+|\/+$/g, '')}/`;
+        if (pathname.startsWith(bucketPrefix)) {
+            return pathname.slice(bucketPrefix.length);
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
+function extractLocalAssetPath(assetUrl) {
+    if (!assetUrl) return null;
+
+    const tryResolve = (pathname) => {
+        const normalizedPath = decodeURIComponent(String(pathname || '').split('?')[0]);
+        const imagePrefix = '/uploads/product-images/';
+        const videoPrefix = '/uploads/product-videos/';
+
+        if (normalizedPath.startsWith(imagePrefix)) {
+            const relativeParts = normalizedPath.slice(imagePrefix.length).split('/').filter(Boolean);
+            return path.join(IMAGE_UPLOAD_ROOT, ...relativeParts);
+        }
+
+        if (normalizedPath.startsWith(videoPrefix)) {
+            const relativeParts = normalizedPath.slice(videoPrefix.length).split('/').filter(Boolean);
+            return path.join(VIDEO_UPLOAD_ROOT, ...relativeParts);
+        }
+
+        return null;
+    };
+
+    try {
+        return tryResolve(new URL(String(assetUrl)).pathname);
+    } catch {
+        return tryResolve(String(assetUrl));
+    }
+}
+
+async function deleteProductAsset(assetUrl) {
+    if (!assetUrl) return false;
+
+    const supabaseKey = extractSupabaseKey(assetUrl);
+    if (supabaseKey && supabase && process.env.SUPABASE_BUCKET) {
+        const { error } = await supabase.storage.from(process.env.SUPABASE_BUCKET).remove([supabaseKey]);
+        if (error) {
+            console.error('[ImageService] Supabase Delete Error:', error);
+            throw error;
+        }
+        return true;
+    }
+
+    const s3Key = extractS3Key(assetUrl);
+    if (s3Key && s3Client && process.env.S3_BUCKET) {
+        await s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.S3_BUCKET,
+            Key: s3Key
+        }));
+        return true;
+    }
+
+    const localFilePath = extractLocalAssetPath(assetUrl);
+    if (localFilePath) {
+        try {
+            await fs.promises.unlink(localFilePath);
+            return true;
+        } catch (error) {
+            if (error && error.code === 'ENOENT') {
+                return false;
+            }
+            throw error;
+        }
+    }
+
+    return false;
+}
+
+async function deleteProductAssets(assetUrls = []) {
+    const uniqueUrls = Array.from(new Set(
+        (Array.isArray(assetUrls) ? assetUrls : [assetUrls])
+            .map((assetUrl) => String(assetUrl || '').trim())
+            .filter(Boolean)
+    ));
+
+    if (uniqueUrls.length === 0) {
+        return { attempted: 0, deleted: 0 };
+    }
+
+    let deleted = 0;
+    await Promise.all(uniqueUrls.map(async (assetUrl) => {
+        try {
+            const removed = await deleteProductAsset(assetUrl);
+            if (removed) {
+                deleted += 1;
+            }
+        } catch (error) {
+            console.error(`[ImageService] Failed to delete asset ${assetUrl}:`, error.message || error);
+        }
+    }));
+
+    return { attempted: uniqueUrls.length, deleted };
+}
+
 module.exports = {
-    uploadProductImage
+    uploadProductImage,
+    uploadProductVideo,
+    deleteProductAssets
 };

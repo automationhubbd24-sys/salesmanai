@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
+import SEO from "@/components/SEO";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -89,6 +90,7 @@ const Login = () => {
 
   return (
     <div className="flex min-h-screen bg-[#0b0b0b] text-white">
+      <SEO title="Sign in to SalesmanChatbot" noindex />
       {/* Left Panel - Decorative */}
       <div className="relative hidden w-0 flex-1 lg:block">
         <div className="absolute inset-0 bg-[#0b0b0b]">

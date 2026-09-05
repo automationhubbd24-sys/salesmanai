@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
 import { WhatsAppProvider } from "@/context/WhatsAppContext";
 import { MessengerProvider } from "@/context/MessengerContext";
+import { InstagramProvider } from "@/context/InstagramContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { hasWorkspacePermission, teamWorkspaceFromStorage, workspacePermissionForPath } from "@/hooks/useTeamPermissions";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -22,6 +24,8 @@ const pageTitles: Record<string, string> = {
   "/dashboard/reseller": "Reseller",
   "/dashboard/profile": "Profile",
   "/dashboard/payment": "Payment / Topup",
+  "/dashboard/team-management": "Team Management",
+  "/dashboard/business-profiles": "Business Profiles",
   "/dashboard/admin": "Admin Control",
 };
 
@@ -120,6 +124,9 @@ export function DashboardLayout() {
   
   if (!currentTitle) currentTitle = "Dashboard";
 
+  const requiredPermission = workspacePermissionForPath(location.pathname);
+  const hasRouteAccess = !requiredPermission || hasWorkspacePermission(teamWorkspaceFromStorage(platform), requiredPermission);
+
   const LayoutContent = (
     <TooltipProvider key={reloadKey}>
       <div className="min-h-screen bg-background flex w-full dashboard-theme">
@@ -142,7 +149,7 @@ export function DashboardLayout() {
             onMenuClick={() => setMobileMenuOpen(true)}
           />
           <main className="flex-1 p-4 lg:p-6 overflow-auto">
-            <Outlet />
+            {hasRouteAccess ? <Outlet /> : <div className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-center justify-center text-center"><h1 className="text-2xl font-black">Access denied</h1><p className="mt-3 text-muted-foreground">Your selected team workspace does not grant access to this page.</p><Button className="mt-6" onClick={() => navigate(platform ? `/dashboard/${platform}` : "/dashboard")}>Back to dashboard</Button></div>}
           </main>
         </div>
       </div>
@@ -162,6 +169,14 @@ export function DashboardLayout() {
       <MessengerProvider key={reloadKey}>
         {LayoutContent}
       </MessengerProvider>
+    );
+  }
+
+  if (platform === 'instagram') {
+    return (
+      <InstagramProvider key={reloadKey}>
+        {LayoutContent}
+      </InstagramProvider>
     );
   }
 

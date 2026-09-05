@@ -20,6 +20,10 @@ import { BACKEND_URL } from "@/config";
 export default function DashboardHome() {
   const { platform } = useParams();
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState({
+    plan: 'none',
+    expires_at: null as string | null
+  });
   const [stats, setStats] = useState({
     sessions: 0,
     messages: 0,
@@ -27,7 +31,27 @@ export default function DashboardHome() {
   });
 
   const isWhatsApp = platform === 'whatsapp';
-  const platformName = platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Platform';
+  const isInstagram = platform === 'instagram';
+  const platformName = platform ? (isInstagram ? 'Instagram' : platform.charAt(0).toUpperCase() + platform.slice(1)) : 'Platform';
+
+  const getPlanLabel = (plan: string) => {
+    if (plan === 'm1000' || plan === 'starter') return 'Starter';
+    if (plan === 'm3000' || plan === 'pro') return 'Pro';
+    if (plan === 'm7500' || plan === 'enterprise') return 'Enterprise';
+    return 'Inactive';
+  };
+
+  const getPlanExpiryText = () => {
+    if (!subscription.expires_at) return null;
+    const expires = new Date(subscription.expires_at);
+    const now = new Date();
+    const diffTime = expires.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) return `${diffDays} দিন বাকি`;
+    if (diffDays === 0) return 'আজ expire হবে';
+    return 'Expired';
+  };
 
   useEffect(() => {
     async function loadStats() {
@@ -38,6 +62,24 @@ export default function DashboardHome() {
       }
 
       setUserEmail(email);
+
+      // Load subscription info
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/auth/payments/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSubscription({
+            plan: data.subscription_plan || 'none',
+            expires_at: data.monthly_expires_at || null
+          });
+        }
+      } catch (e) {
+        console.error("Subscription fetch error", e);
+      }
 
       try {
         if (isWhatsApp) {
@@ -51,7 +93,7 @@ export default function DashboardHome() {
             const mySessions = Array.isArray(data) ? data : [];
             setStats(prev => ({ ...prev, sessions: mySessions.length || 0 }));
           }
-        } else if (platform === 'messenger') {
+        } else if (platform === 'messenger' || platform === 'instagram') {
           const res = await fetch(`${BACKEND_URL}/api/messenger/pages`, {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -88,11 +130,11 @@ export default function DashboardHome() {
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
         <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-primary uppercase tracking-wider">
-              {isWhatsApp ? 'Total Sessions' : 'Connected Pages'}
+              {isWhatsApp ? 'Total Sessions' : `Connected ${platformName} Pages`}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -125,6 +167,21 @@ export default function DashboardHome() {
           <CardContent>
             <div className="text-2xl font-bold text-foreground">Active</div>
             <p className="text-xs text-muted-foreground mt-1">Smart replies enabled</p>
+          </CardContent>
+        </Card>
+
+        {/* Subscription Status Card */}
+        <Card className={`bg-[#0f0f0f]/80 backdrop-blur-sm border ${subscription.plan !== 'none' ? 'border-green-500/30' : 'border-white/10'}`}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-primary uppercase tracking-wider">
+              Subscription
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">
+              {getPlanLabel(subscription.plan)}
+            </div>
+            {getPlanExpiryText() && <p className="text-xs text-green-400 mt-1">{getPlanExpiryText()}</p>}
           </CardContent>
         </Card>
       </div>

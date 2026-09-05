@@ -17,6 +17,9 @@ import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import Pricing from "./pages/Pricing";
 import BrandingPreview from "./pages/BrandingPreview";
+import FacebookMessengerCallbackPage from "./pages/auth/FacebookMessengerCallbackPage";
+import FacebookWhatsAppCallbackPage from "./pages/auth/FacebookWhatsAppCallbackPage";
+import FacebookInstagramCallbackPage from "./pages/auth/FacebookInstagramCallbackPage";
 
 // Import Dashboard components directly
 import { DashboardLayout } from "./layouts/DashboardLayout";
@@ -42,16 +45,28 @@ import MessengerOrderTrackingPage from "./pages/dashboard/messenger/MessengerOrd
 import MessengerSettingsPage from "./pages/dashboard/messenger/MessengerSettingsPage";
 import MessengerDatabasePage from "./pages/dashboard/messenger/MessengerDatabasePage";
 import MessengerConversionPage from "./pages/dashboard/messenger/MessengerConversionPage";
+import InstagramIntegrationPage from "./pages/dashboard/instagram/InstagramIntegrationPage";
+import InstagramControlPage from "./pages/dashboard/instagram/InstagramControlPage";
+import InstagramOrderTrackingPage from "./pages/dashboard/instagram/InstagramOrderTrackingPage";
+import InstagramSettingsPage from "./pages/dashboard/instagram/InstagramSettingsPage";
+import InstagramDatabasePage from "./pages/dashboard/instagram/InstagramDatabasePage";
+import InstagramConversionPage from "./pages/dashboard/instagram/InstagramConversionPage";
+import CommentAutomationPage from "./pages/dashboard/CommentAutomationPage";
 import ApiManagementPage from "./pages/dashboard/ApiManagementPage";
 import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
+import ShopifyPage from "./pages/dashboard/ShopifyPage";
+import TeamManagementPage from "./pages/dashboard/TeamManagementPage";
+import BusinessProfilesPage from "./pages/dashboard/BusinessProfilesPage";
+
+import SmartInbox from "./pages/dashboard/SmartInbox";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <LanguageProvider>
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
         <TooltipProvider>
           <Toaster />
           <Sonner />
@@ -66,6 +81,10 @@ const App = () => (
               <Route path="/terms-of-service" element={<TermsOfService />} />
               <Route path="/pricing" element={<Pricing />} />
               <Route path="/branding-preview" element={<BrandingPreview />} />
+              <Route path="/auth/facebook/messenger/callback" element={<FacebookMessengerCallbackPage />} />
+              <Route path="/auth/facebook/whatsapp/callback" element={<FacebookWhatsAppCallbackPage />} />
+              <Route path="/auth/facebook/instagram/callback" element={<FacebookInstagramCallbackPage />} />
+              <Route path="/developer-preview" element={<DeveloperPage />} />
               
               {/* Dashboard Routes */}
               <Route path="/dashboard" element={<DashboardLayout />}>
@@ -83,10 +102,13 @@ const App = () => (
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="payment" element={<PaymentPage />} />
                 <Route path="profile" element={<ProfilePage />} />
+                <Route path="shopify" element={<ShopifyPage />} />
+                <Route path="team-management" element={<TeamManagementPage />} />
 
                 {/* WhatsApp Routes */}
                 <Route path="whatsapp" element={<Outlet />}>
                   <Route index element={<DashboardHome />} />
+                  <Route path="smart-inbox" element={<SmartInbox />} />
                   <Route path="sessions" element={<SessionManager />} />
                   <Route path="control" element={<WhatsAppControlPage />} />
                   <Route path="orders" element={<WhatsAppOrderTrackingPage />} />
@@ -103,12 +125,33 @@ const App = () => (
                 {/* Messenger Routes */}
                 <Route path="messenger" element={<Outlet />}>
                   <Route index element={<DashboardHome />} />
+                  <Route path="smart-inbox" element={<SmartInbox />} />
                   <Route path="integration" element={<MessengerIntegrationPage />} />
                   <Route path="control" element={<MessengerControlPage />} />
                   <Route path="orders" element={<MessengerOrderTrackingPage />} />
                   <Route path="conversion" element={<MessengerConversionPage />} />
                   <Route path="database" element={<MessengerDatabasePage />} />
                   <Route path="settings" element={<MessengerSettingsPage />} />
+                  <Route path="comment-automation" element={<CommentAutomationPage />} />
+                  <Route path="products" element={<ProductsPage />} />
+                  <Route path="ads" element={<AdsPage />} />
+                  <Route path="reseller" element={<ResellerPage />} />
+                  <Route path="profile" element={<ProfilePage />} />
+                  <Route path="payment" element={<PaymentPage />} />
+                  <Route path="business-profiles" element={<BusinessProfilesPage />} />
+                </Route>
+
+                {/* Instagram Routes */}
+                <Route path="instagram" element={<Outlet />}>
+                  <Route index element={<DashboardHome />} />
+                  <Route path="smart-inbox" element={<SmartInbox />} />
+                  <Route path="integration" element={<InstagramIntegrationPage />} />
+                  <Route path="control" element={<InstagramControlPage />} />
+                  <Route path="orders" element={<InstagramOrderTrackingPage />} />
+                  <Route path="conversion" element={<InstagramConversionPage />} />
+                  <Route path="database" element={<InstagramDatabasePage />} />
+                  <Route path="settings" element={<InstagramSettingsPage />} />
+                  <Route path="comment-automation" element={<CommentAutomationPage />} />
                   <Route path="products" element={<ProductsPage />} />
                   <Route path="ads" element={<AdsPage />} />
                   <Route path="reseller" element={<ResellerPage />} />
@@ -131,6 +174,7 @@ const App = () => (
                   <Route path="reseller" element={<ResellerPage />} />
                   <Route path="profile" element={<ProfilePage />} />
                   <Route path="payment" element={<PaymentPage />} />
+                  <Route path="business-profiles" element={<BusinessProfilesPage />} />
                 </Route>
               </Route>
               

@@ -1,5 +1,42 @@
 const multer = require('multer');
 const dbService = require('../services/dbService');
+
+function safeJsonParse(value, fallback = null) {
+    if (!value) return fallback;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function extractStructuredVisualFingerprint(analysisText) {
+    const text = String(analysisText || '');
+    const getField = (label) => {
+        const pattern = new RegExp(`${label}\\s*:\\s*([\\s\\S]*?)(?=\\n[A-Z][A-Za-z /]+\\s*:|$)`, 'i');
+        const match = text.match(pattern);
+        return match ? match[1].trim().replace(/\s+/g, ' ') : '';
+    };
+    const splitList = (value) => String(value || '')
+        .split(/[,;|\n]+/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 30);
+    const getAnyField = (...labels) => labels.map(getField).find(Boolean) || '';
+    return {
+        product_type: getAnyField('Product Category', 'Product Type', 'Item Type'),
+        structural_model: getAnyField('Structural Model', 'Shape / Structure', 'Form Factor'),
+        material: splitList(getAnyField('Main Material', 'Material', 'Visible Material')),
+        primary_color: getAnyField('Primary Color', 'Main Color'),
+        accent_colors: splitList(getAnyField('Accent Colors', 'Secondary Colors')),
+        pattern: splitList(getAnyField('Pattern / Print', 'Pattern', 'Print')),
+        texture: getAnyField('Texture', 'Surface Texture'),
+        construction: getAnyField('Construction', 'Build Type', 'Structure'),
+        attachment_features: getAnyField('Attachment Features', 'Handle Type', 'Shoulder Strap', 'Strap Type', 'Connector Type'),
+        visible_design_features: getAnyField('Visible Design Features', 'Front Design', 'Main Visible Design', 'Exterior Design'),
+        unique_features: splitList(getAnyField('Unique Design Features', 'Unique Features', 'Distinctive Features')),
+        distinguishing_characteristics: getAnyField('Distinguishing Characteristics', 'Variant Differentiators'),
+        search_keywords: splitList(getAnyField('Search Keywords', 'Keywords')),
+        stable_visual_fingerprint: splitList(getAnyField('Stable Visual Fingerprint', 'Visual Fingerprint'))
+    };
+}
 const woocommerceService = require('../services/woocommerceService');
 const imageService = require('../services/imageService');
 
@@ -7,19 +44,269 @@ const imageService = require('../services/imageService');
 const teamUserCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; 
 
+const MAX_PRODUCT_FILE_SIZE = 16 * 1024 * 1024;
+const MAX_PRODUCT_VIDEO_SIZE = 16 * 1024 * 1024;
+const MAX_PRODUCT_TOTAL_IMAGES = 50;
+const MAX_PRODUCT_ADDITIONAL_IMAGES = MAX_PRODUCT_TOTAL_IMAGES - 1;
+
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: MAX_PRODUCT_FILE_SIZE },
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Only images are allowed'));
+        const mimeType = String(file.mimetype || '');
+
+        if (file.fieldname === 'image' || file.fieldname === 'images') {
+            if (mimeType.startsWith('image/')) {
+                return cb(null, true);
+            }
+            return cb(new Error('Only image files are allowed for product images.'));
         }
+
+        if (file.fieldname === 'video') {
+            if (mimeType.startsWith('video/')) {
+                return cb(null, true);
+            }
+            return cb(new Error('Only video files are allowed for the product video.'));
+        }
+
+        return cb(new Error('Unexpected upload field.'));
     }
 });
 
-exports.uploadMiddleware = upload.fields([{ name: 'image', maxCount: 1 }, { name: 'images', maxCount: 10 }]);
+const uploadFieldsMiddleware = upload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'images', maxCount: MAX_PRODUCT_TOTAL_IMAGES },
+    { name: 'video', maxCount: 1 }
+]);
+
+exports.uploadMiddleware = (req, res, next) => {
+    uploadFieldsMiddleware(req, res, (error) => {
+        if (!error) {
+            return next();
+        }
+
+        if (error instanceof multer.MulterError) {
+            if (error.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({ error: 'Product image or video must be 16 MB or smaller.' });
+            }
+            return res.status(400).json({ error: error.message || 'Product file upload failed.' });
+        }
+
+        return res.status(400).json({ error: error.message || 'Product file upload failed.' });
+    });
+};
+
+function getUploadedVideo(req) {
+    return req?.files?.video?.[0] || null;
+}
+
+function validateUploadedVideo(req) {
+    const video = getUploadedVideo(req);
+    if (!video) return null;
+
+    if (!video.mimetype || !video.mimetype.startsWith('video/')) {
+        return 'Only valid video files are allowed for product video.';
+    }
+
+    if (video.size > MAX_PRODUCT_VIDEO_SIZE) {
+        return 'Product video must be 16 MB or smaller.';
+    }
+
+    return null;
+}
+
+function normalizeUniqueImageList(images, primaryImage = null, maxCount = MAX_PRODUCT_ADDITIONAL_IMAGES) {
+    const primary = primaryImage ? String(primaryImage).trim() : null;
+    const seen = new Set();
+
+    return (Array.isArray(images) ? images : [])
+        .map((image) => String(image || '').trim())
+        .filter((image) => {
+            if (!image) return false;
+            if (primary && image === primary) return false;
+            if (seen.has(image)) return false;
+            seen.add(image);
+            return true;
+        })
+        .slice(0, Math.max(0, maxCount));
+}
+
+function parseArrayField(value) {
+    if (Array.isArray(value)) return value;
+    if (!value) return [];
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
+function normalizeKeywordEntry(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function looksLikeStructuredKeywordBlock(raw) {
+    if (!raw) return false;
+    const commaCount = (raw.match(/,/g) || []).length;
+    return (
+        raw.includes('\n') ||
+        raw.includes('**') ||
+        raw.includes('*   ') ||
+        raw.toLowerCase().includes('based on the visual data') ||
+        (raw.length >= 120 && /[.:]/.test(raw)) ||
+        (raw.length >= 180 && commaCount >= 4 && /[.!?]/.test(raw))
+    );
+}
+
+function parseKeywordEntries(value) {
+    if (Array.isArray(value)) {
+        return value.map(normalizeKeywordEntry).filter(Boolean);
+    }
+
+    const raw = normalizeKeywordEntry(value);
+    if (!raw) return [];
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+            return parsed.map(normalizeKeywordEntry).filter(Boolean);
+        }
+        if (typeof parsed === 'string') {
+            const parsedString = normalizeKeywordEntry(parsed);
+            return parsedString ? [parsedString] : [];
+        }
+    } catch {}
+
+    if (looksLikeStructuredKeywordBlock(raw)) {
+        return [raw];
+    }
+
+    return raw
+        .split(/[,;\n]/)
+        .map(normalizeKeywordEntry)
+        .filter(Boolean);
+}
+
+function isLabelKeyword(entry) {
+    const normalized = normalizeKeywordEntry(entry);
+    if (!normalized) return false;
+    if (looksLikeStructuredKeywordBlock(normalized)) return false;
+    if (/[*:\n]/.test(normalized)) return false;
+    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+    return normalized.length <= 40 && wordCount <= 6;
+}
+
+function parseLabelKeywordEntries(value) {
+    return parseKeywordEntries(value).filter(isLabelKeyword);
+}
+
+function serializeKeywordEntries(value) {
+    const seen = new Set();
+    const normalized = parseKeywordEntries(value).filter((entry) => {
+        const lowered = entry.toLowerCase();
+        if (seen.has(lowered)) return false;
+        seen.add(lowered);
+        return true;
+    });
+    return JSON.stringify(normalized);
+}
+
+function serializeLabelKeywordEntries(value) {
+    const seen = new Set();
+    const normalized = parseLabelKeywordEntries(value).filter((entry) => {
+        const lowered = entry.toLowerCase();
+        if (seen.has(lowered)) return false;
+        seen.add(lowered);
+        return true;
+    });
+    return JSON.stringify(normalized);
+}
+
+function parseGalleryPreviewOrder(value) {
+    return parseArrayField(value)
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
+}
+
+function buildGalleryPreviewUrlMap(galleryPreviews, primaryImageUrl = null, additionalImageUrls = []) {
+    const previewOrder = Array.isArray(galleryPreviews) ? galleryPreviews : [];
+    const finalGalleryUrls = [
+        primaryImageUrl ? String(primaryImageUrl).trim() : null,
+        ...(Array.isArray(additionalImageUrls) ? additionalImageUrls : []).map((item) => String(item || '').trim())
+    ].filter(Boolean);
+
+    const previewToUrl = new Map();
+    previewOrder.forEach((preview, index) => {
+        const previewKey = String(preview || '').trim();
+        const finalUrl = finalGalleryUrls[index];
+        if (previewKey && finalUrl) {
+            previewToUrl.set(previewKey, finalUrl);
+        }
+    });
+
+    return previewToUrl;
+}
+
+function resolveSkuMatrixImageUrls(skuMatrix, previewToUrlMap) {
+    if (!Array.isArray(skuMatrix) || skuMatrix.length === 0) return [];
+    if (!(previewToUrlMap instanceof Map) || previewToUrlMap.size === 0) {
+        return skuMatrix.map((sku) => {
+            if (!sku || typeof sku !== 'object') return sku;
+            const currentImageUrl = sku.image_url ? String(sku.image_url).trim() : null;
+            if (currentImageUrl && currentImageUrl.startsWith('blob:')) {
+                return { ...sku, image_url: null };
+            }
+            return sku;
+        });
+    }
+
+    return skuMatrix.map((sku) => {
+        if (!sku || typeof sku !== 'object') return sku;
+        const currentImageUrl = sku.image_url ? String(sku.image_url).trim() : null;
+        if (!currentImageUrl) return sku;
+
+        if (previewToUrlMap.has(currentImageUrl)) {
+            return { ...sku, image_url: previewToUrlMap.get(currentImageUrl) };
+        }
+
+        if (currentImageUrl.startsWith('blob:')) {
+            return { ...sku, image_url: null };
+        }
+
+        return sku;
+    });
+}
+
+function collectProductAssetUrls(product) {
+    if (!product || typeof product !== 'object') return [];
+
+    const urls = [];
+    const pushUrl = (value) => {
+        const normalized = String(value || '').trim();
+        if (normalized) {
+            urls.push(normalized);
+        }
+    };
+
+    pushUrl(product.image_url);
+    pushUrl(product.video_url);
+
+    parseArrayField(product.additional_images).forEach(pushUrl);
+    parseArrayField(product.variants).forEach((variant) => {
+        pushUrl(variant?.image_url);
+        pushUrl(variant?.video_url);
+    });
+    parseArrayField(product.sku_matrix).forEach((sku) => {
+        pushUrl(sku?.image_url);
+        pushUrl(sku?.video_url);
+    });
+
+    return Array.from(new Set(urls));
+}
 
 async function getEffectiveUserIdFromRequest(req, baseUserId) {
     let userId = baseUserId || null;
@@ -359,6 +646,7 @@ exports.checkStatus = async (req, res) => {
 };
 
 exports.createProduct = async (req, res) => {
+    let uploadedAssetUrls = [];
     try {
         console.log("[ProductCreate] Request received. Body keys:", Object.keys(req.body));
         if (req.body.metadata) console.log("[ProductCreate] Raw Metadata Length:", req.body.metadata.length);
@@ -397,8 +685,14 @@ exports.createProduct = async (req, res) => {
             });
         }
 
-        // 1. Handle Image Upload
+        const videoValidationError = validateUploadedVideo(req);
+        if (videoValidationError) {
+            return res.status(400).json({ error: videoValidationError });
+        }
+
+        // 1. Handle Media Upload
         let imageUrl = null;
+        let videoUrl = body.video_url ? String(body.video_url).trim() : null;
         let additionalImages = [];
         
         const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
@@ -407,32 +701,51 @@ exports.createProduct = async (req, res) => {
         const reqBaseUrl = `${protocol}://${host}`;
         const baseUrl = envBaseUrl || reqBaseUrl;
 
-        if (req.files && req.files.image && req.files.image[0]) {
+        const mainImageFile = req?.files?.image?.[0] || req?.files?.images?.[0] || null;
+        const additionalImageFiles = req?.files?.image?.[0]
+            ? (Array.isArray(req?.files?.images) ? req.files.images : [])
+            : (Array.isArray(req?.files?.images) ? req.files.images.slice(1) : []);
+
+        if (mainImageFile) {
             try {
-                imageUrl = await imageService.uploadProductImage(req.files.image[0].buffer, req.files.image[0].mimetype, userId, baseUrl);
+                imageUrl = await imageService.uploadProductImage(mainImageFile.buffer, mainImageFile.mimetype, userId, baseUrl);
+                if (imageUrl) uploadedAssetUrls.push(imageUrl);
             } catch (imgError) {
                 console.error("[ProductCreate] Image upload failed:", imgError);
             }
         }
 
-        if (req.files && req.files.images) {
-            const uploadPromises = req.files.images.map(file => 
+        if (additionalImageFiles.length > 0) {
+            const uploadPromises = additionalImageFiles.map(file => 
                 imageService.uploadProductImage(file.buffer, file.mimetype, userId, baseUrl)
             );
             try {
                 additionalImages = await Promise.all(uploadPromises);
+                additionalImages = normalizeUniqueImageList(additionalImages, imageUrl, MAX_PRODUCT_ADDITIONAL_IMAGES);
+                uploadedAssetUrls.push(...additionalImages);
             } catch (imgError) {
                 console.error("[ProductCreate] Additional images upload failed:", imgError);
+            }
+        }
+
+        const uploadedVideo = getUploadedVideo(req);
+        if (uploadedVideo) {
+            try {
+                videoUrl = await imageService.uploadProductVideo(uploadedVideo.buffer, uploadedVideo.mimetype, userId, baseUrl);
+                if (videoUrl) uploadedAssetUrls.push(videoUrl);
+            } catch (videoError) {
+                console.error("[ProductCreate] Video upload failed:", videoError);
+                return res.status(500).json({ error: "Product video upload failed" });
             }
         }
 
         // 2. Parse Data (Resilient)
         const name = body.name;
         const description = body.description || '';
-        const price = body.price ? parseFloat(body.price) : 0;
+        const price = body.price !== undefined && body.price !== null && body.price !== '' ? parseFloat(body.price) : 0;
         const currency = body.currency || 'USD';
-        const stock = body.stock ? parseInt(body.stock) : 0;
-        const keywords = body.keywords || '';
+        const keywords = serializeLabelKeywordEntries(body.keywords || '');
+        const visualTags = serializeKeywordEntries(body.visual_tags || '');
 
         let variants = [];
         if (body.variants) {
@@ -446,6 +759,42 @@ exports.createProduct = async (req, res) => {
                 }
             }
         }
+
+        let attributeSchema = [];
+        if (body.attribute_schema) {
+            if (Array.isArray(body.attribute_schema)) {
+                attributeSchema = body.attribute_schema;
+            } else {
+                try {
+                    attributeSchema = JSON.parse(body.attribute_schema);
+                } catch (e) {
+                    console.error("[ProductCreate] Attribute schema parse failed:", e.message);
+                }
+            }
+        }
+
+        let skuMatrix = [];
+        if (body.sku_matrix) {
+            if (Array.isArray(body.sku_matrix)) {
+                skuMatrix = body.sku_matrix;
+            } else {
+                try {
+                    skuMatrix = JSON.parse(body.sku_matrix);
+                } catch (e) {
+                    console.error("[ProductCreate] SKU matrix parse failed:", e.message);
+                }
+            }
+        }
+
+        const galleryPreviewOrder = parseGalleryPreviewOrder(body.gallery_preview_order);
+        skuMatrix = resolveSkuMatrixImageUrls(
+            skuMatrix,
+            buildGalleryPreviewUrlMap(galleryPreviewOrder, imageUrl || (body.image_url ? String(body.image_url).trim() : null), additionalImages)
+        );
+
+        const productMode = ['simple', 'option-list', 'sku-matrix'].includes(String(body.product_mode || '').trim())
+            ? String(body.product_mode).trim()
+            : (skuMatrix.length > 0 ? 'sku-matrix' : (variants.length > 0 ? 'option-list' : 'simple'));
         
         const isActive = body.is_active === 'true' || body.is_active === true;
 
@@ -489,7 +838,6 @@ exports.createProduct = async (req, res) => {
 
         const platform = (allowedMessengerIds.length === 0 && allowedWASessions.length === 0) ? 'global' : 'restricted';
         console.log("[ProductCreate] Final Assignments:", { messenger: allowedMessengerIds, wa: allowedWASessions, platform });
-
         if (!name) return res.status(400).json({ error: "Product name is required" });
 
         // 4. Save to DB
@@ -498,25 +846,35 @@ exports.createProduct = async (req, res) => {
             name,
             description,
             image_url: imageUrl,
+            video_url: videoUrl,
             additional_images: additionalImages,
             variants: variants,
             is_active: isActive,
             price,
             currency,
-            stock,
             allowed_messenger_ids: allowedMessengerIds,
             allowed_wa_sessions: allowedWASessions,
             platform,
             keywords,
+            visual_tags: visualTags,
             is_combo: body.is_combo === 'true' || body.is_combo === true,
             combo_items: Array.isArray(body.combo_items) ? body.combo_items : (body.combo_items ? JSON.parse(body.combo_items) : []),
-            allow_description: body.allow_description === 'true' || body.allow_description === true
+            allow_description: body.allow_description === 'true' || body.allow_description === true,
+            isolate_sku_images: body.isolate_sku_images === 'true' || body.isolate_sku_images === true,
+            product_mode: productMode,
+            attribute_schema: attributeSchema,
+            sku_matrix: skuMatrix
         });
+
+        queueDirectProductImageEmbeddings(product, userId, allowedMessengerIds);
 
         res.status(201).json(product);
 
     } catch (error) {
         console.error("Create Product Error:", error);
+        if (uploadedAssetUrls.length > 0) {
+            await imageService.deleteProductAssets(uploadedAssetUrls);
+        }
         res.status(500).json({ error: error.message });
     }
 };
@@ -754,8 +1112,14 @@ exports.updateProduct = async (req, res) => {
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
         console.log(`[ProductUpdate] ID: ${id}, Owner: ${userId}, Page: ${pageId}`);
 
-        // 1. Handle Image Upload if present
+        const videoValidationError = validateUploadedVideo(req);
+        if (videoValidationError) {
+            return res.status(400).json({ error: videoValidationError });
+        }
+
+        // 1. Handle Media Upload if present
         let imageUrl = undefined; // undefined means no change
+        let videoUrl = undefined; // undefined means no change
         let additionalImages = undefined;
 
         const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
@@ -794,19 +1158,47 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
+        const uploadedVideo = getUploadedVideo(req);
+        if (uploadedVideo) {
+            try {
+                console.log(`[ProductUpdate] Uploading Product Video for Owner: ${userId}`);
+                videoUrl = await imageService.uploadProductVideo(uploadedVideo.buffer, uploadedVideo.mimetype, userId, baseUrl);
+            } catch (videoError) {
+                return res.status(500).json({ error: "Product video upload failed: " + videoError.message });
+            }
+        }
+
+        const existing = await dbService.getProductById(id);
+
         // 2. Parse Body
         const updates = {};
         if (req.body.name) updates.name = req.body.name;
         if (req.body.description !== undefined) updates.description = req.body.description;
-        if (req.body.price) updates.price = parseFloat(req.body.price);
+        if (req.body.price !== undefined) updates.price = req.body.price === '' ? 0 : parseFloat(req.body.price);
         if (req.body.currency) updates.currency = req.body.currency;
-        if (req.body.stock) updates.stock = parseInt(req.body.stock);
-        if (req.body.keywords !== undefined) updates.keywords = req.body.keywords;
-        if (req.body.is_active) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
+        if (req.body.keywords !== undefined) updates.keywords = serializeLabelKeywordEntries(req.body.keywords);
+        if (req.body.visual_tags !== undefined) updates.visual_tags = serializeKeywordEntries(req.body.visual_tags);
+        if (req.body.is_active !== undefined) updates.is_active = req.body.is_active === 'true' || req.body.is_active === true;
         if (imageUrl) updates.image_url = imageUrl;
+        else if (req.body.image_url !== undefined) updates.image_url = req.body.image_url ? String(req.body.image_url).trim() : null;
+        if (videoUrl) updates.video_url = videoUrl;
+        else if (req.body.video_url !== undefined) updates.video_url = req.body.video_url ? String(req.body.video_url).trim() : null;
         if (req.body.is_combo !== undefined) updates.is_combo = req.body.is_combo === 'true' || req.body.is_combo === true;
         if (req.body.allow_description !== undefined) updates.allow_description = req.body.allow_description === 'true' || req.body.allow_description === true;
-        if (req.body.combo_items !== undefined) updates.combo_items = req.body.combo_items;
+        if (req.body.isolate_sku_images !== undefined) updates.isolate_sku_images = req.body.isolate_sku_images === 'true' || req.body.isolate_sku_images === true;
+        if (req.body.combo_items !== undefined) {
+            if (Array.isArray(req.body.combo_items)) {
+                updates.combo_items = req.body.combo_items;
+            } else if (typeof req.body.combo_items === 'string' && req.body.combo_items.trim()) {
+                try {
+                    updates.combo_items = JSON.parse(req.body.combo_items);
+                } catch (e) {
+                    updates.combo_items = [req.body.combo_items.trim()];
+                }
+            } else {
+                updates.combo_items = [];
+            }
+        }
 
         // Handle Additional Images Sync (Combine existing with new)
         if (additionalImages !== undefined || req.body.existing_additional_images !== undefined) {
@@ -828,7 +1220,11 @@ exports.updateProduct = async (req, res) => {
                 finalAdditional = [...finalAdditional, ...additionalImages];
             }
 
-            updates.additional_images = finalAdditional;
+            updates.additional_images = normalizeUniqueImageList(
+                finalAdditional,
+                updates.image_url !== undefined ? updates.image_url : existing?.image_url,
+                MAX_PRODUCT_ADDITIONAL_IMAGES
+            );
             console.log(`[ProductUpdate] Final Additional Images Count: ${finalAdditional.length}`);
         }
 
@@ -842,6 +1238,53 @@ exports.updateProduct = async (req, res) => {
                     return res.status(400).json({ error: "Invalid variants JSON format" });
                 }
             }
+        }
+
+        if (req.body.product_mode !== undefined) {
+            updates.product_mode = String(req.body.product_mode || 'simple').trim();
+        }
+
+        if (req.body.attribute_schema !== undefined) {
+            if (Array.isArray(req.body.attribute_schema)) {
+                updates.attribute_schema = req.body.attribute_schema;
+            } else if (typeof req.body.attribute_schema === 'string' && req.body.attribute_schema.trim()) {
+                try {
+                    updates.attribute_schema = JSON.parse(req.body.attribute_schema);
+                } catch (e) {
+                    return res.status(400).json({ error: "Invalid attribute_schema JSON format" });
+                }
+            } else {
+                updates.attribute_schema = [];
+            }
+        }
+
+        if (req.body.sku_matrix !== undefined) {
+            if (Array.isArray(req.body.sku_matrix)) {
+                updates.sku_matrix = req.body.sku_matrix;
+            } else if (typeof req.body.sku_matrix === 'string' && req.body.sku_matrix.trim()) {
+                try {
+                    updates.sku_matrix = JSON.parse(req.body.sku_matrix);
+                } catch (e) {
+                    return res.status(400).json({ error: "Invalid sku_matrix JSON format" });
+                }
+            } else {
+                updates.sku_matrix = [];
+            }
+        }
+
+        if (updates.sku_matrix !== undefined) {
+            const galleryPreviewOrder = parseGalleryPreviewOrder(req.body.gallery_preview_order);
+            const finalPrimaryImage = updates.image_url !== undefined
+                ? updates.image_url
+                : (existing?.image_url ? String(existing.image_url).trim() : null);
+            const finalAdditionalImages = updates.additional_images !== undefined
+                ? updates.additional_images
+                : (Array.isArray(existing?.additional_images) ? existing.additional_images : []);
+
+            updates.sku_matrix = resolveSkuMatrixImageUrls(
+                updates.sku_matrix,
+                buildGalleryPreviewUrlMap(galleryPreviewOrder, finalPrimaryImage, finalAdditionalImages)
+            );
         }
 
         const parseIds = (val) => {
@@ -896,12 +1339,16 @@ exports.updateProduct = async (req, res) => {
         }
         updates.platform = platform;
 
-        const existing = await dbService.getProductById(id);
         if (existing && updates.allowed_messenger_ids === undefined && updates.allowed_wa_sessions === undefined && updates.platform === 'global') {
             updates.platform = existing.platform || 'restricted';
         }
 
         const updated = await dbService.updateProduct(id, userId, updates);
+        queueDirectProductImageEmbeddings(
+            updated,
+            userId,
+            allowedMessengerIds.length > 0 ? allowedMessengerIds : parseArrayField(updated.allowed_messenger_ids || existing?.allowed_messenger_ids)
+        );
         res.json(updated);
 
     } catch (error) {
@@ -909,6 +1356,36 @@ exports.updateProduct = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+async function deleteProductInContext(id, userId, pageId = null) {
+    const existing = await dbService.getProductById(id, userId);
+    if (!existing) throw new Error('Product not found');
+
+    if (!pageId) {
+        await dbService.deleteProduct(id, userId);
+        await imageService.deleteProductAssets(collectProductAssetUrls(existing));
+        return 'deleted';
+    }
+
+    const isMessenger = /^\d+$/.test(String(pageId));
+    const messengerIds = parseArrayField(existing.allowed_messenger_ids).map(String);
+    const waSessions = parseArrayField(existing.allowed_wa_sessions).map(String);
+    const newMessenger = isMessenger ? messengerIds.filter(x => x !== String(pageId)) : messengerIds;
+    const newWA = !isMessenger ? waSessions.filter(x => x !== String(pageId)) : waSessions;
+
+    if (newMessenger.length === 0 && newWA.length === 0) {
+        await dbService.deleteProduct(id, userId);
+        await imageService.deleteProductAssets(collectProductAssetUrls(existing));
+        return 'deleted';
+    }
+
+    await dbService.updateProduct(id, userId, {
+        allowed_messenger_ids: newMessenger,
+        allowed_wa_sessions: newWA,
+        platform: 'restricted'
+    });
+    return 'unassigned';
+}
 
 exports.deleteProduct = async (req, res) => {
     try {
@@ -922,32 +1399,115 @@ exports.deleteProduct = async (req, res) => {
         const userId = await resolveProductOwnerUserId(req, baseUserId, pageId);
         if (!userId) return res.status(400).json({ error: "user_id is required for verification" });
 
-        if (pageId) {
-            const existing = await dbService.getProductById(id);
-            if (!existing) return res.status(404).json({ error: "Product not found" });
-            const isMessenger = /^\d+$/.test(String(pageId));
-            const messengerIds = Array.isArray(existing.allowed_messenger_ids) ? existing.allowed_messenger_ids : (() => { try { return JSON.parse(existing.allowed_messenger_ids || '[]'); } catch { return []; } })();
-            const waSessions = Array.isArray(existing.allowed_wa_sessions) ? existing.allowed_wa_sessions : (() => { try { return JSON.parse(existing.allowed_wa_sessions || '[]'); } catch { return []; } })();
-            const newMessenger = isMessenger ? messengerIds.filter(x => String(x) !== String(pageId)) : messengerIds;
-            const newWA = !isMessenger ? waSessions.filter(x => String(x) !== String(pageId)) : waSessions;
-            if (newMessenger.length === 0 && newWA.length === 0) {
-                await dbService.deleteProduct(id, userId);
-                return res.json({ success: true, message: "Product deleted" });
-            } else {
-                const platform = 'restricted';
-                const updated = await dbService.updateProduct(id, userId, {
-                    allowed_messenger_ids: newMessenger,
-                    allowed_wa_sessions: newWA,
-                    platform
-                });
-                return res.json({ success: true, message: "Unassigned from current page/session", data: updated });
-            }
-        } else {
-            await dbService.deleteProduct(id, userId);
-            return res.json({ success: true, message: "Product deleted" });
-        }
+        const outcome = await deleteProductInContext(id, userId, pageId);
+        return res.json({
+            success: true,
+            message: outcome === 'deleted' ? 'Product deleted' : 'Unassigned from current page/session'
+        });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(error.message === 'Product not found' ? 404 : 500).json({ error: error.message });
+    }
+};
+
+function normalizeImportedProduct(rawProduct, userId, pageId) {
+    if (!rawProduct || typeof rawProduct !== 'object' || Array.isArray(rawProduct)) {
+        throw new Error('Product must be an object');
+    }
+
+    const name = String(rawProduct.name || '').trim();
+    if (!name) throw new Error('Product name is required');
+
+    const variants = parseArrayField(rawProduct.variants);
+    const attributeSchema = parseArrayField(rawProduct.attribute_schema);
+    const skuMatrix = parseArrayField(rawProduct.sku_matrix);
+    const additionalImages = normalizeUniqueImageList(parseArrayField(rawProduct.additional_images), rawProduct.image_url || null);
+    const isMessenger = pageId && /^\d+$/.test(String(pageId));
+    const allowedMessengerIds = pageId && isMessenger ? [String(pageId)] : [];
+    const allowedWASessions = pageId && !isMessenger ? [String(pageId)] : [];
+
+    return {
+        user_id: userId,
+        name,
+        description: String(rawProduct.description || ''),
+        keywords: serializeLabelKeywordEntries(rawProduct.keywords),
+        visual_tags: serializeKeywordEntries(rawProduct.visual_tags),
+        image_url: rawProduct.image_url ? String(rawProduct.image_url).trim() : null,
+        video_url: rawProduct.video_url ? String(rawProduct.video_url).trim() : null,
+        additional_images: additionalImages,
+        variants,
+        is_active: rawProduct.is_active !== false,
+        price: rawProduct.price !== undefined && rawProduct.price !== null && rawProduct.price !== '' ? Number(rawProduct.price) || 0 : 0,
+        currency: String(rawProduct.currency || 'USD'),
+        allowed_messenger_ids: allowedMessengerIds,
+        allowed_wa_sessions: allowedWASessions,
+        platform: pageId ? 'restricted' : 'global',
+        is_combo: rawProduct.is_combo === true,
+        combo_items: parseArrayField(rawProduct.combo_items),
+        allow_description: rawProduct.allow_description === true,
+        isolate_sku_images: rawProduct.isolate_sku_images === true,
+        product_mode: ['simple', 'option-list', 'sku-matrix'].includes(rawProduct.product_mode)
+            ? rawProduct.product_mode
+            : (skuMatrix.length ? 'sku-matrix' : (variants.length ? 'option-list' : 'simple')),
+        attribute_schema: attributeSchema,
+        sku_matrix: skuMatrix
+    };
+}
+
+exports.importJson = async (req, res) => {
+    try {
+        const { user_id: baseUserId, page_id: pageId = null, products } = req.body || {};
+        if (!Array.isArray(products)) return res.status(400).json({ error: 'products must be an array' });
+        if (products.length > 200) return res.status(400).json({ error: 'A maximum of 200 products can be imported at once' });
+
+        const userId = await resolveProductOwnerUserId(req, baseUserId || null, pageId);
+        if (!userId) return res.status(400).json({ error: 'user_id is required' });
+
+        const created = [];
+        const failed = [];
+        for (let index = 0; index < products.length; index += 1) {
+            const rawProduct = products[index];
+            try {
+                const product = await dbService.createProduct(normalizeImportedProduct(rawProduct, userId, pageId));
+                const assignmentIds = pageId && /^\d+$/.test(String(pageId)) ? [String(pageId)] : [];
+                queueDirectProductImageEmbeddings(product, userId, assignmentIds);
+                created.push(product);
+            } catch (error) {
+                failed.push({ index, name: rawProduct?.name || null, error: error.message });
+            }
+        }
+
+        return res.status(201).json({ success: true, created, failed });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+};
+
+exports.bulkDelete = async (req, res) => {
+    try {
+        const { user_id: baseUserId, page_id: pageId = null, product_ids } = req.body || {};
+        if (!Array.isArray(product_ids) || product_ids.length === 0) {
+            return res.status(400).json({ error: 'product_ids must be a non-empty array' });
+        }
+
+        const userId = await resolveProductOwnerUserId(req, baseUserId || null, pageId);
+        if (!userId) return res.status(400).json({ error: 'user_id is required for verification' });
+
+        const deleted_ids = [];
+        const unassigned_ids = [];
+        const failed = [];
+        for (const id of [...new Set(product_ids)]) {
+            try {
+                const outcome = await deleteProductInContext(id, userId, pageId);
+                if (outcome === 'deleted') deleted_ids.push(id);
+                else unassigned_ids.push(id);
+            } catch (error) {
+                failed.push({ id, error: error.message });
+            }
+        }
+
+        return res.json({ success: true, deleted_ids, unassigned_ids, failed });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
     }
 };
 
@@ -969,4 +1529,243 @@ exports.importWooCommerce = async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+};
+
+const aiService = require('../services/aiService');
+
+function collectDirectEmbeddingImageUrls(product = {}) {
+    const urls = [];
+    const seen = new Set();
+    const pushUrl = (url) => {
+        const value = String(url || '').trim();
+        if (!value || seen.has(value)) return;
+        if (!value.startsWith('http') && !value.startsWith('data:')) return;
+        seen.add(value);
+        urls.push(value);
+    };
+
+    pushUrl(product.image_url);
+    parseArrayField(product.additional_images).forEach(pushUrl);
+    parseArrayField(product.variants).forEach((variant) => pushUrl(variant?.image_url));
+    parseArrayField(product.sku_matrix).forEach((sku) => pushUrl(sku?.image_url));
+    return urls.slice(0, Number(process.env.IMAGE_EMBEDDING_MAX_PRODUCT_IMAGES || 8));
+}
+
+function queueDirectProductImageEmbeddings(product, userId, pageIds = []) {
+    const imageUrls = collectDirectEmbeddingImageUrls(product);
+    if (imageUrls.length === 0) return;
+
+    setImmediate(async () => {
+        const model = process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview';
+        const pageId = Array.isArray(pageIds) && pageIds.length > 0 ? String(pageIds[0]) : null;
+        let saved = 0;
+
+        for (let index = 0; index < imageUrls.length; index += 1) {
+            const imageUrl = imageUrls[index];
+            const imageVector = await aiService.getDirectImageEmbedding(imageUrl, { log: false });
+            if (!imageVector) continue;
+            const ok = await dbService.upsertProductImageEmbedding({
+                productId: product.id,
+                userId,
+                pageId,
+                imageUrl,
+                imageRole: index === 0 ? 'direct_primary' : `direct_additional_${index}`,
+                imageVector,
+                imageEmbeddingModel: model
+            });
+            if (ok) saved += 1;
+        }
+
+        if (saved > 0) {
+            console.log(`[ProductImageEmbedding] Saved ${saved}/${imageUrls.length} direct image embeddings for product ${product.id}`);
+        } else {
+            console.warn(`[ProductImageEmbedding] No direct image embeddings saved for product ${product.id}`);
+        }
+    });
+}
+
+exports.extractVisuals = async (req, res) => {
+    try {
+        const { image_url, page_id, product_id } = req.body;
+        // #region debug-point A:extract-visuals-entry
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'A',location:'productController.js:extractVisuals:entry',msg:'[DEBUG] extractVisuals request received',data:{hasImageUrl:Boolean(image_url),pageId:page_id||null,productId:product_id||null},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        if (!image_url) {
+            return res.status(400).json({ error: "image_url is required" });
+        }
+        if (!product_id) {
+            return res.status(400).json({ error: "product_id is required" });
+        }
+
+        // Resolve user ID
+        const { effectiveUserId } = await getEffectiveUserIdFromRequest(req, null);
+        if (!effectiveUserId) {
+            return res.status(400).json({ error: "user not authenticated" });
+        }
+
+        // Get product
+        const product = await dbService.getProductById(product_id, effectiveUserId);
+        // #region debug-point E:product-lookup
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'E',location:'productController.js:extractVisuals:productLookup',msg:'[DEBUG] product lookup completed',data:{effectiveUserId,effectiveUserIdType:typeof effectiveUserId,productFound:Boolean(product),productUserId:product?.user_id||null,productKeywordType:typeof product?.keywords},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        if (!product) {
+            return res.status(404).json({ error: "Product not found" });
+        }
+
+        let pageConfig = {};
+        if (page_id) {
+            pageConfig = await dbService.getPageConfig(page_id) || {};
+        }
+
+        // Use the exact image prompt from pageConfig if available, otherwise use a highly detailed fallback
+        let prompt = pageConfig.image_prompt || pageConfig.vision_prompt;
+        
+        if (!prompt) {
+            prompt = `Analyze this image with extreme pixel-to-pixel precision for a search database. 
+Focus strictly on the core product design, shape, structural details, material/fabric (e.g. lace, cotton, net), cut (e.g. scalloped edge, thick strap, v-neck), and exact color shades. 
+Ignore all surrounding noise, text, play buttons, UI elements, mannequins, or backgrounds. 
+Extract only the pure visual and structural features.
+DO NOT use sentences. Provide a comma-separated list of visual keywords ONLY. 
+Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck, cotton fabric`;
+        }
+
+        const analysisResult = await aiService.processImageWithVision(image_url, pageConfig, { prompt });
+        
+        let tagsText = typeof analysisResult === 'string' ? analysisResult : (analysisResult.text || '');
+        if (tagsText.startsWith('[Vision Analysis Failed]')) {
+            // Extract the actual error message and send it to the frontend for debugging
+            const cleanError = tagsText.replace('[Vision Analysis Failed] Error: ', '');
+            return res.status(500).json({ error: cleanError || "Failed to analyze image with Vision API. Check backend logs." });
+        }
+
+        const visualFingerprint = extractStructuredVisualFingerprint(tagsText.trim());
+
+        // Generate old text/vision vector and optional direct image vector in parallel
+        const [vector, imageVector] = await Promise.all([
+            aiService.getEmbedding(tagsText.trim()),
+            aiService.getDirectImageEmbedding(image_url, { log: false })
+        ]);
+        // #region debug-point B:embedding-generated
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'productController.js:extractVisuals:embedding',msg:'[DEBUG] visual description and embedding generated',data:{tagsLength:tagsText.trim().length,hasVector:Boolean(vector),vectorLength:Array.isArray(vector)?vector.length:0},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        if (!vector) {
+            console.warn("[ExtractVisuals] Failed to generate embedding for visual description");
+        }
+
+        // Save to product_image_embeddings
+        await dbService.upsertProductImageEmbedding({
+            productId: product_id,
+            userId: effectiveUserId,
+            pageId: page_id,
+            imageUrl: image_url,
+            imageRole: 'primary',
+            vector: vector,
+            visualTags: [tagsText.trim()],
+            visualFingerprint,
+            imageVector,
+            imageEmbeddingModel: process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview'
+        });
+        // #region debug-point C:upsert-finished
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'productController.js:extractVisuals:afterUpsert',msg:'[DEBUG] image embedding upsert completed',data:{productId:product_id,userId:effectiveUserId,pageId:page_id||null,imageUrlLength:String(image_url||'').length},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+
+        // Persist visual analysis separately so the label-keyword field stays clean.
+        const currentVisualTagsArray = parseKeywordEntries(product.visual_tags);
+        const newVisualTagsSet = new Set([...currentVisualTagsArray, tagsText.trim()]);
+        const newVisualTagsArray = [...newVisualTagsSet];
+
+        const existingFingerprint = safeJsonParse(product.visual_fingerprint, {});
+        await dbService.updateProduct(product_id, effectiveUserId, {
+            visual_tags: serializeKeywordEntries(newVisualTagsArray),
+            visual_fingerprint: { ...existingFingerprint, primary: visualFingerprint }
+        });
+        // #region debug-point D:update-product-finished
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'productController.js:extractVisuals:afterUpdateProduct',msg:'[DEBUG] product visual tags update completed',data:{productId:product_id,userId:effectiveUserId,visualTagCount:newVisualTagsArray.length,visualTagStringLength:serializeKeywordEntries(newVisualTagsArray).length},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+
+        // Return the exact raw text description without splitting it into comma-separated keywords
+        res.json({ success: true, tags: [tagsText.trim()] });
+    } catch (error) {
+        // #region debug-point A:extract-visuals-error
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'A',location:'productController.js:extractVisuals:catch',msg:'[DEBUG] extractVisuals failed',data:{message:error?.message||String(error),stack:error?.stack||null},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        console.error("Auto Extract Visuals Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Standalone Upload Endpoints for Variant Media
+const singleImageUpload = upload.single('image');
+const singleVideoUpload = upload.single('video');
+
+exports.uploadVariantImage = async (req, res) => {
+    singleImageUpload(req, res, async (error) => {
+        if (error) {
+            if (error instanceof multer.MulterError) {
+                if (error.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'Image must be 16 MB or smaller.' });
+                }
+            }
+            return res.status(400).json({ error: error.message });
+        }
+
+        try {
+            if (!req.file) {
+                return res.status(400).json({ error: 'No image file provided.' });
+            }
+
+            const userId = req.body.user_id || req.query.user_id;
+            if (!userId) {
+                return res.status(400).json({ error: 'user_id is required.' });
+            }
+
+            const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.get('host');
+            const reqBaseUrl = `${protocol}://${host}`;
+            const baseUrl = envBaseUrl || reqBaseUrl;
+
+            const url = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, userId, baseUrl);
+            res.json({ success: true, url });
+        } catch (err) {
+            console.error('[Variant Upload] Image Error:', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+};
+
+exports.uploadVariantVideo = async (req, res) => {
+    singleVideoUpload(req, res, async (error) => {
+        if (error) {
+            if (error instanceof multer.MulterError) {
+                if (error.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'Video must be 16 MB or smaller.' });
+                }
+            }
+            return res.status(400).json({ error: error.message });
+        }
+
+        try {
+            if (!req.file) {
+                return res.status(400).json({ error: 'No video file provided.' });
+            }
+
+            const userId = req.body.user_id || req.query.user_id;
+            if (!userId) {
+                return res.status(400).json({ error: 'user_id is required.' });
+            }
+
+            const envBaseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL;
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.get('host');
+            const reqBaseUrl = `${protocol}://${host}`;
+            const baseUrl = envBaseUrl || reqBaseUrl;
+
+            const url = await imageService.uploadProductVideo(req.file.buffer, req.file.mimetype, userId, baseUrl);
+            res.json({ success: true, url });
+        } catch (err) {
+            console.error('[Variant Upload] Video Error:', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
 };

@@ -1,6 +1,6 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const app = require('./src/app');
-const whatsappController = require('./src/controllers/whatsappController');
 const reminderService = require('./src/services/reminderService');
 
 const PORT = process.env.PORT || 3001;
@@ -19,32 +19,15 @@ process.on('unhandledRejection', (err) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
-    
-    // 1. Initial WhatsApp Load
-    try {
-        whatsappController.loadAllSessions();
-    } catch (e) {
-        console.error('Failed to load WhatsApp sessions:', e);
-    }
-    
-    // 2. Schedule Order Reminders (Every 12 hours)
-    // Runs once on startup, then every 12h
+
+    // Schedule order reminders
+    // Run frequently so 1-20 hour reminder delays feel accurate.
     setInterval(() => {
         reminderService.checkAndSendReminders();
-    }, 12 * 60 * 60 * 1000);
+    }, 10 * 60 * 1000);
     
-    // Initial run after 1 minute to avoid startup CPU spike
+    // Initial run shortly after startup to avoid long first-wait.
     setTimeout(() => {
         reminderService.checkAndSendReminders();
-    }, 60 * 1000);
-
-    // 3. Start Cleanup Job (Every 1 Hour)
-    setInterval(() => {
-        whatsappController.checkAndCleanupExpiredSessions();
-    }, 60 * 60 * 1000);
-
-    // 4. Start Auto-Repair Job (Every 5 Minutes)
-    setInterval(() => {
-        whatsappController.checkAndAutoRepairSessions();
-    }, 5 * 60 * 1000);
+    }, 15 * 1000);
 });

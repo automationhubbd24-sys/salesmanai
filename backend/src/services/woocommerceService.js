@@ -44,9 +44,8 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
             // If type is 'variable', we might want to fetch variations or just store it as is.
             // For now, let's map base fields.
             
-            // Price & Stock
+            // Price
             const price = p.price || 0;
-            const stock = typeof p.stock_quantity === 'number' ? p.stock_quantity : 0;
             
             // Construct Variant Array if needed (for our system compatibility)
             // But we are moving to top-level fields for simple products.
@@ -77,7 +76,6 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
                 image_url: imageUrl,
                 price: price,
                 currency: "BDT",
-                stock: stock,
                 is_active: p.status === 'publish',
                 variants: variants // Keep for compatibility
             };
@@ -99,18 +97,16 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
                              keywords = $3,
                              image_url = $4,
                              price = $5,
-                             stock = $6,
-                             currency = $7,
-                             variants = $8,
+                             currency = $6,
+                             variants = $7,
                              updated_at = NOW()
-                         WHERE id = $9`,
+                         WHERE id = $8`,
                         [
                             productData.name,
                             productData.description,
                             productData.keywords,
                             productData.image_url,
                             productData.price,
-                            productData.stock,
                             productData.currency,
                             productData.variants,
                             existing.id
@@ -124,8 +120,8 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
                 try {
                     await query(
                         `INSERT INTO products
-                            (user_id, name, description, keywords, image_url, price, stock, currency, variants, is_active)
-                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                            (user_id, name, description, keywords, image_url, price, currency, variants, is_active)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
                         [
                             productData.user_id,
                             productData.name,
@@ -133,7 +129,6 @@ async function importProducts(userId, url, consumerKey, consumerSecret) {
                             productData.keywords,
                             productData.image_url,
                             productData.price,
-                            productData.stock,
                             productData.currency,
                             productData.variants,
                             productData.is_active

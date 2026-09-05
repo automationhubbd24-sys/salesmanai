@@ -1,5 +1,27 @@
 const dbService = require('./dbService');
 const emailService = require('./emailService');
+const pgClient = require('./pgClient');
+const businessProfileService = require('./businessProfileService');
+
+const DEFAULT_ORDER_FIELD_POLICY = {
+    mode: 'physical_ecommerce',
+    requiredFields: ['product_name', 'quantity', 'customer_name', 'phone', 'address'],
+    confirmableFields: ['product_name', 'quantity', 'phone', 'address'],
+    phoneOptional: false
+};
+const DIGITAL_SERVICE_ORDER_FIELD_POLICY = {
+    mode: 'digital_service',
+    requiredFields: ['product_name', 'quantity'],
+    confirmableFields: ['product_name', 'quantity'],
+    phoneOptional: true
+};
+const APPOINTMENT_ORDER_FIELD_POLICY = {
+    mode: 'appointment',
+    requiredFields: ['product_name', 'customer_name', 'phone'],
+    confirmableFields: ['product_name', 'customer_name', 'phone'],
+    phoneOptional: false
+};
+const VALID_LEAD_STATUSES = ['draft', 'confirmed'];
 
 /**
  * Normalizes a Bangladeshi phone number to 01XXXXXXXXX format.
@@ -34,33 +56,331 @@ function parsePrice(value) {
     return isFinite(num) ? num : 0;
 }
 
+function normalizeTextValue(value) {
+    if (value === undefined || value === null) return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    if (['null', 'undefined', 'pending', 'unknown', 'n/a'].includes(text.toLowerCase())) return null;
+    return text;
+}
+
+function cleanExtractedData(data = {}) {
+    const fields = data.fields && typeof data.fields === 'object' ? data.fields : data;
+    const phoneSource = fields.phone || fields.number || fields.mobile || fields.customer_phone;
+    const phone = normalizeBdPhone(phoneSource);
+    const quantity = normalizeTextValue(fields.quantity || fields.product_quantity);
+    const emailSource = fields.email || fields.customer_email;
+
+    return {
+        product_name: normalizeTextValue(fields.product_name || fields.product || fields.item_name),
+        variant: normalizeTextValue(fields.variant || fields.color || fields.size),
+        quantity: quantity || null,
+        phone,
+        address: normalizeTextValue(fields.address || fields.location || fields.customer_address),
+        customer_name: normalizeTextValue(fields.customer_name || fields.name),
+        customer_email: emailSource ? String(emailSource).toLowerCase().trim() : null,
+        price: fields.price ? parsePrice(fields.price) : null,
+        delivery_charge: fields.delivery_charge ? parsePrice(fields.delivery_charge) : null,
+        product_id: normalizeTextValue(fields.product_id),
+        sku_code: normalizeTextValue(fields.sku_code || fields.sku_id || fields.last_variant_key)
+    };
+}
+
+function mergeOrderData(existing = {}, incoming = {}) {
+    const merged = { ...(existing || {}) };
+    for (const [key, value] of Object.entries(incoming || {})) {
+        if (value !== undefined && value !== null && value !== '') merged[key] = value;
+    }
+    return merged;
+}
+
+function hasAnyOrderData(data = {}) {
+    return ['product_name', 'variant', 'quantity', 'phone', 'address', 'customer_name', 'customer_email', 'price', 'product_id', 'sku_code']
+        .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+}
+
+function hasDraftOrderData(data = {}) {
+    return ['quantity', 'phone', 'address', 'customer_name']
+        .some(key => data[key] !== undefined && data[key] !== null && data[key] !== '');
+}
+
+function detectBusinessOrderMode(businessPrompt = '') {
+    const text = normalizeBanglaDigits(String(businessPrompt || '').toLowerCase());
+    const hasDigitalSignal = /(game|coin|top\s*up|topup|recharge|diamond|diamonds|uc|robux|follower|followers|like|likes|subscriber|subscribers|digital|online service|account|service sell|coin sell|boost|uid|server|profile link|page link)/i.test(text);
+    const explicitlySkipsDelivery = /(do\s*not\s*ask|don't\s*ask|no\s*need|not\s*required|optional).{0,40}(delivery|address|location|phone|ডেলিভারি|ঠিকানা|লোকেশন|ফোন)/i.test(text);
+    const hasPhysicalSignal = /(ecommerce|e-commerce|physical|parcel|cod|cash on delivery|courier|কুরিয়ার)/i.test(text);
+    if (hasDigitalSignal && (explicitlySkipsDelivery || !hasPhysicalSignal)) return 'digital_service';
+    return 'physical_ecommerce';
+}
+
+function getOrderFieldPolicy({ businessPrompt = '', businessType = null } = {}) {
+    if (['service', 'digital_service'].includes(businessType)) return DIGITAL_SERVICE_ORDER_FIELD_POLICY;
+    if (businessType === 'appointment') return APPOINTMENT_ORDER_FIELD_POLICY;
+    return detectBusinessOrderMode(businessPrompt) === 'digital_service'
+        ? DIGITAL_SERVICE_ORDER_FIELD_POLICY
+        : DEFAULT_ORDER_FIELD_POLICY;
+}
+
+function detectOrderStart(rawText = '') {
+    const text = normalizeBanglaDigits(String(rawText || '').toLowerCase());
+    return /(অর্ডার|order|দেন|দিন|লাগবে|পাঠান|নিতে চাই|নিব|নেব|confirm|কনফার্ম)/i.test(text);
+}
+
+function isPureInfoQuery(rawText = '', data = {}) {
+    if (hasDraftOrderData(data)) return false;
+    const text = normalizeBanglaDigits(String(rawText || '').toLowerCase());
+    const asksInfo = /(দাম|price|koto|কত|available|আছে|details|ডিটেইল|কালার|color|size|সাইজ|ছবি|photo|pic|ভিডিও|video)/i.test(text);
+    return asksInfo && !detectOrderStart(text);
+}
+
+function detectConfirmation(rawText = '', intent = '') {
+    const text = normalizeBanglaDigits(String(rawText || '').toLowerCase());
+    if (['order_confirmed', 'confirmed_order', 'confirm_order'].includes(String(intent || '').toLowerCase())) return true;
+    return /(confirm|confirmed|হ্যাঁ|হ্যা|ঠিক আছে|পাঠান|অর্ডার করেন|order koren|নেন)/i.test(text);
+}
+
+function detectSummaryShown(rawText = '') {
+    const text = String(rawText || '').toLowerCase();
+    const markers = ['summary', 'সামারি', 'অর্ডার:', 'আপনার অর্ডার', 'total', 'মোট', 'confirm'];
+    return markers.some(marker => text.includes(marker));
+}
+
+function getMissingFields(orderData = {}, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY) {
+    return fieldPolicy.requiredFields.filter(field => !normalizeTextValue(orderData[field]));
+}
+
+function getConfirmableMissingFields(orderData = {}, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY) {
+    return fieldPolicy.confirmableFields.filter(field => !normalizeTextValue(orderData[field]));
+}
+
+function buildOrderItems(orderData = {}) {
+    return [{
+        product_name: orderData.product_name || null,
+        variant: orderData.variant || null,
+        quantity: orderData.quantity || '1',
+        price: orderData.price || null,
+        sku_code: orderData.sku_code || null,
+        product_id: orderData.product_id || null
+    }].filter(item => item.product_name || item.product_id || item.variant || item.sku_code);
+}
+
+function buildNextPromptInstruction(missingFields = []) {
+    const labels = {
+        product_name: 'প্রোডাক্টের নাম',
+        quantity: 'পরিমাণ',
+        customer_name: 'আপনার নাম',
+        phone: 'ফোন নম্বর',
+        address: 'ডেলিভারি লোকেশন'
+    };
+    const important = missingFields.filter(field => ['customer_name', 'phone', 'address'].includes(field));
+    const fieldsToAsk = important.length > 0 ? important : missingFields.slice(0, 2);
+    if (fieldsToAsk.length === 0) return null;
+    return `অর্ডারটি নিতে ${fieldsToAsk.map(field => labels[field] || field).join(', ')} দিন।`;
+}
+
+function determineSection({ intent, mergedData, rawText, previousState, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY }) {
+    const normalizedIntent = String(intent || '').toLowerCase();
+    const missingFields = getMissingFields(mergedData, fieldPolicy);
+    const requiredComplete = missingFields.length === 0;
+    const orderStarted = normalizedIntent.includes('order') || hasDraftOrderData(mergedData) || detectOrderStart(rawText) || previousState?.section === 'draft';
+
+    if (previousState?.section === 'confirmed') {
+        return { section: 'confirmed', missingFields, requiredComplete, shouldSave: false };
+    }
+
+    if (requiredComplete && orderStarted) {
+        return { section: 'confirmed', missingFields, requiredComplete, shouldSave: true };
+    }
+
+    if (orderStarted && hasAnyOrderData(mergedData)) {
+        return { section: 'draft', missingFields, requiredComplete, shouldSave: false };
+    }
+
+    return { section: null, missingFields, requiredComplete, shouldSave: false };
+}
+
+async function ensureOrderStateTable() {
+    await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS conversation_order_states (
+            id bigserial PRIMARY KEY,
+            platform text NOT NULL,
+            page_id text NOT NULL,
+            sender_id text NOT NULL,
+            section text NOT NULL DEFAULT 'draft',
+            status text NOT NULL DEFAULT 'active',
+            order_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+            items jsonb NOT NULL DEFAULT '[]'::jsonb,
+            missing_fields jsonb NOT NULL DEFAULT '[]'::jsonb,
+            summary_shown boolean NOT NULL DEFAULT false,
+            confirmed_order_id text,
+            order_id text UNIQUE,
+            last_message text,
+            last_contact_at timestamptz NOT NULL DEFAULT NOW(),
+            created_at timestamptz NOT NULL DEFAULT NOW(),
+            updated_at timestamptz NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS conversation_order_states_active_idx
+            ON conversation_order_states(platform, page_id, sender_id)
+            WHERE status = 'active';
+    `);
+}
+
+async function getActiveOrderState(platform, pageId, senderId) {
+    await ensureOrderStateTable();
+    const result = await pgClient.query(
+        `SELECT * FROM conversation_order_states
+         WHERE platform = $1 AND page_id = $2 AND sender_id = $3 AND status = 'active'
+         ORDER BY updated_at DESC LIMIT 1`,
+        [platform, String(pageId), String(senderId)]
+    );
+    return result.rows[0] || null;
+}
+
+async function upsertOrderState({ platform, pageId, senderId, section, orderData, items, missingFields, summaryShown, rawText, confirmedOrderId, orderId }) {
+    await ensureOrderStateTable();
+    const safeSection = VALID_LEAD_STATUSES.includes(section) ? section : 'draft';
+    const result = await pgClient.query(
+        `INSERT INTO conversation_order_states
+            (platform, page_id, sender_id, section, order_data, items, missing_fields, summary_shown, last_message, confirmed_order_id, order_id, last_contact_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, NOW(), NOW())
+         ON CONFLICT (platform, page_id, sender_id) WHERE status = 'active'
+         DO UPDATE SET
+            section = EXCLUDED.section,
+            order_data = conversation_order_states.order_data || EXCLUDED.order_data,
+            items = EXCLUDED.items,
+            missing_fields = EXCLUDED.missing_fields,
+            summary_shown = conversation_order_states.summary_shown OR EXCLUDED.summary_shown,
+            last_message = EXCLUDED.last_message,
+            confirmed_order_id = COALESCE(EXCLUDED.confirmed_order_id, conversation_order_states.confirmed_order_id),
+            order_id = COALESCE(EXCLUDED.order_id, conversation_order_states.order_id),
+            last_contact_at = NOW(),
+            updated_at = NOW()
+         RETURNING *`,
+        [
+            platform,
+            String(pageId),
+            String(senderId),
+            safeSection,
+            JSON.stringify(orderData || {}),
+            JSON.stringify(items || []),
+            JSON.stringify(missingFields || []),
+            Boolean(summaryShown),
+            String(rawText || '').slice(0, 2000),
+            confirmedOrderId || null,
+            orderId || null
+        ]
+    );
+    return result.rows[0];
+}
+
+function buildLegacySavePayload({ pageId, senderId, platform, orderData, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY, businessProfileId = null, businessType = null }) {
+    let resolvedProductName = orderData.product_name || 'Recovered Lead';
+    const skuRef = orderData.sku_code || null;
+    if (skuRef && !String(resolvedProductName).includes('[SKU:')) {
+        resolvedProductName = `${resolvedProductName} [SKU:${skuRef}]`;
+    }
+
+    return {
+        page_id: pageId,
+        sender_id: senderId,
+        platform,
+        product_name: resolvedProductName,
+        phone: orderData.phone || null,
+        address: orderData.address || 'Pending',
+        quantity: orderData.quantity || '1',
+        price: orderData.price ? parsePrice(orderData.price) : null,
+        customer_name: orderData.customer_name || 'Pending',
+        customer_email: orderData.customer_email || null,
+        sender_number: orderData.phone || null,
+        phone_optional: Boolean(fieldPolicy.phoneOptional),
+        business_profile_id: businessProfileId || null,
+        business_type: businessType || (fieldPolicy.mode === 'digital_service' ? 'service' : fieldPolicy.mode === 'physical_ecommerce' ? 'ecommerce' : fieldPolicy.mode),
+        order_mode: fieldPolicy.mode
+    };
+}
+
+async function listOrderStates({ platform, pageId, section, from, to, limit = 200 }) {
+    await ensureOrderStateTable();
+    const values = [platform, String(pageId)];
+    const conditions = ['platform = $1', 'page_id = $2', "status = 'active'"];
+    let idx = 3;
+
+    if (section && VALID_LEAD_STATUSES.includes(section)) {
+        conditions.push(`section = $${idx}`);
+        values.push(section);
+        idx += 1;
+    }
+    if (Number.isFinite(from)) {
+        conditions.push(`last_contact_at >= to_timestamp($${idx} / 1000.0)`);
+        values.push(from);
+        idx += 1;
+    }
+    if (Number.isFinite(to)) {
+        conditions.push(`last_contact_at <= to_timestamp($${idx} / 1000.0)`);
+        values.push(to);
+        idx += 1;
+    }
+
+    values.push(Math.min(Number(limit) || 200, 500));
+    const result = await pgClient.query(
+        `SELECT id, platform, page_id, sender_id, section, order_data, items, missing_fields, summary_shown,
+                confirmed_order_id, order_id, last_message, last_contact_at, created_at, updated_at
+         FROM conversation_order_states
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY last_contact_at DESC
+         LIMIT $${idx}`,
+        values
+    );
+    return result.rows;
+}
+
+async function saveConfirmedLegacyOrder({ pageId, senderId, platform, orderData, fieldPolicy = DEFAULT_ORDER_FIELD_POLICY, businessProfileId = null, businessType = null }) {
+    const savePayload = buildLegacySavePayload({ pageId, senderId, platform, orderData, fieldPolicy, businessProfileId, businessType });
+    const result = await dbService.saveOrder(savePayload);
+    const isNewOrder = Boolean(result?.isNew);
+
+    if (result) {
+        try {
+            const config = platform === 'whatsapp'
+                ? await dbService.getWhatsAppConfig(pageId)
+                : await dbService.getPageConfig(pageId);
+
+            if (config && config.order_email_confirmation_enabled) {
+                const emailOrderData = { ...savePayload, platform };
+
+                if (isNewOrder && savePayload.customer_email) {
+                    await emailService.sendOrderConfirmation(emailOrderData);
+                }
+
+                if (isNewOrder && config.admin_notification_email) {
+                    await emailService.sendAdminOrderNotification(config.admin_notification_email, emailOrderData);
+                }
+            }
+        } catch (emailErr) {
+            console.warn('[Order Email] Failed to trigger notifications:', emailErr.message);
+        }
+    }
+
+    return result;
+}
+
 /**
  * Fetches the most recent pending/incomplete order for a user to provide context to the AI.
  */
-async function getPendingOrderContext(pageId, senderId) {
+async function getPendingOrderContext(pageId, senderId, platform = 'messenger') {
     try {
-        const pgClient = require('./pgClient');
-        // Look for the latest order for this sender on this page
-        const result = await pgClient.query(
-            "SELECT product_name, phone, address, customer_name, quantity, price, status FROM fb_order_list WHERE page_id = $1 AND sender_id = $2 ORDER BY created_at DESC LIMIT 1",
-            [pageId, senderId]
-        );
-
-        if (result.rows.length === 0) return null;
-
-        const order = result.rows[0];
-        const missingFields = [];
-        if (!order.phone || order.phone === 'null') missingFields.push('phone number');
-        if (!order.address || order.address === 'Pending' || order.address === 'null') missingFields.push('delivery address');
-        if (!order.customer_name || order.customer_name === 'Pending' || order.customer_name === 'Unknown') missingFields.push('customer name');
-        if (!order.product_name || order.product_name === 'Unknown' || order.product_name === 'Recovered Lead') missingFields.push('product name');
-
-        return {
-            exists: true,
-            data: order,
-            missingFields: missingFields,
-            isComplete: missingFields.length === 0
-        };
+        const state = await getActiveOrderState(platform, pageId, senderId);
+        if (state) {
+            return {
+                exists: true,
+                data: state.order_data || {},
+                section: state.section,
+                missingFields: state.missing_fields || [],
+                isComplete: Array.isArray(state.missing_fields) && state.missing_fields.length === 0,
+                summaryShown: Boolean(state.summary_shown)
+            };
+        }
+        return null;
     } catch (err) {
         console.error(`[OrderEngine] Context Error:`, err.message);
         return null;
@@ -68,110 +388,113 @@ async function getPendingOrderContext(pageId, senderId) {
 }
 
 /**
- * Orchestrates order-related actions (creation, update, lookup).
- * This is the single source of truth for all order logic.
+ * Orchestrates lead, draft and confirmed order transitions.
  */
 async function orchestrateOrder(params) {
-    const { 
-        pageId, 
-        senderId, 
-        platform, 
-        intent = 'upsert', // upsert, status_check, etc.
-        data = {}, 
-        rawText = '' 
+    const {
+        pageId,
+        senderId,
+        platform,
+        intent = 'upsert',
+        data = {},
+        rawText = '',
+        businessPrompt = '',
+        businessType = null,
+        businessProfileId = null
     } = params;
+    const businessProfile = businessType ? null : await businessProfileService.getProfileForResource({ platform, resourceId: pageId });
+    const rawBusinessType = businessType || data?.business_type || businessProfile?.business_type || null;
+    const resolvedBusinessType = rawBusinessType === 'digital_service' ? 'service' : rawBusinessType;
+    const resolvedBusinessProfileId = businessProfileId || businessProfile?.id || null;
+    const fieldPolicy = getOrderFieldPolicy({ businessPrompt, businessType: resolvedBusinessType });
 
-    console.log(`[OrderEngine] Orchestrating for ${platform}/${senderId}. Intent: ${intent}`);
+    console.log(`[OrderEngine] Orchestrating for ${platform}/${senderId}. Intent: ${intent}. Policy: ${fieldPolicy.mode}`);
 
-    // 1. DATA EXTRACTION (AI-Only Strategy)
-    let extracted = { ...data };
-    
-    // Normalize Phone (if provided by AI)
-    if (extracted.phone || extracted.number || extracted.mobile) {
-        extracted.phone = normalizeBdPhone(extracted.phone || extracted.number || extracted.mobile);
-    }
-
-    // Extract Email if provided
-    if (extracted.email || extracted.customer_email) {
-        extracted.email = (extracted.email || extracted.customer_email).toLowerCase().trim();
-    }
-
-    // Handle Intent: Status Check
     if (intent === 'status_check') {
-        // Logic for checking status could go here
+        const extracted = cleanExtractedData(data);
         return { status: 'LOOKUP_REQUIRED', phone: extracted.phone };
     }
 
-    // Handle Intent: Upsert (Create or Update)
-    if (intent === 'upsert' || intent === 'order_create_or_update') {
-        const hasPhone = extracted.phone && extracted.phone.length >= 8;
-        const hasCriticalInfo = hasPhone || extracted.address || extracted.location || extracted.product_name || extracted.customer_name || extracted.name;
-        
-        if (!hasCriticalInfo) return { status: 'NO_ACTION' };
+    const extracted = cleanExtractedData(data);
+    const previousState = await getActiveOrderState(platform, pageId, senderId);
+    const previousData = previousState?.order_data || {};
 
-        // Persistence via dbService (which already handles the smart merge internally)
-        // dbService now strictly enforces that a NEW order MUST have a phone number.
-        const savePayload = {
-            page_id: pageId,
-            sender_id: senderId,
-            platform: platform,
-            product_name: extracted.product_name || 'Recovered Lead',
-            phone: extracted.phone || null,
-            address: extracted.address || extracted.location || 'Pending',
-            quantity: extracted.quantity || '1',
-            price: extracted.price ? parsePrice(extracted.price) : null,
-            customer_name: extracted.customer_name || extracted.name || 'Pending',
-            customer_email: extracted.email || null
-        };
-
-        try {
-            const result = await dbService.saveOrder(savePayload);
-            
-            // --- NEW: Email Notifications ---
-            if (result) {
-                try {
-                    const config = platform === 'whatsapp' 
-                        ? await dbService.getWhatsAppConfig(pageId)
-                        : await dbService.getPageConfig(pageId);
-                        
-                    if (config && config.order_email_confirmation_enabled) {
-                        const orderData = {
-                            ...savePayload,
-                            platform
-                        };
-
-                        // Send to Customer if email was provided
-                        if (savePayload.customer_email) {
-                            await emailService.sendOrderConfirmation(orderData);
-                        }
-
-                        // Send to Admin if email is configured
-                        if (config.admin_notification_email) {
-                            await emailService.sendAdminOrderNotification(config.admin_notification_email, orderData);
-                        }
-                    }
-                } catch (emailErr) {
-                    console.warn('[Order Email] Failed to trigger notifications:', emailErr.message);
-                }
-            }
-
-            return {
-                status: 'SUCCESS',
-                orderId: result?.id,
-                isNew: result?.status !== 'updated',
-                capturedFields: Object.keys(extracted).filter(k => extracted[k])
-            };
-        } catch (err) {
-            console.error(`[OrderEngine] Failed to save order:`, err.message);
-            return { status: 'ERROR', message: err.message };
-        }
+    if (!previousState && isPureInfoQuery(rawText, extracted)) {
+        return { status: 'NO_ACTION', reason: 'PURE_INFO_QUERY' };
     }
 
-    return { status: 'UNKNOWN_INTENT' };
+    const hasOrderSignal = hasAnyOrderData(extracted) || previousState;
+
+    if (!hasOrderSignal) {
+        return { status: 'NO_ACTION', reason: 'NO_ORDER_SIGNAL' };
+    }
+
+    if ((!extracted.product_name || extracted.product_name === 'Recovered Lead') && extracted.product_id) {
+        try {
+            const product = await dbService.getProductById(extracted.product_id);
+            if (product?.name) extracted.product_name = product.name;
+        } catch (_) {}
+    }
+
+    const mergedData = mergeOrderData(previousData, extracted);
+    const decision = determineSection({ intent, mergedData, rawText, previousState, fieldPolicy });
+    if (!decision.section) {
+        return { status: 'NO_ACTION', reason: 'NO_ORDER_START' };
+    }
+    const items = buildOrderItems(mergedData);
+    const nextPromptInstruction = decision.section === 'draft'
+        ? buildNextPromptInstruction(decision.missingFields)
+        : null;
+
+    let confirmedResult = null;
+    let orderId = previousState?.order_id || null;
+
+    if (decision.section === 'confirmed' && !previousState?.confirmed_order_id) {
+        if (!orderId) orderId = `ORD-${Date.now()}-${String(senderId).slice(-4)}`;
+        confirmedResult = await saveConfirmedLegacyOrder({
+            pageId,
+            senderId,
+            platform,
+            orderData: mergedData,
+            fieldPolicy,
+            businessProfileId: resolvedBusinessProfileId,
+            businessType: resolvedBusinessType
+        });
+    }
+
+    const state = await upsertOrderState({
+        platform,
+        pageId,
+        senderId,
+        section: decision.section,
+        orderData: mergedData,
+        items,
+        missingFields: decision.missingFields,
+        summaryShown: false,
+        rawText,
+        confirmedOrderId: confirmedResult?.id ? String(confirmedResult.id) : null,
+        orderId
+    });
+
+    return {
+        status: 'SUCCESS',
+        section: state.section,
+        orderStateId: state.id,
+        orderId: state.order_id,
+        confirmedOrderId: state.confirmed_order_id,
+        isNew: Boolean(confirmedResult?.isNew),
+        missingFields: state.missing_fields,
+        nextPromptInstruction,
+        capturedFields: Object.keys(extracted).filter(k => extracted[k])
+    };
 }
 
 module.exports = {
     orchestrateOrder,
+    getPendingOrderContext,
+    listOrderStates,
     normalizeBdPhone,
-    normalizeBanglaDigits
+    normalizeBanglaDigits,
+    getMissingFields,
+    getOrderFieldPolicy
 };

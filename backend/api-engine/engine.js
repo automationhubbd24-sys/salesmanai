@@ -4,24 +4,10 @@ const keyService = require('../src/services/keyService');
 const dbService = require('../src/services/dbService');
 const pgClient = require('../src/services/pgClient');
 const adminAuthMiddleware = require('../src/middleware/adminAuthMiddleware');
+const authMiddleware = require('../src/middleware/authMiddleware');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
-
-// --- PRICING ---
-const PRICING = {
-    PRO: 150,
-    FLASH: 100,
-    LITE: 80,
-    BRAIN: 90
-};
-
-const getCostPerRequest = (modelName) => {
-    let rate = PRICING.PRO;
-    if (modelName.includes('flash')) rate = PRICING.FLASH;
-    else if (modelName.includes('lite')) rate = PRICING.LITE;
-    else if (modelName.includes('brain')) rate = PRICING.BRAIN;
-    return rate / 1000;
-};
+const aiService = require('../src/services/aiService');
 
 // --- Proxy Helper ---
 function getProxyUrl(modelName = 'default') {
@@ -118,6 +104,57 @@ const validateUserApiKey = async (req) => {
         return { error: { status: 500, message: 'Database Error' } };
     }
 };
+
+// --- GLOBAL AUTH MIDDLEWARE (STRICT) ---
+router.use(async (req, res, next) => {
+    if (req.path === '/health' || req.path === '/status' || req.path === '/') return next();
+
+    // Skip strict check for key management if it's an internal dashboard request (JWT)
+    // The individual routes will handle specific JWT or Admin auth
+    if (req.path.startsWith('/keys') || req.path.startsWith('/config') || req.path.startsWith('/stats')) {
+        return next();
+    }
+
+    const { userConfig, error } = await validateUserApiKey(req);
+    if (error) {
+        console.warn(`[API Engine Auth] Denied ${req.method} ${req.originalUrl} - ${error.message}`);
+        
+        // Special case: If user gives wrong key but accesses root/base URLs, show friendly error instead of breaking connection tests completely if we want to guide them
+        const isRootPath = req.path === '/v1' || req.path === '/v1/' || req.path === '/api/v1/dev/chat';
+        
+        return res.status(error.status).json({ 
+            error: {
+                message: isRootPath ? "Unauthorized API Key. Please get a valid key from salesmanchatbot.online/dashboard/api" : error.message,
+                type: 'invalid_request_error',
+                code: error.status === 401 ? 'invalid_api_key' : 'forbidden'
+            }
+        });
+    }
+    
+    req.userConfig = userConfig;
+    next();
+});
+
+// --- OpenAI Compatibility Routes ---
+const MODELS_LIST = {
+    object: "list",
+    data: [
+        { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman" },
+        { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman" },
+        { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman" },
+        { id: "salesmanchatbot-brain", object: "model", created: 1709251200, owned_by: "salesman" }
+    ]
+};
+
+router.get('/', (req, res) => res.json({ status: "online", authenticated: true, user_id: req.userConfig.user_id }));
+router.get('/v1', (req, res) => res.json({ status: "online", version: "v1", authenticated: true }));
+router.get('/models', (req, res) => res.json(MODELS_LIST));
+router.get('/v1/models', (req, res) => res.json(MODELS_LIST));
+
+router.post('/chat/completions', async (req, res) => {
+    req.url = '/v1/chat/completions';
+    return router.handle(req, res);
+});
 
 // --- 2. ENGINE STATS & DASHBOARD ---
 router.get('/stats', adminAuthMiddleware, async (req, res) => {
@@ -230,9 +267,7 @@ router.post('/config', adminAuthMiddleware, async (req, res) => {
 // --- UNIFIED DEV API (Text, Image, Voice) ---
 router.post('/v1/dev/chat', async (req, res) => {
     try {
-        const { userConfig, error } = await validateUserApiKey(req);
-        if (error) return res.status(error.status).json({ error: error.message });
-
+        const userConfig = req.userConfig;
         const { messages, model, stream } = req.body;
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({ error: 'messages array is required' });
@@ -279,24 +314,174 @@ router.post('/v1/dev/chat', async (req, res) => {
 });
 
 // --- 2. KEY MANAGEMENT (CRUD) ---
-router.post('/keys', async (req, res) => {
+// This route is shared between Admin Panel and Developer Page
+router.post('/keys', (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const jwt = require('jsonwebtoken');
+    
+    // Try Admin Secret first
+    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || process.env.ADMIN_PASSWORD;
+    try {
+        const payload = jwt.verify(token, adminSecret);
+        if (payload && payload.role === 'admin') {
+            req.isAdmin = true;
+            req.admin = payload;
+            return next();
+        }
+    } catch (e) {
+        // Not an admin token or invalid secret
+    }
+
+    // Try Regular User Auth
+    authMiddleware(req, res, next);
+}, async (req, res) => {
     try {
         const { api, provider, model, email, gmail, mode, owner_id } = req.body;
         if (!api || !provider) return res.status(400).json({ error: "API Key and Provider required" });
         
+        const trimmedApi = api.trim();
+        
+        // 1. Determine and Sanitize owner_id
+        let finalOwnerId = (req.user && req.user.id) ? req.user.id : owner_id;
+        
+        // Validation: Ensure it looks like a UUID if it's not null
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (typeof finalOwnerId === 'string' && !uuidRegex.test(finalOwnerId)) {
+            finalOwnerId = null; // Fallback to null if not a valid UUID
+        } else if (!finalOwnerId || finalOwnerId === 'undefined' || finalOwnerId === 'null') {
+            finalOwnerId = null;
+        }
+
+        const finalMode = (req.admin && req.admin.role === 'admin') ? (mode || 'admin') : 'dev';
+
+        // 2. Add or Update API Key (UPSERT logic in dbService)
         await dbService.addApiKey({ 
-            api, 
-            provider, 
+            api: trimmedApi, 
+            provider: provider.trim(), 
             model: model || 'default', 
             email: email || null,
             gmail: gmail || null,
-            mode: mode || 'admin',
-            owner_id: owner_id || null
+            mode: finalMode,
+            owner_id: finalOwnerId
         });
         await keyService.updateKeyCache(true); // Force Refresh
-        res.json({ success: true, message: "Key added to rotation pool" });
+        res.json({ success: true, message: "Key saved successfully" });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('[API Engine] Error adding key:', error);
+        res.status(500).json({ 
+            error: error.message, 
+            details: 'Failed to add key to database. Please ensure all required fields are correct.' 
+        });
+    }
+});
+
+// GET /keys - List keys owned by the user (or all if admin)
+router.get('/keys', (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const jwt = require('jsonwebtoken');
+    
+    // Try Admin Secret first
+    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || process.env.ADMIN_PASSWORD;
+    try {
+        const payload = jwt.verify(token, adminSecret);
+        if (payload && payload.role === 'admin') {
+            req.isAdmin = true;
+            req.admin = payload;
+            return next();
+        }
+    } catch (e) {
+        // Not an admin token or invalid secret
+    }
+
+    // Try Regular User Auth
+    authMiddleware(req, res, next);
+}, async (req, res) => {
+    try {
+        let queryStr = 'SELECT id, provider, api, model, status, usage_today, created_at, gmail FROM api_list';
+        let params = [];
+
+        if (!req.isAdmin) {
+            queryStr += ' WHERE owner_id = $1::uuid';
+            params = [req.user.id];
+        }
+        
+        queryStr += ' ORDER BY created_at DESC';
+        
+        const { rows } = await pgClient.query(queryStr, params);
+        
+        // Mask API keys for safety if not admin
+        const maskedRows = rows.map(row => ({
+            ...row,
+            api: req.isAdmin ? row.api : (row.api ? `${row.api.substring(0, 8)}...${row.api.substring(row.api.length - 4)}` : null)
+        }));
+
+        res.json({ success: true, keys: maskedRows });
+    } catch (error) {
+        console.error('[API Engine] Error listing keys:', error);
+        res.status(500).json({ 
+            error: error.message,
+            details: 'Failed to fetch keys from database.'
+        });
+    }
+});
+
+// DELETE /keys/:id - Delete a key owned by the user (or any if admin)
+router.delete('/keys/:id', (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const jwt = require('jsonwebtoken');
+    
+    // Try Admin Secret first
+    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || process.env.ADMIN_PASSWORD;
+    try {
+        const payload = jwt.verify(token, adminSecret);
+        if (payload && payload.role === 'admin') {
+            req.isAdmin = true;
+            req.admin = payload;
+            return next();
+        }
+    } catch (e) {
+        // Not an admin token or invalid secret
+    }
+
+    // Try Regular User Auth
+    authMiddleware(req, res, next);
+}, async (req, res) => {
+    try {
+        const id = req.params.id;
+        let queryStr = 'DELETE FROM api_list WHERE id = $1';
+        let params = [id];
+
+        if (!req.isAdmin) {
+            queryStr += ' AND owner_id = $2::uuid';
+            params.push(req.user.id);
+        }
+
+        const result = await pgClient.query(queryStr, params);
+        
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: "Key not found or unauthorized" });
+        }
+
+        await keyService.updateKeyCache(true);
+        res.json({ success: true, message: "Key deleted successfully" });
+    } catch (error) {
+        console.error('[API Engine] Error deleting key:', error);
+        res.status(500).json({ 
+            error: error.message,
+            details: 'Failed to delete key from database.'
+        });
     }
 });
 
@@ -362,28 +547,8 @@ router.delete('/keys/:id', async (req, res) => {
 });
 
 // --- 3. THE CORE PROXY ENGINE (Compatible with OpenAI Client) ---
-// Endpoint: /v1/chat/completions
-router.get('/v1', async (req, res) => {
-    res.json({ status: "online", message: "SalesmanChatbot API Engine v1 is running." });
-});
-
-router.get('/v1/models', async (req, res) => {
-    const { error } = await validateUserApiKey(req);
-    if (error) return res.status(error.status).json({ error: error.message });
-
-    return res.json({
-        object: "list",
-        data: [
-            { id: "salesmanchatbot-pro", object: "model", created: 1677610602, owned_by: "salesman" },
-            { id: "salesmanchatbot-flash", object: "model", created: 1709251200, owned_by: "salesman" },
-            { id: "salesmanchatbot-lite", object: "model", created: 1709251200, owned_by: "salesman" }
-        ]
-    });
-});
-
 router.post('/v1/chat/completions', async (req, res) => {
-    const { userConfig, error: authError } = await validateUserApiKey(req);
-    if (authError) return res.status(authError.status).json({ error: authError.message });
+    const userConfig = req.userConfig;
 
     // Check Balance
     if (userConfig.balance < 0.01) {
@@ -600,6 +765,12 @@ router.post('/v1/chat/completions', async (req, res) => {
                 });
 
                 response.data.pipe(res);
+
+                // Deduct balance for streaming (Flat rate)
+                const cost = await dbService.getCostForModel(model);
+                dbService.deductUserBalance(userConfig.user_id, cost, `API Engine Stream: ${model}`).catch(() => {});
+                dbService.logApiUsage(userConfig.user_id, model, 0, cost, 'api_engine');
+
                 return;
             }
 
@@ -655,9 +826,10 @@ router.post('/v1/chat/completions', async (req, res) => {
             keyService.recordKeyUsage(keyData.key, response.data.usage.total_tokens);
             
             // Deduct User Balance
-            const cost = getCostPerRequest(model);
+            const cost = await dbService.getCostForModel(model);
             dbService.deductUserBalance(userConfig.user_id, cost, `API Engine Call: ${model}`)
                 .catch(err => console.error(`[API Engine] Balance deduction failed:`, err.message));
+            dbService.logApiUsage(userConfig.user_id, model, response.data.usage.total_tokens, cost, 'api_engine');
         }
 
         res.json(response.data);
@@ -687,49 +859,23 @@ router.post('/v1/chat/completions', async (req, res) => {
 // --- NEW: EMBEDDINGS SUPPORT (For Vector DB) ---
 router.post('/v1/embeddings', async (req, res) => {
     try {
-        const authHeader = req.headers.authorization || '';
-        const serviceToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-
-        let userConfig = null;
-        if (serviceToken === 'system-internal-bypass') {
-            // Internal bypass for system services
-            userConfig = { user_id: 'internal', email: 'system@internal' };
-        } else {
-            const { userConfig: validated, error: authError } = await validateUserApiKey(req);
-            if (authError) return res.status(authError.status).json({ error: authError.message });
-            userConfig = validated;
-        }
+        const userConfig = req.userConfig;
 
         const { model, input } = req.body;
         if (!model || !input) return res.status(400).json({ error: "Missing model or input" });
 
-        let provider = 'google';
-        let modelToUse = model;
+        let provider = 'openrouter';
+        let modelToUse = model === 'salesmanchatbot-brain' ? 'qwen/qwen3-embedding-8b' : model;
+
+        if (!modelToUse.includes('/')) provider = 'openai';
 
         const isBranded = model.startsWith('salesmanchatbot-');
-        const useProxyForThisRequest = isBranded;
+        const useProxyForThisRequest = false;
 
         if (isBranded) {
-             try {
-                 // Branded models resolution logic
-                 const mockConfig = { chat_model: model, cheap_engine: true };
-                 // Dynamic require as aiService is not defined at the top level
-                 const aiService = require('../src/services/aiService');
-                 const resolved = await aiService.resolveSalesmanchatbotEngine(mockConfig, 'salesmanchatbot', model, false, false, true);
-                 
-                 // For 'brain', we prefer Gemini's embedding model if it's forced to google
-                 if (model === 'salesmanchatbot-brain') {
-                     provider = 'google';
-                     modelToUse = resolved.finalModel || 'text-embedding-004'; 
-                 } else {
-                     provider = resolved.finalProvider || 'google';
-                     modelToUse = resolved.finalModel || 'text-embedding-004';
-                 }
-             } catch (e) {
-                 provider = 'google';
-                 modelToUse = 'text-embedding-004';
-             }
-         }
+            provider = 'openrouter';
+            modelToUse = 'qwen/qwen3-embedding-8b';
+        }
 
         // Smart Routing from Key Pool
         const keyData = await keyService.getSmartKey(provider, modelToUse, 'text');
@@ -742,9 +888,13 @@ router.post('/v1/embeddings', async (req, res) => {
         if (provider === 'google' || provider === 'gemini') {
             // Check if model name already includes the prefix, if not add it
             const fullModelName = modelToUse.startsWith('models/') ? modelToUse : `models/${modelToUse}`;
-            targetUrl = `https://generativelanguage.googleapis.com/v1beta/${fullModelName}:embedContent`;
+            targetUrl = `https://generativelanguage.googleapis.com/v1beta/${fullModelName}:embedContent?key=${keyData.key}`;
             headers['x-goog-api-key'] = keyData.key;
             payload = { content: { parts: [{ text: typeof input === 'string' ? input : input[0] }] } };
+        } else if (provider === 'openrouter') {
+            targetUrl = 'https://openrouter.ai/api/v1/embeddings';
+            headers['Authorization'] = `Bearer ${keyData.key}`;
+            payload = { model: modelToUse, input: input };
         } else {
             targetUrl = 'https://api.openai.com/v1/embeddings';
             headers['Authorization'] = `Bearer ${keyData.key}`;

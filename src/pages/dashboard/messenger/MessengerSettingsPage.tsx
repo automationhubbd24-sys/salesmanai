@@ -42,10 +42,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 
 const formSchema = z.object({
@@ -62,6 +62,7 @@ const formSchema = z.object({
 });
 
 const MANAGED_MODEL = import.meta.env.VITE_MANAGED_MODEL || "salesmanchatbot-pro";
+const PRO_PLUS_MANAGED_MODEL = "salesmanchatbot-pro-plus";
 
 type PromptProduct = {
   id: string | number;
@@ -73,12 +74,18 @@ type PromptProduct = {
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export default function MessengerSettingsPage() {
+  const isInstagram = window.location.pathname.includes("/dashboard/instagram");
+  const platformName = isInstagram ? "Instagram" : "Messenger";
+  const accountLabel = isInstagram ? "Instagram Account" : "Facebook Page";
+  const integrationPath = isInstagram ? "/dashboard/instagram/integration" : "/dashboard/messenger/integration";
   const [loading, setLoading] = useState(true);
   const [dbId, setDbId] = useState<string | null>(null);
   const [pageId, setPageId] = useState<string | null>(null);
   const [verified, setVerified] = useState(true);
   const [mode, setMode] = useState<"own" | "managed" | null>(null);
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
+  const [proPlusMode, setProPlusMode] = useState(false);
+  const [activeProPlusMode, setActiveProPlusMode] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState("5000");
   const [isPricingOpen, setIsPricingOpen] = useState(false);
   const [couponCode, setCouponCode] = useState("");
@@ -97,15 +104,8 @@ export default function MessengerSettingsPage() {
   const [wait, setWait] = useState<number>(8);
   const [behaviorSaving, setBehaviorSaving] = useState(false);
   const [memoryLimit, setMemoryLimit] = useState<number>(20);
-  const [semanticCacheEnabled, setSemanticCacheEnabled] = useState<boolean>(false);
-  const [embedEnabled, setEmbedEnabled] = useState<boolean>(false);
-  const [semanticThreshold, setSemanticThreshold] = useState<number>(0.96);
   const [temperature, setTemperature] = useState<number>(0.7);
   const [topP, setTopP] = useState<number>(0.9);
-  
-  // Order Notification Settings
-  const [orderEmailEnabled, setOrderEmailEnabled] = useState<boolean>(false);
-  const [adminNotificationEmail, setAdminNotificationEmail] = useState<string>("");
 
   // Smart Order Reminder Settings
   const [orderReminderEnabled, setOrderReminderEnabled] = useState<boolean>(false);
@@ -149,7 +149,7 @@ export default function MessengerSettingsPage() {
         provider: "openrouter",
         api_key: "",
         chatmodel: "openrouter/auto",
-        text_prompt: "You are a helpful assistant for a Facebook page.",
+        text_prompt: `You are a helpful assistant for an ${accountLabel}.`,
       },
   });
 
@@ -237,6 +237,9 @@ export default function MessengerSettingsPage() {
 
           setMode(isManaged ? "managed" : "own");
           setActiveMode(isManaged ? "managed" : "own");
+          const isProPlusActive = Boolean(dbRow.pro_plus_mode ?? pageRow.pro_plus_mode);
+          setProPlusMode(isManaged ? isProPlusActive : false);
+          setActiveProPlusMode(isManaged ? isProPlusActive : false);
 
           const rawModel = dbModel || "openrouter/auto";
           const displayModel = rawModel.replace(":free", "");
@@ -251,18 +254,12 @@ export default function MessengerSettingsPage() {
 
           setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
           setMemoryLimit(dbRow.check_conversion || 20);
-          setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
-          setEmbedEnabled(Boolean(dbRow.embed_enabled));
-          setSemanticThreshold(dbRow.semantic_cache_threshold ? Number(dbRow.semantic_cache_threshold) : 0.96);
           setTemperature(dbRow.temperature !== undefined && dbRow.temperature !== null ? Number(dbRow.temperature) : 0.7);
           setTopP(dbRow.top_p !== undefined && dbRow.top_p !== null ? Number(dbRow.top_p) : 0.9);
           
           setOrderReminderEnabled(Boolean(dbRow.order_reminder_enabled));
           setOrderReminderDelay(dbRow.order_reminder_delay_hours || 4);
-          setOrderReminderMessage(dbRow.order_reminder_message || "স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?");
-
-          setOrderEmailEnabled(Boolean(pageRow.order_email_confirmation_enabled));
-          setAdminNotificationEmail(pageRow.admin_notification_email || "");
+          setOrderReminderMessage(dbRow.order_reminder_message || "স্যার, আপনি [PRODUCT] টি নিতে চেয়েছিলেন, আপনি কি অর্ডারটি কনফার্ম করতে চান?");
 
           // Fetch centralized credits (sync across all platforms)
           await fetchUserBalance();
@@ -414,7 +411,7 @@ export default function MessengerSettingsPage() {
           body.image_prompt = currentImage;
         }
 
-        const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+        const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -465,7 +462,7 @@ export default function MessengerSettingsPage() {
         throw new Error("Please login again");
       }
 
-      const res = await fetch(`${BACKEND_URL}/messenger/config/${dbId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/config/${dbId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -476,11 +473,6 @@ export default function MessengerSettingsPage() {
           check_conversion: memoryLimit,
           temperature: temperature,
           top_p: topP,
-          semantic_cache_enabled: semanticCacheEnabled,
-          semantic_cache_threshold: semanticThreshold,
-          embed_enabled: embedEnabled,
-          order_email_confirmation_enabled: orderEmailEnabled,
-          admin_notification_email: adminNotificationEmail,
           order_reminder_enabled: orderReminderEnabled,
           order_reminder_delay_hours: orderReminderDelay,
           order_reminder_message: orderReminderMessage
@@ -541,10 +533,35 @@ export default function MessengerSettingsPage() {
     bonus_credit: number;
     permanent_credit: number;
     subscription_plan: string;
+    monthly_expires_at?: string | null;
     is_team_view?: boolean;
   } | null>(null);
 
   const [isTeamView, setIsTeamView] = useState(false);
+  const getSubscriptionExpiryMeta = () => {
+    if (!detailedCredits?.monthly_expires_at) return null;
+    const expires = new Date(detailedCredits.monthly_expires_at);
+    const now = new Date();
+    const diffTime = expires.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      return {
+        text: `আর ${diffDays} দিন বাকি`,
+        className: "text-[11px] text-green-600 dark:text-green-400 font-bold"
+      };
+    }
+    if (diffDays === 0) {
+      return {
+        text: "আজ expire হবে",
+        className: "text-[11px] text-yellow-500 font-bold"
+      };
+    }
+    return {
+      text: "Expired",
+      className: "text-[11px] text-red-500 font-bold"
+    };
+  };
 
   const fetchUserBalance = async () => {
     try {
@@ -584,6 +601,7 @@ export default function MessengerSettingsPage() {
           bonus_credit: Number(data.bonus_credit) || 0,
           permanent_credit: Number(data.permanent_credit) || 0,
           subscription_plan: plan,
+          monthly_expires_at: data.monthly_expires_at || null,
           is_team_view: data.is_team_view
         });
       }
@@ -637,7 +655,8 @@ export default function MessengerSettingsPage() {
             daily_used: data.daily_used || 0,
             bonus_credit: data.bonus_credit || 0,
             permanent_credit: data.permanent_credit || 0,
-            subscription_plan: data.subscription_plan || 'none'
+            subscription_plan: data.subscription_plan || 'none',
+            monthly_expires_at: data.monthly_expires_at || null
         });
         setMessageCredit(data.message_credit || 0);
         setPlanActive(data.subscription_plan !== 'none');
@@ -664,7 +683,8 @@ export default function MessengerSettingsPage() {
             daily_used: data.daily_used || 0,
             bonus_credit: data.bonus_credit || 0,
             permanent_credit: data.permanent_credit || 0,
-            subscription_plan: data.subscription_plan || 'none'
+            subscription_plan: data.subscription_plan || 'none',
+            monthly_expires_at: data.monthly_expires_at || null
         });
         setMessageCredit(data.message_credit || 0);
         setIsPricingOpen(false);
@@ -681,9 +701,9 @@ export default function MessengerSettingsPage() {
     setLoading(true);
 
     if (mode === "managed") {
-        values.provider = "gemini"; 
+        values.provider = proPlusMode ? "salesmanchatbot" : "gemini";
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = MANAGED_MODEL;
+        values.chatmodel = proPlusMode ? PRO_PLUS_MANAGED_MODEL : MANAGED_MODEL;
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");
@@ -719,8 +739,11 @@ export default function MessengerSettingsPage() {
         ai: values.provider,
         api_key: values.api_key,
         chat_model: values.chatmodel,
+        vision_model: null,
+        voice_model: values.chatmodel,
         custom_base_url: values.provider === 'custom' ? values.base_url : null,
-        cheap_engine: mode === "managed" 
+        cheap_engine: mode === "managed",
+        pro_plus_mode: mode === "managed" ? proPlusMode : false
       };
 
       console.log("Saving AI settings:", payload);
@@ -737,6 +760,7 @@ export default function MessengerSettingsPage() {
       }
 
       setActiveMode(mode); // Update active mode indicator
+      setActiveProPlusMode(mode === "managed" ? proPlusMode : false);
       toast.success("AI settings saved successfully");
       
     } catch (error: any) {
@@ -759,10 +783,10 @@ export default function MessengerSettingsPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">No Page Connected</h2>
-        <p className="text-muted-foreground">Please connect to a page to manage AI settings.</p>
+        <h2 className="text-2xl font-bold">No {accountLabel} Connected</h2>
+        <p className="text-muted-foreground">Please connect to an {accountLabel} to manage AI settings.</p>
         <Button asChild>
-            <Link to="/dashboard/messenger/integration">Go to Pages</Link>
+            <Link to={integrationPath}>Go to Accounts</Link>
         </Button>
       </div>
     );
@@ -787,19 +811,18 @@ export default function MessengerSettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-           <h2 className="text-3xl font-bold tracking-tight">Messenger AI Intelligence</h2>
-           <p className="text-muted-foreground">
-             Connect your preferred AI brain for your Facebook Page.
+           <h2 className="text-3xl font-bold tracking-tight">{platformName} AI Intelligence</h2>
+           <p className="text-muted-foreground mt-1">
+             Connect your preferred AI brain for your {accountLabel}.
            </p>
         </div>
         <div className="flex gap-2">
             <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
-                className="border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10"
             >
                 <Bot className="mr-2 h-4 w-4" />
                 Edit System Prompt
@@ -807,7 +830,6 @@ export default function MessengerSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("image")} 
                 variant="outline"
-                className="border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10"
             >
                 <Image className="mr-2 h-4 w-4" />
                 Edit Image Prompt
@@ -842,10 +864,10 @@ export default function MessengerSettingsPage() {
                                 placeholder="Search product..."
                                 value={productSearch}
                                 onChange={(e) => setProductSearch(e.target.value)}
-                                className="h-7 max-w-[180px] text-xs bg-black/40 border-white/10"
+                                className="h-7 max-w-[180px] text-xs"
                               />
                             </div>
-                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-white/10 rounded-md bg-black/20 p-2">
+                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-border rounded-md bg-secondary p-2">
                               {productLoading && (
                                 <span className="text-xs text-muted-foreground">
                                   Loading products...
@@ -874,7 +896,7 @@ export default function MessengerSettingsPage() {
                                       key={p.id}
                                       type="button"
                                       onClick={() => handleInsertProductIntoPrompt(p)}
-                                      className="text-xs px-2 py-1 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 hover:bg-[#00ff88]/15 hover:border-[#00ff88] transition-colors"
+                                      className="text-xs px-2 py-1 rounded-full border border-primary/30 bg-primary/5 hover:bg-primary/15 hover:border-primary transition-colors"
                                     >
                                       {p.name || "Untitled"}
                                     </button>
@@ -915,7 +937,6 @@ export default function MessengerSettingsPage() {
                         variant="secondary" 
                         onClick={handleOptimizePrompt} 
                         disabled={optimizing || promptSaving}
-                        className="bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88]"
                     >
                         {optimizing ? (
                             <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" />
@@ -938,8 +959,8 @@ export default function MessengerSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-6">
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+      <div className="space-y-6">
+        <Card className="bg-background border-border">
           <CardHeader>
             <CardTitle className="flex justify-between items-center">
                 AI Provider Configuration
@@ -948,11 +969,11 @@ export default function MessengerSettingsPage() {
                       variant="outline"
                       className={
                         activeMode === 'managed'
-                          ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/60'
-                          : 'border-white/30 text-white/70'
+                          ? 'bg-primary/10 text-primary border-primary/60'
+                          : 'border-border text-muted-foreground'
                       }
                     >
-                        Status: {activeMode === 'managed' ? "User Cloud API" : "Own API"}
+                        Status: {activeMode === 'managed' ? (activeProPlusMode ? PRO_PLUS_MANAGED_MODEL : "User Cloud API") : "Own API"}
                     </Badge>
                 )}
             </CardTitle>
@@ -963,12 +984,12 @@ export default function MessengerSettingsPage() {
           <CardContent>
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#00ff88] border-t-transparent" />
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground animate-pulse">Detecting AI Configuration...</p>
                 </div>
             ) : (
                 <>
-                    <div className="mb-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3">
                         <RadioGroup 
                             value={mode || ""} 
                             onValueChange={(v) => {
@@ -980,11 +1001,11 @@ export default function MessengerSettingsPage() {
                     <RadioGroupItem value="own" id="own" className="peer sr-only" />
                     <Label
                       htmlFor="own"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">Use Own API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Use your own API Key (Gemini, GPT)
                       </span>
                     </Label>
@@ -993,11 +1014,11 @@ export default function MessengerSettingsPage() {
                     <RadioGroupItem value="managed" id="managed" className="peer sr-only" />
                     <Label
                       htmlFor="managed"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/60 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">User Cloud API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Hassle-free, High Speed Engine
                       </span>
                     </Label>
@@ -1119,11 +1140,28 @@ export default function MessengerSettingsPage() {
                       </FormItem>
                     )}
                   />
+
                     </>
                 ) : (
                     <div className="space-y-6">
                         {/* Compact Managed Mode Banner */}
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 dark:border-emerald-800/30 dark:bg-emerald-900/10 shadow-sm transition-all hover:shadow-md">
+                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-secondary/40 p-3">
+                                <div>
+                                    <div className="text-sm font-semibold">Switch Pro Plus Mode</div>
+                                    <p className="text-xs text-muted-foreground">
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Badge
+                                        variant="outline"
+                                        className={proPlusMode ? "border-primary/60 text-primary" : "border-border text-muted-foreground"}
+                                    >
+                                        {proPlusMode ? PRO_PLUS_MANAGED_MODEL : "Standard Cloud"}
+                                    </Badge>
+                                    <Switch checked={proPlusMode} onCheckedChange={setProPlusMode} />
+                                </div>
+                            </div>
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-4">
                                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/50">
@@ -1132,22 +1170,22 @@ export default function MessengerSettingsPage() {
                                     <div>
                                         <h3 className="font-bold text-emerald-900 dark:text-emerald-100">User Cloud API</h3>
                                         <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
-                                            High-speed engine. No setup required.
+                                            {proPlusMode ? "SalesmanChatbot Pro Plus routing with smart fallback." : "High-speed engine. No setup required."}
                                         </p>
                                     </div>
                                 </div>
 
                                 {(detailedCredits?.subscription_plan !== 'none' || detailedCredits?.permanent_credit > 0 || messageCredit > 0) ? (
-                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-black/60 to-purple-900/10 p-4 shadow-lg border border-white/10 dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
+                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-secondary/80 to-purple-500/5 p-4 shadow-lg border border-border dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
                                         <div className="text-right flex-1">
-                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/60 mb-2">Current Status</p>
-                                            <div className="text-base font-black text-white leading-none tracking-tight flex items-center justify-end gap-2">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-2">Current Status</p>
+                                            <div className="text-base font-black text-foreground leading-none tracking-tight flex items-center justify-end gap-2">
                                                 <Sparkles className="h-4 w-4 text-[#00ff88]" />
                                                 {isTeamView ? (
                                                   <span className="text-amber-500 font-bold">Managed by Owner</span>
                                                 ) : (
                                                   <>
-                                                    {(selectedPlan === '500_free' || (detailedCredits?.daily_limit === 0 && messageCredit <= 100)) && "Free Credits"}
+                                                    {selectedPlan === '500_free' && "Free Credits"}
                                                     {(selectedPlan === '1000' || selectedPlan === 'm1000' || selectedPlan === 'starter') && "Starter Plan"}
                                                     {(selectedPlan === '5000' || selectedPlan === 'm3000' || selectedPlan === 'pro') && (detailedCredits?.daily_limit > 0 ? "Pro Plan" : "Free Credits")}
                                                     {(selectedPlan === '10000' || selectedPlan === 'm7500' || selectedPlan === 'enterprise') && (detailedCredits?.daily_limit > 0 ? "Enterprise Plan" : "Free Credits")}
@@ -1160,9 +1198,21 @@ export default function MessengerSettingsPage() {
                                                     {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan === 'none' && (detailedCredits?.permanent_credit > 0 || messageCredit > 0) && (
                                                       <span>Permanent Packages</span>
                                                     )}
+                                                    {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan === 'none' && detailedCredits?.permanent_credit === 0 && messageCredit <= 100 && (
+                                                      <span>Free Credits</span>
+                                                    )}
                                                   </>
                                                 )}
                                             </div>
+                                            {!isTeamView && getSubscriptionExpiryMeta() && (
+                                                <div className="mt-2 flex justify-end">
+                                                    <div className="rounded-md bg-green-500/10 border border-green-500/20 px-2 py-1">
+                                                        <span className={getSubscriptionExpiryMeta()?.className}>
+                                                            {getSubscriptionExpiryMeta()?.text}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
                                             
                                             <div className="mt-3 space-y-2">
                                                 <div className="flex items-center justify-end gap-2">
@@ -1174,10 +1224,10 @@ export default function MessengerSettingsPage() {
                                                 
                                                 {detailedCredits && detailedCredits.daily_limit > 0 && (
                                                     <div className="flex flex-col items-end gap-1">
-                                                        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-400 font-bold">
+                                                        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-600 dark:text-blue-400 font-bold">
                                                             Daily: {detailedCredits.daily_used.toLocaleString()} / {detailedCredits.daily_limit.toLocaleString()}
                                                         </div>
-                                                        <div className="w-24 h-1 bg-white/5 rounded-full overflow-hidden">
+                                                        <div className="w-24 h-1 bg-secondary rounded-full overflow-hidden">
                                                             <div 
                                                                 className="h-full bg-blue-500 transition-all duration-500" 
                                                                 style={{ width: `${Math.min(100, (detailedCredits.daily_used / detailedCredits.daily_limit) * 100)}%` }}
@@ -1188,12 +1238,12 @@ export default function MessengerSettingsPage() {
 
                                                 <div className="flex flex-wrap justify-end gap-2 mt-2">
                                                     {detailedCredits?.bonus_credit > 0 && (
-                                                        <div className="px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] text-amber-500 font-black shadow-sm">
+                                                        <div className="px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] text-amber-600 dark:text-amber-500 font-black shadow-sm">
                                                             BONUS: {detailedCredits.bonus_credit.toLocaleString()}
                                                         </div>
                                                     )}
                                                     {detailedCredits?.permanent_credit > 0 && (
-                                                        <div className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[12px] text-emerald-500 font-black shadow-sm">
+                                                        <div className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[12px] text-emerald-600 dark:text-emerald-500 font-black shadow-sm">
                                                             PERMANENT: {detailedCredits.permanent_credit.toLocaleString()}
                                                         </div>
                                                     )}
@@ -1206,7 +1256,7 @@ export default function MessengerSettingsPage() {
                                               variant="outline"  
                                               size="sm"
                                               onClick={() => setIsPricingOpen(true)} 
-                                              className="border-white/10 hover:bg-white/5 text-white font-black h-10 text-[11px] shadow-xl px-4 rounded-xl ml-2"
+                                              className="border-border hover:bg-secondary text-foreground font-black h-10 text-[11px] shadow-sm px-4 rounded-xl ml-2"
                                           >
                                               Upgrade
                                           </Button>
@@ -1244,10 +1294,10 @@ export default function MessengerSettingsPage() {
 
                         {/* Pricing Modal */}
                         <Dialog open={isPricingOpen} onOpenChange={setIsPricingOpen}>
-                            <DialogContent className="max-w-4xl bg-[#0b0b0b] border-white/10 text-white">
+                            <DialogContent className="max-w-4xl bg-card border-border text-foreground">
                                 <DialogHeader>
-                                    <DialogTitle className="text-2xl font-black text-[#00ff88]">Select Your AI Plan</DialogTitle>
-                                    <DialogDescription className="text-gray-400">
+                                    <DialogTitle className="text-2xl font-black text-primary">Select Your AI Plan</DialogTitle>
+                                    <DialogDescription className="text-muted-foreground">
                                         Choose the message capacity that fits your needs. Starter/Pro have no expiry; Enterprise is valid for 30 days.
                                     </DialogDescription>
                                 </DialogHeader>
@@ -1255,7 +1305,7 @@ export default function MessengerSettingsPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6">
                                     {/* Monthly Packages */}
                                     <div className="space-y-4">
-                                        <h4 className="text-[#00ff88] font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                                        <h4 className="text-primary font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <Clock className="h-4 w-4" />
                                             Monthly Packages
                                         </h4>
@@ -1267,23 +1317,23 @@ export default function MessengerSettingsPage() {
                                             ].map((plan) => (
                                                 <div 
                                                     key={plan.id}
-                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-[#00ff88]/60 ${selectedPlan === plan.id ? 'border-[#00ff88] bg-[#00ff88]/10' : 'border-white/10 bg-white/5'}`}
+                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-primary/60 ${selectedPlan === plan.id ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50'}`}
                                                     onClick={() => setSelectedPlan(plan.id)}
                                                 >
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <h3 className="font-bold text-lg">{plan.name}</h3>
-                                                                {plan.popular && <Badge className="bg-[#00ff88] text-black text-[8px] h-4">POPULAR</Badge>}
+                                                                {plan.popular && <Badge className="bg-primary text-primary-foreground text-[8px] h-4">POPULAR</Badge>}
                                                             </div>
-                                                            <p className="text-xs text-gray-400">{plan.msg} • {plan.bonus}</p>
+                                                            <p className="text-xs text-muted-foreground">{plan.msg} • {plan.bonus}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <div className="text-xl font-black text-[#00ff88]">৳{plan.price}</div>
-                                                            <p className="text-[10px] text-gray-500">/ month</p>
+                                                            <div className="text-xl font-black text-primary">৳{plan.price}</div>
+                                                            <p className="text-[10px] text-muted-foreground">/ month</p>
                                                         </div>
                                                     </div>
-                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-[#00ff88] rounded-full p-1 text-black shadow-lg"><Check className="h-3 w-3" /></div>}
+                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-primary rounded-full p-1 text-primary-foreground shadow-lg"><Check className="h-3 w-3" /></div>}
                                                 </div>
                                             ))}
                                         </div>
@@ -1291,7 +1341,7 @@ export default function MessengerSettingsPage() {
 
                                     {/* Permanent Packages */}
                                     <div className="space-y-4">
-                                        <h4 className="text-emerald-400 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                                        <h4 className="text-emerald-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <InfinityIcon className="h-4 w-4" />
                                             Permanent Packages
                                         </h4>
@@ -1303,23 +1353,23 @@ export default function MessengerSettingsPage() {
                                             ].map((plan) => (
                                                 <div 
                                                     key={plan.id}
-                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-emerald-400/60 ${selectedPlan === plan.id ? 'border-emerald-400 bg-emerald-400/10' : 'border-white/10 bg-white/5'}`}
+                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-emerald-500/60 ${selectedPlan === plan.id ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-secondary/50'}`}
                                                     onClick={() => setSelectedPlan(plan.id)}
                                                 >
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <h3 className="font-bold text-lg">{plan.name}</h3>
-                                                                {plan.popular && <Badge className="bg-emerald-400 text-black text-[8px] h-4">BEST VALUE</Badge>}
+                                                                {plan.popular && <Badge className="bg-emerald-500 text-white text-[8px] h-4">BEST VALUE</Badge>}
                                                             </div>
-                                                            <p className="text-xs text-gray-400">{plan.msg}</p>
+                                                            <p className="text-xs text-muted-foreground">{plan.msg}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <div className="text-xl font-black text-emerald-400">৳{plan.price}</div>
-                                                            <p className="text-[10px] text-gray-500">No Expiry</p>
+                                                            <div className="text-xl font-black text-emerald-500">৳{plan.price}</div>
+                                                            <p className="text-[10px] text-muted-foreground">No Expiry</p>
                                                         </div>
                                                     </div>
-                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-emerald-400 rounded-full p-1 text-black shadow-lg"><Check className="h-3 w-3" /></div>}
+                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-emerald-500 rounded-full p-1 text-white shadow-lg"><Check className="h-3 w-3" /></div>}
                                                 </div>
                                             ))}
                                         </div>
@@ -1327,24 +1377,24 @@ export default function MessengerSettingsPage() {
                                 </div>
 
                                 {/* Coupon Section in Modal */}
-                                <div className="space-y-4 pt-6 border-t border-dashed border-white/10">
+                                <div className="space-y-4 pt-6 border-t border-dashed border-border">
                                      <div className="flex items-end gap-3">
                                          <div className="grid gap-2 flex-1 max-w-xs">
-                                             <Label htmlFor="coupon" className="text-gray-400 font-bold uppercase tracking-wider text-xs">Have a Coupon?</Label>
+                                             <Label htmlFor="coupon" className="text-muted-foreground font-bold uppercase tracking-wider text-xs">Have a Coupon?</Label>
                                              <Input 
                                                  id="coupon" 
                                                  placeholder="ENTER CODE (E.G. FREE500)" 
                                                  value={couponCode}
                                                  onChange={(e) => setCouponCode(e.target.value)}
                                                  disabled={!!appliedCoupon}
-                                                 className="uppercase bg-white/5 border-white/10 focus:border-[#00ff88]/60 font-mono text-white"
+                                                 className="uppercase bg-secondary border-border focus:border-primary/60 font-mono text-foreground"
                                              />
                                          </div>
                                          <Button 
                                              type="button" 
                                              onClick={handleApplyCoupon}
                                              disabled={!!appliedCoupon || !couponCode}
-                                             className="bg-white/10 hover:bg-white/20 text-white font-bold"
+                                             className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
                                          >
                                              {appliedCoupon ? "Applied" : "Apply Code"}
                                          </Button>
@@ -1472,7 +1522,7 @@ export default function MessengerSettingsPage() {
         </Card>
         */}
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
             <CardHeader>
                 <CardTitle>Response Behavior</CardTitle>
                 <CardDescription>Control how and when the AI replies.</CardDescription>
@@ -1577,7 +1627,7 @@ export default function MessengerSettingsPage() {
                         </p>
                     </div>
 
-                    <div className="border-t border-white/5 pt-6 space-y-4">
+                    <div className="border-t border-border pt-6 space-y-4">
                         <div className="flex items-center justify-between">
                             <div className="space-y-1">
                                 <Label className="text-base">Smart Order Reminder</Label>
@@ -1626,7 +1676,7 @@ export default function MessengerSettingsPage() {
                                     />
                                     <p className="text-xs text-muted-foreground flex items-center gap-1">
                                         <Sparkles className="w-3 h-3" />
-                                        AI will automatically rewrite this for each customer to avoid Facebook spam detection.
+                                        AI will automatically rewrite this for each customer to keep reminders varied.
                                     </p>
                                 </div>
                             </div>
@@ -1637,7 +1687,7 @@ export default function MessengerSettingsPage() {
                         <Button onClick={handleSaveBehavior} disabled={behaviorSaving} variant="secondary">
                             {behaviorSaving ? (
                                 <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" />
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     Saving...
                                 </>
                             ) : (

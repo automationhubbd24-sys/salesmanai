@@ -7,34 +7,34 @@ const developerAuthMiddleware = async (req, res, next) => {
 
         const pgClient = require('../services/pgClient');
 
-        // Robust check for developer_status column
+        // Robust check for developer_status and is_admin columns
         const columnCheck = await pgClient.query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='developer_status'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name IN ('developer_status', 'is_admin')"
         );
 
-        if (columnCheck.rows.length === 0) {
+        const hasDevStatus = columnCheck.rows.some(r => r.column_name === 'developer_status');
+        const hasIsAdmin = columnCheck.rows.some(r => r.column_name === 'is_admin');
+
+        if (!hasDevStatus) {
             console.warn('[DeveloperAuthMiddleware] developer_status column missing in users table');
-            // If column is missing, user can't be approved. 
-            // We treat this as "none" but since this middleware is for protected routes, we deny access.
             return res.status(403).json({ 
                 error: 'Forbidden: Developer system not fully initialized',
                 status: 'none'
             });
         }
 
-        const { rows } = await pgClient.query(
-            'SELECT developer_status, is_admin FROM users WHERE id = $1::uuid',
-            [userId]
-        );
+        const queryStr = `SELECT developer_status${hasIsAdmin ? ', is_admin' : ''} FROM users WHERE id = $1::uuid`;
+        const { rows } = await pgClient.query(queryStr, [userId]);
 
         if (rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
 
         const user = rows[0];
+        const isAdmin = hasIsAdmin ? user.is_admin : false;
         
         // Admins always have access, or if status is approved
-        if (user.is_admin || user.developer_status === 'approved') {
+        if (isAdmin || user.developer_status === 'approved') {
             return next();
         }
 

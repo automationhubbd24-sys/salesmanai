@@ -3,6 +3,474 @@ const dbService = require('../services/dbService');
 const authService = require('../services/authService');
 const pgClient = require('../services/pgClient');
 
+const otpRequestTracker = new Map();
+const OTP_COOLDOWN_MS = 60 * 1000;
+const OTP_WINDOW_MS = 15 * 60 * 1000;
+const OTP_MAX_PER_WINDOW = 5;
+const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
+const DEBUG_SERVER_URL = 'http://10.2.0.2:7777/event';
+const DEBUG_SESSION_ID = 'whatsapp-loading-stuck';
+
+async function invalidateUserRuntimeCaches(userId) {
+    if (!userId) return;
+
+    try {
+        const [waResult, fbResult] = await Promise.all([
+            pgClient.query(
+                `SELECT session_name, waba_id, phone_number_id
+                 FROM whatsapp_message_database
+                 WHERE user_id = $1::uuid`,
+                [userId]
+            ),
+            pgClient.query(
+                `SELECT page_id
+                 FROM page_access_token_message
+                 WHERE user_id = $1::uuid`,
+                [userId]
+            )
+        ]);
+
+        const webhookController = require('./webhookController');
+
+        waResult.rows.forEach((row) => {
+            [row.session_name, row.waba_id, row.phone_number_id]
+                .filter(Boolean)
+                .forEach((key) => {
+                    webhookController.clearPageCache(key);
+                });
+        });
+
+        fbResult.rows.forEach((row) => {
+            if (row.page_id) {
+                webhookController.clearPageCache(row.page_id);
+            }
+        });
+    } catch (cacheErr) {
+        console.warn('[Auth] Failed to invalidate runtime caches:', cacheErr.message);
+    }
+}
+
+function getClientIp(req) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+function consumeOtpQuota(scope, email, ip) {
+    const now = Date.now();
+    const key = `${scope}:${String(email || '').toLowerCase()}:${ip}`;
+    const current = otpRequestTracker.get(key);
+
+    if (current && now - current.windowStartedAt < OTP_WINDOW_MS) {
+        if (now - current.lastSentAt < OTP_COOLDOWN_MS) {
+            return {
+                allowed: false,
+                retryAfterMs: OTP_COOLDOWN_MS - (now - current.lastSentAt)
+            };
+        }
+        if (current.count >= OTP_MAX_PER_WINDOW) {
+            return {
+                allowed: false,
+                retryAfterMs: OTP_WINDOW_MS - (now - current.windowStartedAt)
+            };
+        }
+
+        current.count += 1;
+        current.lastSentAt = now;
+        otpRequestTracker.set(key, current);
+        return { allowed: true };
+    }
+
+    otpRequestTracker.set(key, {
+        count: 1,
+        lastSentAt: now,
+        windowStartedAt: now
+    });
+    return { allowed: true };
+}
+
+function formatRetryAfterMessage(retryAfterMs) {
+    const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    return `Please wait ${seconds} seconds before requesting another code.`;
+}
+
+async function exchangeFacebookShortLivedToken(shortLivedToken, appId, appSecret) {
+    const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/oauth/access_token`;
+    const params = {
+        grant_type: 'fb_exchange_token',
+        client_id: appId,
+        client_secret: appSecret,
+        fb_exchange_token: shortLivedToken
+    };
+
+    const response = await axios.get(url, { params });
+    return response.data;
+}
+
+async function exchangeFacebookCodeForToken(code, redirectUri, appId, appSecret) {
+    const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/oauth/access_token`;
+    const params = {
+        client_id: appId,
+        client_secret: appSecret,
+        code
+    };
+
+    if (redirectUri) {
+        params.redirect_uri = redirectUri;
+    }
+
+    const response = await axios.get(url, { params });
+    return response.data;
+}
+
+function normalizeMessengerPages(pages) {
+    const byId = new Map();
+
+    for (const page of pages || []) {
+        if (!page?.id) continue;
+
+        const id = String(page.id);
+        const existing = byId.get(id) || {};
+        byId.set(id, {
+            ...existing,
+            id,
+            name: page.name || existing.name || id,
+            ...(page.access_token ? { access_token: page.access_token } : {}),
+            ...(Array.isArray(page.tasks) ? { tasks: page.tasks } : {})
+        });
+    }
+
+    return Array.from(byId.values());
+}
+
+async function getGraphCollection(path, accessToken, fields) {
+    const items = [];
+    let url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}${path}`;
+    let params = { fields, access_token: accessToken, limit: 100 };
+
+    while (url) {
+        const response = await axios.get(url, { params, timeout: 15000 });
+        if (Array.isArray(response.data?.data)) {
+            items.push(...response.data.data);
+        }
+
+        url = response.data?.paging?.next || null;
+        params = undefined;
+    }
+
+    return items;
+}
+
+async function getGraphPageCollection(path, accessToken) {
+    return getGraphCollection(path, accessToken, 'id,name,access_token,tasks');
+}
+
+async function resolveMessengerPages(accessToken) {
+    const diagnostics = [];
+    let pages = [];
+
+    try {
+        pages.push(...await getGraphPageCollection('/me/accounts', accessToken));
+    } catch (error) {
+        diagnostics.push({
+            code: 'MESSENGER_ACCOUNTS_UNAVAILABLE',
+            message: 'Unable to retrieve pages from the Facebook accounts endpoint.'
+        });
+    }
+
+    let businesses = [];
+    try {
+        businesses = await getGraphCollection('/me/businesses', accessToken, 'id,name');
+    } catch (error) {
+        diagnostics.push({
+            code: 'MESSENGER_BUSINESS_DISCOVERY_UNAVAILABLE',
+            message: 'Business Portfolio discovery is unavailable for this Facebook account.'
+        });
+    }
+
+    for (const business of businesses) {
+        for (const relationship of ['owned_pages', 'client_pages', 'assigned_pages']) {
+            try {
+                const businessPages = await getGraphPageCollection(`/${business.id}/${relationship}`, accessToken);
+                pages.push(...businessPages);
+            } catch (error) {
+                diagnostics.push({
+                    code: `MESSENGER_BUSINESS_${relationship.toUpperCase()}_UNAVAILABLE`,
+                    business_id: business.id,
+                    message: `Unable to retrieve ${relationship.replace('_', ' ')} for this Business Portfolio.`
+                });
+            }
+        }
+    }
+
+    const normalizedPages = normalizeMessengerPages(pages);
+    if (normalizedPages.length === 0) {
+        diagnostics.push({
+            code: 'MESSENGER_NO_PAGES_FOUND',
+            message: 'No Facebook Pages are available for this account.'
+        });
+    }
+
+    return { pages: normalizedPages, diagnostics };
+}
+
+function isAllowedFrontendOrigin(origin) {
+    if (!origin) {
+        return false;
+    }
+
+    try {
+        const parsed = new URL(origin);
+        const hostname = parsed.hostname.toLowerCase();
+
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            return true;
+        }
+
+        if (hostname === 'salesmanchatbot.online' || hostname.endsWith('.salesmanchatbot.online')) {
+            return true;
+        }
+
+        const configuredOrigins = [
+            process.env.FRONTEND_URL,
+            process.env.PUBLIC_WEB_URL,
+            process.env.CLIENT_URL,
+            process.env.APP_URL
+        ]
+            .filter(Boolean)
+            .map((value) => {
+                try {
+                    return new URL(value).origin;
+                } catch {
+                    return null;
+                }
+            })
+            .filter(Boolean);
+
+        return configuredOrigins.includes(parsed.origin);
+    } catch {
+        return false;
+    }
+}
+
+function getCanonicalFrontendOrigin() {
+    const fallbackCandidates = [
+        process.env.FRONTEND_URL,
+        process.env.PUBLIC_WEB_URL,
+        process.env.CLIENT_URL,
+        process.env.APP_URL,
+        'https://salesmanchatbot.online'
+    ];
+
+    for (const candidate of fallbackCandidates) {
+        if (isAllowedFrontendOrigin(candidate)) {
+            return new URL(candidate).origin;
+        }
+    }
+
+    return 'https://salesmanchatbot.online';
+}
+
+function resolveFrontendOrigin(req, requestedOrigin) {
+    if (isAllowedFrontendOrigin(requestedOrigin)) {
+        const parsedOrigin = new URL(requestedOrigin).origin;
+        const parsedHostname = new URL(requestedOrigin).hostname.toLowerCase();
+
+        if (parsedHostname === 'localhost' || parsedHostname === '127.0.0.1') {
+            return parsedOrigin;
+        }
+    }
+
+    const canonicalOrigin = getCanonicalFrontendOrigin();
+    if (canonicalOrigin) {
+        return canonicalOrigin;
+    }
+
+    return `${req.protocol}://${req.get('host')}`;
+}
+
+function renderFacebookBrowserRedirectPage(res, oauthUrl, type) {
+    const parsedUrl = new URL(oauthUrl);
+    const escapedUrl = String(oauthUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const flowLabel = type === 'whatsapp' ? 'WhatsApp Business' : (type === 'instagram' ? 'Instagram' : 'Messenger');
+    const debugData = {
+        host: parsedUrl.host,
+        path: parsedUrl.pathname,
+        client_id: parsedUrl.searchParams.get('client_id'),
+        redirect_uri: parsedUrl.searchParams.get('redirect_uri'),
+        response_type: parsedUrl.searchParams.get('response_type'),
+        display: parsedUrl.searchParams.get('display'),
+        state: parsedUrl.searchParams.get('state'),
+        has_config_id: Boolean(parsedUrl.searchParams.get('config_id'))
+    };
+    const escapedDebugJson = JSON.stringify(debugData, null, 2).replace(/</g, '\\u003c');
+
+    let hiddenInputs = '';
+    for (const [key, value] of parsedUrl.searchParams.entries()) {
+        const escapedKey = String(key).replace(/"/g, '&quot;');
+        const escapedValue = String(value).replace(/"/g, '&quot;');
+        hiddenInputs += `<input type="hidden" name="${escapedKey}" value="${escapedValue}" />`;
+    }
+    const actionUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    return res.status(200).send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta name="referrer" content="origin-when-cross-origin" />
+  <title>Continue with Facebook</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #050505;
+      color: #f8fafc;
+      font-family: Arial, sans-serif;
+      padding: 24px;
+    }
+    .card {
+      width: min(100%, 420px);
+      background: #101010;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 24px;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { margin: 0 0 18px; color: #cbd5e1; line-height: 1.5; }
+    .continue-form {
+      margin: 0;
+    }
+    .continue-button {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 999px;
+      background: #16a34a;
+      color: #03120a;
+      font-weight: 700;
+      text-decoration: none;
+      border: 0;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    small {
+      display: block;
+      margin-top: 14px;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+    details {
+      margin-top: 18px;
+      text-align: left;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px;
+      background: #080808;
+    }
+    summary {
+      cursor: pointer;
+      color: #cbd5e1;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 10px 0 0;
+      color: #93c5fd;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Facebook Connection</h1>
+    
+    <div style="background: #3f3f46; border-left: 4px solid #facc15; padding: 12px; margin-bottom: 20px; border-radius: 4px; font-size: 14px; line-height: 1.5; position: relative;">
+      <button onclick="toggleLang()" style="position: absolute; right: 10px; top: 10px; background: transparent; border: 1px solid #9ca3af; color: #cbd5e1; border-radius: 4px; padding: 2px 6px; font-size: 12px; cursor: pointer;">🌐 BN</button>
+      
+      <div id="warn-en">
+        <strong>⚠️ IMPORTANT:</strong>
+        <br />
+        If you are not already logged into Facebook in this mobile browser, the next screen might get stuck loading.
+        <br /><br />
+        If it gets stuck, please open a new tab, log in to <strong>facebook.com</strong>, and then come back and try again.
+      </div>
+      
+      <div id="warn-bn" style="display: none;">
+        <strong>⚠️ জরুরী:</strong>
+        <br />
+        আপনি যদি এই মোবাইল ব্রাউজারে আগে থেকে ফেসবুকে লগইন করা না থাকেন, তবে পরের স্ক্রিনটি লোডিং-এ আটকে যেতে পারে।
+        <br /><br />
+        যদি আটকে যায়, দয়া করে নতুন একটি ট্যাবে <strong>facebook.com</strong>-এ লগইন করুন, এবং এরপর এখানে ফিরে এসে আবার চেষ্টা করুন।
+      </div>
+    </div>
+
+    <p id="desc-en">We are opening the Facebook login for ${flowLabel}. Please tap the button below to continue.</p>
+    <p id="desc-bn" style="display: none;">আমরা ${flowLabel} এর জন্য ফেসবুক লগইন খুলছি। দয়া করে নিচের বাটনে ক্লিক করুন।</p>
+    
+    <form class="continue-form" method="GET" action="${actionUrl}">
+      ${hiddenInputs}
+      <button type="submit" class="continue-button" style="background: #22c55e; color: white; border: none; padding: 14px 20px; width: 100%; border-radius: 8px; font-size: 16px; font-weight: bold; margin-top: 10px;">Continue to Facebook</button>
+    </form>
+    
+    <div id="footer-en" style="margin-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+      Avoid switching to the Facebook App during this step. Finish the connection in this browser.
+    </div>
+    <div id="footer-bn" style="display: none; margin-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+      লগইন করার সময় ফেসবুক অ্যাপে যাবেন না। এই ব্রাউজারেই কানেকশন সম্পন্ন করুন।
+    </div>
+  </div>
+  <script>
+    function toggleLang() {
+      var warnEn = document.getElementById('warn-en');
+      var warnBn = document.getElementById('warn-bn');
+      var descEn = document.getElementById('desc-en');
+      var descBn = document.getElementById('desc-bn');
+      var footerEn = document.getElementById('footer-en');
+      var footerBn = document.getElementById('footer-bn');
+      var btn = document.querySelector('button[onclick="toggleLang()"]');
+      
+      if (warnEn.style.display === 'none') {
+        warnEn.style.display = 'block';
+        descEn.style.display = 'block';
+        footerEn.style.display = 'block';
+        warnBn.style.display = 'none';
+        descBn.style.display = 'none';
+        footerBn.style.display = 'none';
+        btn.textContent = '🌐 BN';
+      } else {
+        warnEn.style.display = 'none';
+        descEn.style.display = 'none';
+        footerEn.style.display = 'none';
+        warnBn.style.display = 'block';
+        descBn.style.display = 'block';
+        footerBn.style.display = 'block';
+        btn.textContent = '🌐 EN';
+      }
+    }
+
+    (function () {
+      var targetUrl = ${JSON.stringify(String(oauthUrl))};
+      var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      
+      if (!isMobile) {
+        window.location.replace(targetUrl);
+      }
+    })();
+  </script>
+</body>
+</html>`);
+}
+
 exports.exchangeToken = async (req, res) => {
     try {
         const { shortLivedToken } = req.body;
@@ -19,26 +487,18 @@ exports.exchangeToken = async (req, res) => {
             return res.status(500).json({ error: 'Server misconfiguration: Missing App ID/Secret' });
         }
 
-        const url = `https://graph.facebook.com/v19.0/oauth/access_token`;
-        const params = {
-            grant_type: 'fb_exchange_token',
-            client_id: appId,
-            client_secret: appSecret,
-            fb_exchange_token: shortLivedToken
-        };
-
         console.log('Exchanging token with Facebook...');
-        const response = await axios.get(url, { params });
+        const response = await exchangeFacebookShortLivedToken(shortLivedToken, appId, appSecret);
 
-        if (response.data && response.data.access_token) {
+        if (response && response.access_token) {
             console.log('Token exchanged successfully.');
             return res.json({ 
-                access_token: response.data.access_token,
-                expires_in: response.data.expires_in 
+                access_token: response.access_token,
+                expires_in: response.expires_in 
             });
         } else {
-            console.error('Facebook returned unexpected data:', response.data);
-            return res.status(502).json({ error: 'Failed to exchange token', details: response.data });
+            console.error('Facebook returned unexpected data:', response);
+            return res.status(502).json({ error: 'Failed to exchange token', details: response });
         }
 
     } catch (error) {
@@ -47,6 +507,265 @@ exports.exchangeToken = async (req, res) => {
             error: 'Facebook API Error', 
             details: error.response ? error.response.data : error.message 
         });
+    }
+};
+
+async function completeFacebookCode(req, res, label = 'Messenger', includePages = true) {
+    try {
+        const { code, redirectUri } = req.body || {};
+
+        if (!code) {
+            return res.status(400).json({ error: 'Facebook code is required' });
+        }
+
+        const appId = process.env.FACEBOOK_APP_ID;
+        const appSecret = process.env.FACEBOOK_APP_SECRET;
+
+        if (!appId || !appSecret) {
+            console.error('Missing FACEBOOK_APP_ID or FACEBOOK_APP_SECRET in .env');
+            return res.status(500).json({ error: 'Server misconfiguration: Missing App ID/Secret' });
+        }
+
+        const shortLivedData = await exchangeFacebookCodeForToken(code, redirectUri, appId, appSecret);
+        const shortLivedToken = shortLivedData?.access_token;
+
+        if (!shortLivedToken) {
+            return res.status(502).json({ error: 'Facebook did not return an access token' });
+        }
+
+        let finalToken = shortLivedToken;
+        try {
+            const longLivedData = await exchangeFacebookShortLivedToken(shortLivedToken, appId, appSecret);
+            if (longLivedData?.access_token) {
+                finalToken = longLivedData.access_token;
+            }
+        } catch (exchangeError) {
+            console.warn(
+                `Long-lived token exchange failed during ${label.toLowerCase()} mobile completion:`,
+                exchangeError.response?.data || exchangeError.message
+            );
+        }
+
+        const pageResolution = includePages
+            ? await resolveMessengerPages(finalToken)
+            : { pages: [], diagnostics: [] };
+
+        return res.json({
+            success: true,
+            access_token: finalToken,
+            pages: pageResolution.pages,
+            diagnostics: pageResolution.diagnostics
+        });
+    } catch (error) {
+        console.error(
+            `${label} mobile completion error:`,
+            error.response ? error.response.data : error.message
+        );
+        return res.status(502).json({
+            error: 'Facebook API Error',
+            details: error.response ? error.response.data : error.message
+        });
+    }
+}
+
+exports.completeMessengerCode = (req, res) => completeFacebookCode(req, res, 'Messenger', true);
+exports.completeInstagramCode = (req, res) => completeFacebookCode(req, res, 'Instagram', false);
+
+exports.resolveMessengerPages = async (req, res) => {
+    const accessToken = String(req.body?.access_token || '').trim();
+    if (!accessToken) {
+        return res.status(400).json({ error: 'Facebook access token is required' });
+    }
+
+    try {
+        return res.json(await resolveMessengerPages(accessToken));
+    } catch (error) {
+        console.error('Messenger page resolution error:', error.response?.data || error.message);
+        return res.status(502).json({
+            error: 'Facebook API Error',
+            diagnostics: [{
+                code: 'MESSENGER_PAGE_RESOLUTION_FAILED',
+                message: 'Unable to resolve Facebook Pages at this time.'
+            }]
+        });
+    }
+};
+
+exports.startFacebookAuth = async (req, res) => {
+    try {
+        const { type, state, origin } = req.query;
+        const appId = String(process.env.FACEBOOK_APP_ID || '').trim();
+        const configId = process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '2197274487770639';
+        
+        if (!appId) {
+            return res.status(500).send('FACEBOOK_APP_ID not configured on server.');
+        }
+
+        if (!/^\d+$/.test(appId)) {
+            return res.status(500).send('FACEBOOK_APP_ID is invalid on server.');
+        }
+
+        if (!state) {
+            return res.status(400).send('Missing OAuth state.');
+        }
+
+        if (type !== 'whatsapp' && type !== 'messenger' && type !== 'instagram') {
+            return res.status(400).send('Invalid Facebook auth type.');
+        }
+
+        // Ensure table exists for polling
+        await pgClient.query(`
+            CREATE TABLE IF NOT EXISTS facebook_pending_auths (
+                state TEXT PRIMARY KEY,
+                type TEXT,
+                code TEXT,
+                error TEXT,
+                error_description TEXT,
+                completed BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Clean up old pending auths (older than 1 hour)
+        await pgClient.query(`DELETE FROM facebook_pending_auths WHERE created_at < NOW() - INTERVAL '1 hour'`);
+
+        // Insert or Update the pending auth record
+        await pgClient.query(
+            `INSERT INTO facebook_pending_auths (state, type) VALUES ($1, $2) 
+             ON CONFLICT (state) DO UPDATE SET type = $2, created_at = NOW(), completed = FALSE, code = NULL, error = NULL`,
+            [state, type]
+        );
+
+        const frontendOrigin = resolveFrontendOrigin(req, origin);
+        
+        let redirectUri = '';
+        let scope = '';
+        let extras = '';
+        let oauthUrl;
+
+        if (type === 'whatsapp') {
+            redirectUri = `${frontendOrigin}/auth/facebook/whatsapp/callback`;
+            extras = JSON.stringify({
+                setup: {},
+                featureType: "whatsapp_business_app_onboarding",
+                sessionInfoVersion: "3"
+            });
+        } else if (type === 'instagram') {
+            redirectUri = `${frontendOrigin}/auth/facebook/instagram/callback`;
+            scope = 'email,public_profile,pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages,business_management';
+        } else {
+            redirectUri = `${frontendOrigin}/auth/facebook/messenger/callback`;
+            scope = 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_read_user_content,business_management';
+        } 
+
+        let baseHost = 'm.facebook.com';
+        
+        if (type === 'whatsapp') {
+            oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl.searchParams.set('config_id', configId);
+            oauthUrl.searchParams.set('override_default_response_type', 'true');
+            oauthUrl.searchParams.set('extras', extras);
+            oauthUrl.searchParams.set('display', 'page');
+            oauthUrl.searchParams.set('auth_type', 'rerequest');
+        } else {
+            oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            oauthUrl.searchParams.set('scope', scope);
+            oauthUrl.searchParams.set('display', 'touch');
+            oauthUrl.searchParams.set('auth_type', 'rerequest');
+        }
+
+        oauthUrl.searchParams.set('client_id', appId);
+        oauthUrl.searchParams.set('redirect_uri', redirectUri);
+        oauthUrl.searchParams.set('state', state);
+        oauthUrl.searchParams.set('response_type', 'code');
+
+        if (type === 'whatsapp') {
+            // #region debug-point A:whatsapp-oauth-start
+            void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'A', location: 'authController.js:startFacebookAuth', msg: '[DEBUG] Starting WhatsApp Facebook OAuth', data: { origin, frontendOrigin, redirectUri, host: oauthUrl.host, path: oauthUrl.pathname, hasConfigId: Boolean(configId), state }, ts: Date.now() }).catch(() => {});
+            // #endregion
+        }
+
+        console.log('[Facebook OAuth Start]', {
+            type,
+            frontendOrigin,
+            redirectUri,
+            clientId: appId,
+            host: oauthUrl.host,
+            path: oauthUrl.pathname
+        });
+
+        return renderFacebookBrowserRedirectPage(res, oauthUrl.toString(), type);
+    } catch (error) {
+        console.error('Start Facebook Auth Error:', error);
+        res.status(500).send('Internal Server Error');
+    }
+};
+
+exports.pollFacebookAuth = async (req, res) => {
+    try {
+        const { state } = req.query;
+        if (!state) return res.status(400).json({ error: 'Missing state' });
+
+        const result = await pgClient.query(
+            `SELECT code, error, error_description, completed FROM facebook_pending_auths WHERE state = $1`,
+            [state]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Auth session not found' });
+        }
+
+        const row = result.rows[0];
+        if (row.completed) {
+            // #region debug-point C:poll-completed
+            void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'C', location: 'authController.js:pollFacebookAuth', msg: '[DEBUG] WhatsApp/Messenger auth poll completed', data: { state, hasCode: Boolean(row.code), hasError: Boolean(row.error) }, ts: Date.now() }).catch(() => {});
+            // #endregion
+            // Delete once consumed to keep DB clean
+            await pgClient.query(`DELETE FROM facebook_pending_auths WHERE state = $1`, [state]);
+            return res.json({ completed: true, code: row.code, error: row.error, errorDescription: row.error_description });
+        }
+
+        return res.json({ completed: false });
+    } catch (error) {
+        console.error('Poll Facebook Auth Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+exports.persistFacebookCallback = async (req, res) => {
+    try {
+        const { state, code, error, errorDescription } = req.body;
+        console.log(`Persisting callback for state: ${state}, hasCode: ${!!code}, error: ${error}`);
+        // #region debug-point C:callback-persist-received
+        void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'C', location: 'authController.js:persistFacebookCallback', msg: '[DEBUG] Facebook callback persistence request received', data: { state, hasCode: Boolean(code), hasError: Boolean(error), errorDescription: errorDescription || null }, ts: Date.now() }).catch(() => {});
+        // #endregion
+        
+        if (!state) return res.status(400).json({ error: 'Missing state' });
+
+        const result = await pgClient.query(
+            `UPDATE facebook_pending_auths 
+             SET code = $1, error = $2, error_description = $3, completed = TRUE 
+             WHERE state = $4`,
+            [code, error, errorDescription, state]
+        );
+
+        if (result.rowCount === 0) {
+            console.warn(`No pending auth found for state ${state} during persistence. Creating one.`);
+            await pgClient.query(
+                `INSERT INTO facebook_pending_auths (state, code, error, error_description, completed) 
+                 VALUES ($1, $2, $3, $4, TRUE)`,
+                [state, code, error, errorDescription]
+            );
+        }
+
+        // #region debug-point C:callback-persist-saved
+        void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'C', location: 'authController.js:persistFacebookCallback', msg: '[DEBUG] Facebook callback persistence saved', data: { state, hasCode: Boolean(code), hasError: Boolean(error), createdFallbackRow: result.rowCount === 0 }, ts: Date.now() }).catch(() => {});
+        // #endregion
+
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('Persist Facebook Callback Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 };
 
@@ -233,6 +952,12 @@ exports.requestOtp = async (req, res) => {
         const email = String(req.body.email || '').trim().toLowerCase();
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const ip = getClientIp(req);
+        const quota = consumeOtpQuota('register_otp', email, ip);
+        if (!quota.allowed) {
+            return res.status(429).json({ error: formatRetryAfterMessage(quota.retryAfterMs) });
         }
 
         const user = await authService.findOrCreateUserByEmail(email);
@@ -471,8 +1196,11 @@ exports.getMyPayments = async (req, res) => {
             }
         }
 
+        // Check and expire plan first
+        await dbService.checkAndExpirePlan(effectiveUserId);
+        
         const configResult = await pgClient.query(
-            'SELECT balance, daily_limit, daily_used, bonus_credit, permanent_credit, monthly_limit, monthly_used, message_credit, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            'SELECT balance, daily_limit, daily_used, bonus_credit, permanent_credit, monthly_limit, monthly_used, message_credit, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(effectiveUserId)]
         );
 
@@ -499,6 +1227,7 @@ exports.getMyPayments = async (req, res) => {
             monthly_used: config.monthly_used || 0,
             message_credit: config.message_credit || 0,
             subscription_plan: config.subscription_plan || 'none',
+            monthly_expires_at: config.monthly_expires_at || null,
             transactions: txResult.rows || [],
             is_team_view: effectiveEmail !== email
         });
@@ -553,6 +1282,12 @@ exports.requestPasswordReset = async (req, res) => {
         const email = String(req.body.email || '').trim().toLowerCase();
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const ip = getClientIp(req);
+        const quota = consumeOtpQuota('password_reset_otp', email, ip);
+        if (!quota.allowed) {
+            return res.status(429).json({ error: formatRetryAfterMessage(quota.retryAfterMs) });
         }
 
         const existing = await pgClient.query(
@@ -871,8 +1606,8 @@ exports.buyCredits = async (req, res) => {
         }
 
         const newBalance = currentBalance - finalCost;
-        const newCredits = (Number(userConfig.message_credit) || 0) + finalAmount;
-        const newPermanent = (Number(userConfig.permanent_credit) || 0) + finalAmount;
+        const newCredits = (Number(userConfig.message_credit) || 0); // Keep existing free credits
+        const newPermanent = (Number(userConfig.permanent_credit) || 0) + finalAmount; // Add purchased credits only to permanent
 
         await pgClient.query(
             'UPDATE user_configs SET balance = $1, message_credit = $2, permanent_credit = $3 WHERE user_id = $4::uuid',
@@ -888,9 +1623,11 @@ exports.buyCredits = async (req, res) => {
         );
 
         const outRes = await pgClient.query(
-            'SELECT balance, daily_limit, daily_used, monthly_limit, monthly_used, bonus_credit, permanent_credit, message_credit, subscription_plan FROM user_configs WHERE user_id = $1::uuid',
+            'SELECT balance, daily_limit, daily_used, monthly_limit, monthly_used, bonus_credit, permanent_credit, message_credit, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id = $1::uuid',
             [userId]
         );
+
+        await invalidateUserRuntimeCaches(userId);
         res.json({ success: true, ...outRes.rows[0] });
     } catch (error) {
         console.error('buyCredits error:', error);
@@ -944,9 +1681,11 @@ exports.buyPlan = async (req, res) => {
         const newDailyLimit = Math.max(Number(cfg.daily_limit) || 0, plan.daily_limit);
         const newBonus = (Number(cfg.bonus_credit) || 0) + plan.bonus;
 
+        await pgClient.query(`ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS monthly_expires_at TIMESTAMP WITH TIME ZONE`);
+
         await pgClient.query(
             `UPDATE user_configs 
-             SET balance = $1, daily_limit = $2, subscription_plan = $3, bonus_credit = $4, last_reset_at = NOW()
+             SET balance = $1, daily_limit = $2, subscription_plan = $3, bonus_credit = $4, last_reset_at = NOW(), monthly_expires_at = NOW() + INTERVAL '30 days'
              WHERE user_id = $5::uuid`,
             [newBalance, newDailyLimit, plan.name, newBonus, userId]
         );
@@ -958,9 +1697,11 @@ exports.buyPlan = async (req, res) => {
         );
 
         const outRes = await pgClient.query(
-            'SELECT balance, daily_limit, daily_used, monthly_limit, monthly_used, bonus_credit, permanent_credit, message_credit, subscription_plan FROM user_configs WHERE user_id = $1::uuid',
+            'SELECT balance, daily_limit, daily_used, monthly_limit, monthly_used, bonus_credit, permanent_credit, message_credit, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id = $1::uuid',
             [userId]
         );
+
+        await invalidateUserRuntimeCaches(userId);
         return res.json({ success: true, ...outRes.rows[0] });
     } catch (error) {
         console.error('buyPlan error:', error);

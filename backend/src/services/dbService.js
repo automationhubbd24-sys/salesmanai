@@ -1,4 +1,123 @@
-const { query } = require('./pgClient');
+const { query, getPool } = require('./pgClient');
+const { allocateNewOrder } = require('./teamOrderAllocationService');
+const runtimeMonitor = require('./runtimeMonitor');
+const { normalizeContactName, isValidContactName } = require('../utils/contactName');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+// #region debug-point whatsapp-cross-routing
+function reportWhatsAppRoutingDebug(hypothesisId, location, msg, data = {}) {
+  try {
+    const envContent = fs.readFileSync(path.resolve(__dirname, '../../../.dbg/whatsapp-cross-routing.env'), 'utf8');
+    const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+    const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+    if (!debugUrl || !sessionId) return;
+    fetch(debugUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+function hashRoutingId(value) {
+  return value ? crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 12) : null;
+}
+// #endregion
+
+const productResourceSearchInFlight = new Map();
+
+function recordProductSearchStage(pageId, stage, startedAt, extra = {}) {
+    runtimeMonitor.recordLatency('product_search', {
+        sessionId: `product:${pageId || 'unknown'}`,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        ...extra
+    });
+}
+
+// Helper function to check and expire monthly plans
+async function checkAndExpirePlan(userId) {
+  try {
+    const result = await query(
+      `SELECT subscription_plan,
+              monthly_expires_at,
+              daily_used,
+              monthly_used,
+              bonus_credit,
+              last_reset_at,
+              last_monthly_reset_at
+       FROM user_configs
+       WHERE user_id::text = $1::text
+       LIMIT 1`,
+      [String(userId)]
+    );
+    if (result.rows.length === 0) return null;
+    
+    const config = result.rows[0];
+    const now = new Date();
+
+    const lastReset = new Date(config.last_reset_at || 0);
+    const lastMonthlyReset = new Date(config.last_monthly_reset_at || 0);
+    const isNewDay = lastReset.toDateString() !== now.toDateString();
+    const isNewMonth =
+      lastMonthlyReset.getMonth() !== now.getMonth() ||
+      lastMonthlyReset.getFullYear() !== now.getFullYear();
+
+    if (isNewMonth) {
+      await query(
+        `UPDATE user_configs
+         SET daily_used = 0,
+             monthly_used = 0,
+             last_reset_at = NOW(),
+             last_monthly_reset_at = NOW()
+         WHERE user_id::text = $1::text`,
+        [String(userId)]
+      );
+      console.log(`[DB] Auto-reset daily/monthly counters for User ${userId}`);
+      config.daily_used = 0;
+      config.monthly_used = 0;
+      config.last_reset_at = now;
+      config.last_monthly_reset_at = now;
+    } else if (isNewDay) {
+      await query(
+        `UPDATE user_configs
+         SET daily_used = 0,
+             last_reset_at = NOW()
+         WHERE user_id::text = $1::text`,
+        [String(userId)]
+      );
+      console.log(`[DB] Auto-reset daily usage for User ${userId}`);
+      config.daily_used = 0;
+      config.last_reset_at = now;
+    }
+    
+    if (config.subscription_plan && config.subscription_plan !== 'none' && config.monthly_expires_at) {
+      const expiresAt = new Date(config.monthly_expires_at);
+      if (now > expiresAt) {
+        // Expire the plan
+        await query(
+          `UPDATE user_configs 
+           SET subscription_plan = 'none', 
+               daily_limit = 0, 
+               daily_used = 0,
+               bonus_credit = 0, 
+               monthly_limit = 0,
+               monthly_used = 0
+           WHERE user_id::text = $1::text`,
+          [String(userId)]
+        );
+        console.log(`[DB] Auto-expired monthly plan for User ${userId}`);
+        return { expired: true };
+      }
+    }
+    return { expired: false, config };
+  } catch (err) {
+    console.error('[DB] Error checking plan expiry:', err);
+    return null;
+  }
+}
 
 // 1. Get Page Config (Multi-Tenant Rule - Step 7)
 async function getPageConfig(pageId) {
@@ -44,10 +163,15 @@ async function getPageConfig(pageId) {
     }
     // -----------------------------------------------------------
 
+    // Check and expire plan first
+    if (data.user_id) {
+      await checkAndExpirePlan(data.user_id);
+    }
+
     // 2. Fetch Centralized User Credit (Sync across all members & pages)
     if (data.user_id) {
         const creditResult = await query(
-            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, monthly_limit, monthly_used, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, monthly_limit, monthly_used, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(data.user_id)]
         );
         if (creditResult.rows.length > 0) {
@@ -62,6 +186,7 @@ async function getPageConfig(pageId) {
             data.daily_used = Number(row.daily_used || 0);
             data.monthly_limit = Number(row.monthly_limit || 0);
             data.monthly_used = Number(row.monthly_used || 0);
+            data.monthly_expires_at = row.monthly_expires_at;
             
             // Also sync subscription status if it's 'active' or 'none'
             if (row.subscription_plan) {
@@ -93,10 +218,19 @@ async function getPageConfig(pageId) {
       data.cheap_engine = true;
       needsAiUpdate = true;
     }
+    const PRO_PLUS_MODE_LOCKED = true;
+    const PRO_PLUS_MODE_DEFAULT = true;
+    if (data.pro_plus_mode === undefined || data.pro_plus_mode === null) {
+      data.pro_plus_mode = PRO_PLUS_MODE_DEFAULT;
+      needsAiUpdate = true;
+    }
+    if (PRO_PLUS_MODE_LOCKED) {
+      data.pro_plus_mode = PRO_PLUS_MODE_DEFAULT;
+    }
     if (needsAiUpdate) {
       await query(
-        'UPDATE page_access_token_message SET ai = $1, chat_model = $2, cheap_engine = $3 WHERE page_id = $4',
-        [data.ai, data.chat_model, data.cheap_engine, pageId]
+        'UPDATE page_access_token_message SET ai = $1, chat_model = $2, cheap_engine = $3, pro_plus_mode = $4 WHERE page_id = $5',
+        [data.ai, data.chat_model, data.cheap_engine, data.pro_plus_mode, pageId]
       );
     }
 
@@ -122,25 +256,6 @@ async function getPagePrompts(pageId) {
     }
 }
 
-// 3. Save Lead / Chat History (Step 5)
-async function saveLead(data) {
-    try {
-        await query(
-            `INSERT INTO wp_chats (page_id, sender_id, text, status, timestamp)
-             VALUES ($1,$2,$3,$4,$5)`,
-            [
-                data.page_id,
-                data.sender_id,
-                data.message,
-                'done',
-                Date.now()
-            ]
-        );
-    } catch (error) {
-        console.error("Error saving lead:", error);
-    }
-}
-
 // 3.1 Conversation State Management (Agentic Follow-up Context)
 async function getConversationState(pageId, senderId) {
     try {
@@ -157,16 +272,35 @@ async function getConversationState(pageId, senderId) {
 
 async function setConversationState(pageId, senderId, data) {
     try {
+        const hasField = (field) => Object.prototype.hasOwnProperty.call(data || {}, field);
+        const lastImageMap = hasField('last_image_map')
+            ? JSON.stringify(data.last_image_map || null)
+            : null;
         await query(
-            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, updated_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            `INSERT INTO conversation_state (page_id, sender_id, last_product_id, last_variant_key, last_intent, last_image_map, last_image_batch_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
              ON CONFLICT (page_id, sender_id) 
              DO UPDATE SET 
-                last_product_id = EXCLUDED.last_product_id,
-                last_variant_key = EXCLUDED.last_variant_key,
-                last_intent = EXCLUDED.last_intent,
+                last_product_id = CASE WHEN $8 THEN EXCLUDED.last_product_id ELSE conversation_state.last_product_id END,
+                last_variant_key = CASE WHEN $9 THEN EXCLUDED.last_variant_key ELSE conversation_state.last_variant_key END,
+                last_intent = CASE WHEN $10 THEN EXCLUDED.last_intent ELSE conversation_state.last_intent END,
+                last_image_map = CASE WHEN $11 THEN EXCLUDED.last_image_map ELSE conversation_state.last_image_map END,
+                last_image_batch_id = CASE WHEN $12 THEN EXCLUDED.last_image_batch_id ELSE conversation_state.last_image_batch_id END,
                 updated_at = NOW()`,
-            [pageId, senderId, data.last_product_id || null, data.last_variant_key || null, data.last_intent || null]
+            [
+                pageId,
+                senderId,
+                hasField('last_product_id') ? (data.last_product_id || null) : null,
+                hasField('last_variant_key') ? (data.last_variant_key || null) : null,
+                hasField('last_intent') ? (data.last_intent || null) : null,
+                lastImageMap,
+                hasField('last_image_batch_id') ? (data.last_image_batch_id || null) : null,
+                hasField('last_product_id'),
+                hasField('last_variant_key'),
+                hasField('last_intent'),
+                hasField('last_image_map'),
+                hasField('last_image_batch_id')
+            ]
         );
         return true;
     } catch (error) {
@@ -175,30 +309,9 @@ async function setConversationState(pageId, senderId, data) {
     }
 }
 
-// 4. Debounce / Duplicate Check
-async function checkDuplicate(messageId) {
-    if (!messageId) return false;
-
-    try {
-        const existing = await query(
-            'SELECT id FROM wpp_debounce WHERE debounce_key = $1 LIMIT 1',
-            [messageId]
-        );
-        if (existing.rows.length > 0) {
-            return true;
-        }
-        await query(
-            'INSERT INTO wpp_debounce (debounce_key) VALUES ($1)',
-            [messageId]
-        );
-        return false;
-    } catch (error) {
-        if (error.code === '23505') { // Unique violation
-            return true;
-        }
-        console.error("Error in checkDuplicate:", error.message);
-        return false;
-    }
+// Backward-compatible alias used by legacy WhatsApp paths.
+async function updateConversationState(pageId, senderId, data) {
+    return setConversationState(pageId, senderId, data);
 }
 
 // 5. Smart Credit Deduction (Centralized User Balance)
@@ -244,27 +357,35 @@ async function deductCredit(pageId, amount = 1) {
         const config = userConfigResult.rows[0];
         const userIdStr = String(linkedUser.user_id);
 
+        // Check and expire plan first
+        await checkAndExpirePlan(userIdStr);
+        // Re-fetch config after possible expiry
+        const updatedConfigResult = await query(
+            'SELECT * FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            [userIdStr]
+        );
+        const finalConfig = updatedConfigResult.rows.length > 0 ? updatedConfigResult.rows[0] : config;
+
         // --- 1. RESET CHECKS (DAILY & MONTHLY) ---
         const now = new Date();
-        const lastReset = new Date(config.last_reset_at || 0);
-        const lastMonthlyReset = new Date(config.last_monthly_reset_at || 0);
+        const lastReset = new Date(finalConfig.last_reset_at || 0);
+        const lastMonthlyReset = new Date(finalConfig.last_monthly_reset_at || 0);
         
         const isNewDay = lastReset.toDateString() !== now.toDateString();
         const isNewMonth = lastMonthlyReset.getMonth() !== now.getMonth() || lastMonthlyReset.getFullYear() !== now.getFullYear();
 
-        let dailyUsed = Number(config.daily_used || 0);
-        let bonusCredit = Number(config.bonus_credit || 0);
-        let monthlyUsed = Number(config.monthly_used || 0);
+        let dailyUsed = Number(finalConfig.daily_used || 0);
+        let bonusCredit = Number(finalConfig.bonus_credit || 0);
+        let monthlyUsed = Number(finalConfig.monthly_used || 0);
 
         if (isNewMonth) {
-            // Reset usage counters AND Monthly Bonus for new month
             dailyUsed = 0;
             monthlyUsed = 0;
             await query(
-                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, bonus_credit = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
+                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
-            console.log(`[Credit] Monthly usage & Bonus reset for User ${userIdStr}`);
+            console.log(`[Credit] Monthly usage counters reset for User ${userIdStr}`);
         } else if (isNewDay) {
             dailyUsed = 0;
             await query(
@@ -280,7 +401,7 @@ async function deductCredit(pageId, amount = 1) {
 
         // 1. Free/Legacy Message Credit (Sign-up or Free Tier - 100 Messages)
         // User wants this to be used FIRST.
-        if (Number(config.message_credit || 0) > 0) {
+        if (Number(finalConfig.message_credit || 0) > 0) {
             await query(
                 'UPDATE user_configs SET message_credit = message_credit - $1 WHERE user_id::text = $2',
                 [amount, userIdStr]
@@ -290,7 +411,10 @@ async function deductCredit(pageId, amount = 1) {
         }
 
         // 2. Daily Limit (Subscription Daily Quota - Resets Daily)
-        if (Number(config.daily_limit || 0) > dailyUsed) {
+        const monthlyExpiresAt = finalConfig.monthly_expires_at ? new Date(finalConfig.monthly_expires_at) : null;
+        const isSubscriptionActive = !monthlyExpiresAt || now < monthlyExpiresAt;
+        
+        if (isSubscriptionActive && Number(finalConfig.daily_limit || 0) > dailyUsed) {
             await query(
                 'UPDATE user_configs SET daily_used = daily_used + $1 WHERE user_id::text = $2',
                 [amount, userIdStr]
@@ -300,7 +424,7 @@ async function deductCredit(pageId, amount = 1) {
         }
 
         // 3. Bonus Credit (Promotional / Monthly Bonus)
-        if (bonusCredit > 0) {
+        if (isSubscriptionActive && bonusCredit > 0) {
             await query(
                 'UPDATE user_configs SET bonus_credit = bonus_credit - $1 WHERE user_id::text = $2',
                 [amount, userIdStr]
@@ -324,6 +448,87 @@ async function deductCredit(pageId, amount = 1) {
     } catch (err) {
         console.error("Error in smart credit deduction:", err);
         return false;
+    }
+}
+
+// --- AI MODEL PRICING SYSTEM ---
+
+let pricingCache = new Map();
+let lastPricingUpdate = 0;
+const PRICING_TTL = 60 * 1000; // 1 minute
+
+async function getModelPricing() {
+    const now = Date.now();
+    if (pricingCache.size > 0 && (now - lastPricingUpdate < PRICING_TTL)) {
+        return Array.from(pricingCache.values());
+    }
+
+    try {
+        const result = await query('SELECT * FROM model_pricing');
+        const list = result.rows || [];
+        
+        const newCache = new Map();
+        list.forEach(p => newCache.set(p.model_id, p));
+        pricingCache = newCache;
+        lastPricingUpdate = now;
+        
+        return list;
+    } catch (err) {
+        console.warn('[DB] Failed to fetch model pricing from DB, using fallback:', err.message);
+        // Fallback pricing if table doesn't exist yet
+        return [
+            { model_id: 'salesmanchatbot-pro', cost_per_request: 0.15 },
+            { model_id: 'salesmanchatbot-flash', cost_per_request: 0.10 },
+            { model_id: 'salesmanchatbot-lite', cost_per_request: 0.08 },
+            { model_id: 'salesmanchatbot-brain', cost_per_request: 0.09 }
+        ];
+    }
+}
+
+async function getCostForModel(modelId) {
+    await getModelPricing(); // Ensure cache is warm
+    
+    // Normalize model ID (e.g. handle versions or prefixes)
+    let id = modelId || 'salesmanchatbot-pro';
+    if (!pricingCache.has(id)) {
+        if (id.includes('flash')) id = 'salesmanchatbot-flash';
+        else if (id.includes('lite')) id = 'salesmanchatbot-lite';
+        else if (id.includes('brain')) id = 'salesmanchatbot-brain';
+        else id = 'salesmanchatbot-pro';
+    }
+
+    const pricing = pricingCache.get(id);
+    return pricing ? Number(pricing.cost_per_request) : 0.15;
+}
+
+/**
+ * Logs API usage for tracking and analytics
+ */
+async function logApiUsage(userId, model, tokens, cost, platform = 'external_api') {
+    try {
+        await query(
+            'INSERT INTO api_usage_stats (user_id, model, tokens, cost, platform) VALUES ($1, $2, $3, $4, $5)',
+            [userId, model, tokens, cost, platform]
+        );
+    } catch (err) {
+        console.error('[DB] Failed to log API usage:', err.message);
+    }
+}
+
+async function deductUserBalance(userId, amount, description = 'API Call') {
+    try {
+        const res = await query(
+            'UPDATE user_configs SET balance = balance - $1 WHERE user_id = $2::uuid RETURNING balance',
+            [amount, userId]
+        );
+        
+        if (res.rows.length > 0) {
+            return res.rows[0].balance;
+        }
+        return null;
+    } catch (err) {
+        console.error('[DB] Balance deduction error:', err.message);
+        throw err;
     }
 }
 
@@ -433,7 +638,11 @@ async function initTables() {
                 id SERIAL PRIMARY KEY,
                 page_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
+                name TEXT,
+                profile_name TEXT,
+                name_source TEXT,
                 is_locked BOOLEAN DEFAULT FALSE,
+                last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 UNIQUE(page_id, sender_id)
             );
@@ -445,7 +654,10 @@ async function initTables() {
                 id SERIAL PRIMARY KEY,
                 session_name TEXT NOT NULL,
                 phone_number TEXT NOT NULL,
+                lid TEXT,
                 name TEXT,
+                profile_name TEXT,
+                name_source TEXT,
                 is_locked BOOLEAN DEFAULT FALSE,
                 last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 UNIQUE(session_name, phone_number)
@@ -459,8 +671,17 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='phone_number') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN phone_number TEXT;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='lid') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN lid TEXT;
+                END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='profile_name') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN profile_name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name_source') THEN
+                    ALTER TABLE whatsapp_contacts ADD COLUMN name_source TEXT;
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='is_locked') THEN
                     ALTER TABLE whatsapp_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
@@ -503,7 +724,9 @@ async function initTables() {
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS ai_provider TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS chat_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS voice_model TEXT;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS vision_model TEXT;
             ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS cheap_engine BOOLEAN DEFAULT TRUE;
+            ALTER TABLE whatsapp_message_database ADD COLUMN IF NOT EXISTS pro_plus_mode BOOLEAN DEFAULT FALSE;
         `);
 
         await query(`
@@ -595,11 +818,6 @@ async function initTables() {
                 IF seq_name IS NOT NULL THEN
                     EXECUTE 'SELECT setval(''' || seq_name || ''', (SELECT COALESCE(MAX(id),0)+1 FROM fb_chats), false)';
                 END IF;
-
-                seq_name := pg_get_serial_sequence('wp_chats', 'id');
-                IF seq_name IS NOT NULL THEN
-                    EXECUTE 'SELECT setval(''' || seq_name || ''', (SELECT COALESCE(MAX(id),0)+1 FROM wp_chats), false)';
-                END IF;
             END $$;
         `);
 
@@ -611,29 +829,90 @@ async function initTables() {
                 last_product_id TEXT,
                 last_variant_key TEXT,
                 last_intent TEXT,
+                last_image_map JSONB,
+                last_image_batch_id TEXT,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 PRIMARY KEY (page_id, sender_id)
             );
+            ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS last_image_map JSONB;
+            ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS last_image_batch_id TEXT;
             CREATE INDEX IF NOT EXISTS idx_conv_state_updated ON conversation_state(updated_at DESC);
         `);
         console.log("[DB] 'conversation_state' table initialized.");
 
+        await query(`
+            CREATE TABLE IF NOT EXISTS incoming_image_analysis (
+                id BIGSERIAL PRIMARY KEY,
+                platform TEXT NOT NULL,
+                page_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                image_url TEXT NOT NULL,
+                image_hash TEXT,
+                image_index INT,
+                batch_id TEXT,
+                analysis_text TEXT,
+                matched_product_id TEXT,
+                match_score NUMERIC,
+                matched_products JSONB DEFAULT '[]'::jsonb,
+                visual_fingerprint JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS image_hash TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS image_index INT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS batch_id TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS analysis_text TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS matched_product_id TEXT;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS match_score NUMERIC;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS matched_products JSONB DEFAULT '[]'::jsonb;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE incoming_image_analysis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+            DELETE FROM incoming_image_analysis a
+            USING incoming_image_analysis b
+            WHERE a.ctid < b.ctid
+              AND a.platform = b.platform
+              AND a.page_id = b.page_id
+              AND a.sender_id = b.sender_id
+              AND a.image_url = b.image_url;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_incoming_image_analysis_unique ON incoming_image_analysis(platform, page_id, sender_id, image_url);
+            CREATE INDEX IF NOT EXISTS idx_incoming_image_analysis_lookup ON incoming_image_analysis(platform, page_id, sender_id, image_url);
+            CREATE INDEX IF NOT EXISTS idx_incoming_image_analysis_hash ON incoming_image_analysis(image_hash);
+            CREATE INDEX IF NOT EXISTS idx_incoming_image_analysis_batch ON incoming_image_analysis(batch_id);
+        `);
+        console.log("[DB] 'incoming_image_analysis' table initialized.");
+
         // Ensure 'custom_base_url' column exists
         await query(`
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='page_access_token_message' AND column_name='custom_base_url') THEN
-                    ALTER TABLE page_access_token_message ADD COLUMN custom_base_url TEXT;
-                END IF;
-            END $$;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url TEXT;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_mode BOOLEAN DEFAULT FALSE;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS bonus_credit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS permanent_credit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS daily_limit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS daily_used NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS monthly_limit NUMERIC DEFAULT 0;
+            ALTER TABLE IF EXISTS page_access_token_message ADD COLUMN IF NOT EXISTS monthly_used NUMERIC DEFAULT 0;
         `);
 
         // Ensure 'is_locked' column exists (for backward compatibility)
         await query(`
             DO $$ 
             BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='name') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='profile_name') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN profile_name TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='name_source') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN name_source TEXT;
+                END IF;
+
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='is_locked') THEN
                     ALTER TABLE fb_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='last_interaction') THEN
+                    ALTER TABLE fb_contacts ADD COLUMN last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW();
                 END IF;
                 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_contacts' AND column_name='updated_at') THEN
@@ -705,6 +984,18 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
                     ALTER TABLE fb_message_database ADD COLUMN embed_enabled BOOLEAN DEFAULT FALSE;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_email_confirmation_enabled') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN order_email_confirmation_enabled BOOLEAN DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='admin_notification_email') THEN
+                    ALTER TABLE fb_message_database ADD COLUMN admin_notification_email TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='order_email_confirmation_enabled') THEN
+                    ALTER TABLE whatsapp_message_database ADD COLUMN order_email_confirmation_enabled BOOLEAN DEFAULT FALSE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_message_database' AND column_name='admin_notification_email') THEN
+                    ALTER TABLE whatsapp_message_database ADD COLUMN admin_notification_email TEXT;
+                END IF;
             END $$;
         `);
         console.log("[DB] 'fb_message_database' extra columns checked.");
@@ -733,13 +1024,50 @@ async function initTables() {
         await query(`
             DO $$ 
             BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='video_url') THEN
+                    ALTER TABLE products ADD COLUMN video_url TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log("[DB] 'products.video_url' column checked.");
+
+        await query(`
+            DO $$ 
+            BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='allowed_wa_sessions') THEN
                     ALTER TABLE products ADD COLUMN allowed_wa_sessions JSONB DEFAULT '[]'::jsonb;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='product_mode') THEN
+                    ALTER TABLE products ADD COLUMN product_mode TEXT DEFAULT 'simple';
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='attribute_schema') THEN
+                    ALTER TABLE products ADD COLUMN attribute_schema JSONB DEFAULT '[]'::jsonb;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='sku_matrix') THEN
+                    ALTER TABLE products ADD COLUMN sku_matrix JSONB DEFAULT '[]'::jsonb;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='searchable_text') THEN
+                    ALTER TABLE products ADD COLUMN searchable_text TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='visual_tags') THEN
+                    ALTER TABLE products ADD COLUMN visual_tags JSONB DEFAULT '[]'::jsonb;
                 END IF;
             END $$;
         `);
         await query(`UPDATE products SET allowed_wa_sessions = '[]'::jsonb WHERE allowed_wa_sessions IS NULL`);
         await query(`UPDATE products SET allowed_messenger_ids = '[]'::jsonb WHERE allowed_messenger_ids IS NULL`);
+        await query(`UPDATE products SET product_mode = 'simple' WHERE product_mode IS NULL`);
+        await query(`UPDATE products SET attribute_schema = '[]'::jsonb WHERE attribute_schema IS NULL`);
+        await query(`UPDATE products SET sku_matrix = '[]'::jsonb WHERE sku_matrix IS NULL`);
+        await query(`UPDATE products SET visual_tags = '[]'::jsonb WHERE visual_tags IS NULL`);
+        await query(`
+            ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS image_embedding_3072 vector(3072);
+            ALTER TABLE IF EXISTS product_image_embeddings ADD COLUMN IF NOT EXISTS image_embedding_model TEXT;
+            ALTER TABLE IF EXISTS incoming_image_analysis ADD COLUMN IF NOT EXISTS visual_fingerprint JSONB DEFAULT '{}'::jsonb;
+        `);
+        await backfillGeneratedSkuMatrixForLegacyProducts();
         console.log("[DB] 'products.allowed_wa_sessions' column checked.");
 
         // Error Logs Table
@@ -757,6 +1085,40 @@ async function initTables() {
             CREATE INDEX IF NOT EXISTS idx_error_logs_resolved ON error_logs(resolved);
         `);
         console.log("[DB] 'error_logs' table checked/initialized.");
+
+        // Expire Old Monthly Plans
+        try {
+            await query(`
+                ALTER TABLE user_configs
+                ADD COLUMN IF NOT EXISTS monthly_expires_at TIMESTAMP WITH TIME ZONE;
+            `);
+            await query(`
+                UPDATE public.user_configs uc
+                SET monthly_expires_at = tx.latest_plan_tx_at + INTERVAL '30 days'
+                FROM (
+                    SELECT user_email, MAX(created_at) AS latest_plan_tx_at
+                    FROM payment_transactions
+                    WHERE method LIKE 'plan_%'
+                    GROUP BY user_email
+                ) tx
+                WHERE uc.email = tx.user_email
+                  AND uc.subscription_plan IN ('starter', 'pro', 'enterprise', 'm1000', 'm3000', 'm7500')
+                  AND uc.monthly_expires_at IS NULL;
+            `);
+            await query(`
+                UPDATE public.user_configs 
+                SET subscription_plan = 'none',
+                    daily_limit = 0,
+                    bonus_credit = 0,
+                    monthly_limit = 0,
+                    monthly_used = 0
+                WHERE subscription_plan IN ('starter', 'pro', 'enterprise', 'm1000', 'm3000', 'm7500') 
+                AND (monthly_expires_at IS NULL OR monthly_expires_at < NOW());
+            `);
+            console.log("[DB] Cleaned up expired monthly subscriptions.");
+        } catch (expErr) {
+            console.warn("[DB] Failed to expire old subscriptions:", expErr.message);
+        }
 
         // API Usage Stats Table (CRITICAL for Dashboard)
         // Note: user_id references 'users(id)' to match postgres_schema.sql
@@ -892,7 +1254,20 @@ async function initTables() {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='updated_at') THEN
                     ALTER TABLE fb_order_tracking ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='reminder_count') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN reminder_count INTEGER DEFAULT 0;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='last_reminder_sent_at') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN last_reminder_sent_at TIMESTAMP WITH TIME ZONE;
+                END IF;
             END $$;
+        `);
+        await query(`
+            UPDATE fb_order_tracking
+            SET
+                updated_at = COALESCE(updated_at, created_at, NOW()),
+                reminder_count = COALESCE(reminder_count, 0)
+            WHERE updated_at IS NULL OR reminder_count IS NULL
         `);
         console.log("[DB] 'fb_order_tracking' status columns verified.");
 
@@ -923,9 +1298,7 @@ async function addBalanceByEmail(email, amount) {
     try {
         // Try to find user_id from our local tables first if possible
         // But 'user_configs' is keyed by user_id.
-        // Let's try to find a user who has this email in 'page_access_token_message' (if they connected a page)
-        // OR 'whatsapp_sessions' (if they connected WA)
-        
+        // Let's try to find a user who has this email in a connected resource.
         let userId = null;
 
         const userConfigResult = await query(
@@ -938,7 +1311,7 @@ async function addBalanceByEmail(email, amount) {
 
         if (!userId) {
             const waResult = await query(
-                'SELECT user_id FROM whatsapp_sessions WHERE user_email = $1 LIMIT 1',
+                'SELECT user_id FROM whatsapp_message_database WHERE email = $1 LIMIT 1',
                 [email]
             );
             if (waResult.rows.length > 0) {
@@ -968,7 +1341,7 @@ async function addBalanceByEmail(email, amount) {
             throw new Error("User config not found");
         }
 
-        const currentBalance = balanceResult.rows[0].balance || 0;
+        const currentBalance = Number(balanceResult.rows[0].balance || 0);
         const newBalance = currentBalance + Number(amount);
 
         await query(
@@ -1012,14 +1385,18 @@ async function saveFbChat(data) {
         data.status || 'pending',
         data.reply_by || 'user',
         data.token || 0,
-        data.ai_model || null
+        data.ai_model || null,
+        data.platform || 'messenger',
+        data.sender_name || null,
+        data.admin_user_id || null,
+        data.admin_email || null
     ];
 
     const run = async () => {
         await query(
             `INSERT INTO fb_chats
-                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                (page_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, platform, sender_name, admin_user_id, admin_email)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
              ON CONFLICT (message_id) DO UPDATE SET
                 page_id = EXCLUDED.page_id,
                 sender_id = EXCLUDED.sender_id,
@@ -1029,7 +1406,10 @@ async function saveFbChat(data) {
                 status = EXCLUDED.status,
                 reply_by = EXCLUDED.reply_by,
                 token = EXCLUDED.token,
-                ai_model = EXCLUDED.ai_model`,
+                ai_model = EXCLUDED.ai_model,
+                sender_name = COALESCE(NULLIF(BTRIM(EXCLUDED.sender_name), ''), fb_chats.sender_name),
+                admin_user_id = COALESCE(EXCLUDED.admin_user_id, fb_chats.admin_user_id),
+                admin_email = COALESCE(NULLIF(BTRIM(EXCLUDED.admin_email), ''), fb_chats.admin_email)`,
             params
         );
     };
@@ -1037,12 +1417,72 @@ async function saveFbChat(data) {
     try {
         await run();
     } catch (error) {
-        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01') {
-            console.log("[DB] fb_chats table or constraint missing. Ensuring...");
+        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01' || error.code === '42703') {
+            console.log("[DB] fb_chats table, column, or constraint missing. Ensuring...");
             await ensureFbChatsTable();
             await run();
         } else {
             console.error(`Error saving to fb_chats (msg: ${data.message_id}, page: ${data.page_id}):`, error.message);
+        }
+    }
+}
+
+async function updateFbChatSenderName(pageId, senderId, name) {
+    const normalizedName = normalizeContactName(name);
+    if (!pageId || !senderId || !isValidContactName(normalizedName)) {
+        return;
+    }
+
+    const run = async () => {
+        await query(
+            `INSERT INTO fb_contacts (page_id, sender_id, name, profile_name, name_source, last_interaction, updated_at)
+             VALUES ($1, $2, $3, $3, 'profile', NOW(), NOW())
+             ON CONFLICT (page_id, sender_id)
+             DO UPDATE SET
+                profile_name = EXCLUDED.profile_name,
+                name = CASE
+                    WHEN fb_contacts.is_locked OR fb_contacts.name_source IN ('manual', 'custom') THEN fb_contacts.name
+                    WHEN fb_contacts.name_source = 'profile'
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) = ''
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) ~ '^[0-9]+$'
+                         OR LOWER(BTRIM(COALESCE(fb_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined') THEN EXCLUDED.name
+                    ELSE fb_contacts.name
+                END,
+                name_source = CASE
+                    WHEN fb_contacts.is_locked OR fb_contacts.name_source IN ('manual', 'custom') THEN fb_contacts.name_source
+                    WHEN fb_contacts.name_source = 'profile'
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) = ''
+                         OR BTRIM(COALESCE(fb_contacts.name, '')) ~ '^[0-9]+$'
+                         OR LOWER(BTRIM(COALESCE(fb_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined') THEN 'profile'
+                    ELSE fb_contacts.name_source
+                END,
+                last_interaction = EXCLUDED.last_interaction,
+                updated_at = EXCLUDED.updated_at`,
+            [pageId, senderId, normalizedName]
+        );
+
+        await query(
+            `UPDATE fb_chats
+             SET sender_name = $3
+             WHERE page_id = $1
+               AND platform = 'messenger'
+               AND (sender_id = $2 OR recipient_id = $2)
+               AND (BTRIM(COALESCE(sender_name, '')) = ''
+                    OR BTRIM(COALESCE(sender_name, '')) ~ '^[0-9]+$'
+                    OR LOWER(BTRIM(COALESCE(sender_name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined'))`,
+            [pageId, senderId, normalizedName]
+        );
+    };
+
+    try {
+        await run();
+    } catch (error) {
+        if (error.code === '42P01' || error.code === '42703') {
+            await initTables();
+            await ensureFbChatsTable();
+            await run();
+        } else {
+            console.error(`Error updating Messenger sender name (page: ${pageId}, sender: ${senderId}):`, error.message);
         }
     }
 }
@@ -1080,27 +1520,121 @@ async function ensureFbChatsTable() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             reply_by TEXT,
             token INTEGER DEFAULT 0,
-            ai_model TEXT
-        );
+            ai_model TEXT,
+            platform TEXT NOT NULL DEFAULT 'messenger',
+            sender_name TEXT
+            );
+        ALTER TABLE fb_chats ADD COLUMN IF NOT EXISTS sender_name TEXT;
         CREATE INDEX IF NOT EXISTS idx_fb_chats_page_sender ON fb_chats(page_id, sender_id);
     `);
 }
 
 // 9. Get Old Messages from fb_chats
-async function getFbChatHistory(pageId, senderId, limit = 5) {
+async function getFbChatHistory(pageId, senderId, limit = 5, platform = 'messenger') {
     try {
         const result = await query(
             `SELECT *
              FROM fb_chats
              WHERE page_id = $1
                AND (sender_id = $2 OR recipient_id = $2)
+               AND platform = $4
              ORDER BY timestamp DESC
              LIMIT $3`,
-            [pageId, senderId, limit]
+            [pageId, senderId, limit, platform]
         );
         return result.rows.reverse();
     } catch (error) {
         console.error("Error getting fb_chats history:", error);
+        return [];
+    }
+}
+
+async function ensureInstagramChatsTable() {
+    await query(`
+        CREATE TABLE IF NOT EXISTS instagram_chats (
+            id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            instagram_account_id TEXT,
+            sender_id TEXT,
+            recipient_id TEXT,
+            message_id TEXT UNIQUE,
+            text TEXT,
+            timestamp BIGINT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            reply_by TEXT,
+            token INTEGER DEFAULT 0,
+            ai_model TEXT,
+            sender_name TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_instagram_chats_account_sender ON instagram_chats(instagram_account_id, sender_id);
+    `);
+}
+
+async function saveInstagramChat(data) {
+    const params = [
+        data.instagram_account_id || data.page_id,
+        data.sender_id,
+        data.recipient_id,
+        data.message_id,
+        data.text,
+        data.timestamp,
+        data.status || 'pending',
+        data.reply_by || 'user',
+        data.token || 0,
+        data.ai_model || null,
+        data.sender_name || null
+    ];
+
+    const run = async () => {
+        await query(
+            `INSERT INTO instagram_chats
+                (instagram_account_id, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token, ai_model, sender_name)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             ON CONFLICT (message_id) DO UPDATE SET
+                instagram_account_id = EXCLUDED.instagram_account_id,
+                sender_id = EXCLUDED.sender_id,
+                recipient_id = EXCLUDED.recipient_id,
+                text = EXCLUDED.text,
+                timestamp = EXCLUDED.timestamp,
+                status = EXCLUDED.status,
+                reply_by = EXCLUDED.reply_by,
+                token = EXCLUDED.token,
+                ai_model = EXCLUDED.ai_model,
+                sender_name = COALESCE(NULLIF(BTRIM(EXCLUDED.sender_name), ''), instagram_chats.sender_name)`,
+            params
+        );
+    };
+
+    try {
+        await run();
+    } catch (error) {
+        if (error.message.includes('no unique or exclusion constraint') || error.code === '42P01' || error.code === '42703') {
+            await ensureInstagramChatsTable();
+            await run();
+        } else {
+            console.error(`Error saving to instagram_chats (msg: ${data.message_id}, account: ${data.instagram_account_id || data.page_id}):`, error.message);
+        }
+    }
+}
+
+async function getInstagramChatHistory(accountId, senderId, limit = 5) {
+    try {
+        const result = await query(
+            `SELECT *, instagram_account_id AS page_id, 'instagram' AS platform
+             FROM instagram_chats
+             WHERE instagram_account_id = $1
+               AND (sender_id = $2 OR recipient_id = $2)
+             ORDER BY timestamp DESC
+             LIMIT $3`,
+            [accountId, senderId, limit]
+        );
+        return result.rows.reverse();
+    } catch (error) {
+        if (error.code === '42P01' || error.code === '42703') {
+            await ensureInstagramChatsTable();
+        } else {
+            console.error("Error getting instagram_chats history:", error);
+        }
         return [];
     }
 }
@@ -1181,7 +1715,7 @@ async function getMessageById(messageId) {
     }
 }
 
-// 12. Create WhatsApp Entry (whatsapp_message_database & whatsapp_sessions)
+// 12. Create WhatsApp Entry
 async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialStatus = 'connected', userEmail = null) {
     const { query } = require('./pgClient');
 
@@ -1219,10 +1753,11 @@ async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialSt
             );
 
             if (alreadyGranted.rowCount === 0) {
-                await query(
-                    'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1::text OR email = $2',
-                    [String(userId), userEmail]
-                );
+                // --- FREE CREDITS REMOVED ---
+            // await query(
+            //     'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1::text OR email = $2',
+            //     [String(userId), userEmail]
+            // );
                 
                 // Mark as granted permanently
                 await query(
@@ -1259,49 +1794,7 @@ async function createWhatsAppEntry(sessionName, userId, planDays = 30, initialSt
         }
     }
 
-    try {
-        await query(
-            `INSERT INTO whatsapp_sessions
-                (session_name, session_id, user_id, user_email, plan_days, expires_at, created_at, updated_at, status, qr, qr_code)
-             VALUES ($1,$1,$2,$3,$4,$5,now(),now(),$6,'',NULL)
-             ON CONFLICT (session_name) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                user_email = EXCLUDED.user_email,
-                plan_days = EXCLUDED.plan_days,
-                expires_at = EXCLUDED.expires_at,
-                updated_at = now(),
-                status = EXCLUDED.status`,
-            [sessionName, userId, userEmail, parseInt(planDays), expiresAt.toISOString(), initialStatus]
-        );
-    } catch (e) {
-        console.warn("[DB] Failed to insert into whatsapp_sessions (ignoring):", e.message);
-    }
-
     return row;
-}
-
-// 12.5 Create WhatsApp Session Entry (Public Table)
-async function createWhatsAppSessionEntry(sessionName, userId, planDays = 30, initialStatus = 'connected', userEmail = null) {
-    const { query } = require('./pgClient');
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + parseInt(planDays));
-
-    const result = await query(
-        `INSERT INTO whatsapp_sessions
-            (session_name, session_id, user_id, user_email, plan_days, expires_at, created_at, updated_at, status, qr, qr_code)
-         VALUES ($1,$1,$2,$3,$4,$5,now(),now(),$6,'',NULL)
-         ON CONFLICT (session_name) DO UPDATE SET
-            user_id = EXCLUDED.user_id,
-            user_email = EXCLUDED.user_email,
-            plan_days = EXCLUDED.plan_days,
-            expires_at = EXCLUDED.expires_at,
-            updated_at = now(),
-            status = EXCLUDED.status
-         RETURNING *`,
-        [sessionName, userId, userEmail, parseInt(planDays), expiresAt.toISOString(), initialStatus]
-    );
-
-    return result.rows[0];
 }
 
 // --- WhatsApp Specific Functions ---
@@ -1310,13 +1803,51 @@ async function createWhatsAppSessionEntry(sessionName, userId, planDays = 30, in
 async function getWhatsAppConfig(sessionName) {
     const { query } = require('./pgClient');
 
+    await query(`
+        ALTER TABLE whatsapp_message_database
+        ADD COLUMN IF NOT EXISTS provider_type text,
+        ADD COLUMN IF NOT EXISTS waba_id text,
+        ADD COLUMN IF NOT EXISTS phone_number_id text,
+        ADD COLUMN IF NOT EXISTS cloud_access_token text
+    `);
+
     const mainResult = await query(
-        'SELECT * FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
+        `SELECT *
+         FROM whatsapp_message_database
+         WHERE session_name = $1
+            OR waba_id = $1
+            OR phone_number_id = $1
+         ORDER BY
+            CASE
+                WHEN session_name = $1 THEN 0
+                WHEN waba_id = $1 THEN 1
+                WHEN phone_number_id = $1 THEN 2
+                ELSE 3
+            END
+         LIMIT 1`,
         [sessionName]
     );
-    if (mainResult.rows.length === 0) return null;
+    if (mainResult.rows.length === 0) {
+        // #region debug-point C:whatsapp-cross-routing
+        reportWhatsAppRoutingDebug('C', 'dbService.js:getWhatsAppConfig', 'no WhatsApp config matched lookup key', {
+            lookupKey: hashRoutingId(sessionName)
+        });
+        // #endregion
+        return null;
+    }
 
     const data = mainResult.rows[0];
+    // #region debug-point C:whatsapp-cross-routing
+    reportWhatsAppRoutingDebug('C', 'dbService.js:getWhatsAppConfig', 'resolved WhatsApp config', {
+        lookupKey: hashRoutingId(sessionName),
+        sessionName: hashRoutingId(data.session_name),
+        wabaId: hashRoutingId(data.waba_id),
+        phoneNumberId: hashRoutingId(data.phone_number_id),
+        lookupMatchesSession: String(data.session_name || '') === String(sessionName || ''),
+        lookupMatchesWaba: String(data.waba_id || '') === String(sessionName || ''),
+        lookupMatchesPhoneNumber: String(data.phone_number_id || '') === String(sessionName || '')
+    });
+    // #endregion
 
     if (!data.text_prompt) {
         data.text_prompt = 'You are a helpful sales assistant.';
@@ -1325,16 +1856,20 @@ async function getWhatsAppConfig(sessionName) {
     // 2. Fetch Centralized User Credit (Sync across all members & pages)
     if (data.user_id) {
         const creditResult = await query(
-            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, subscription_plan FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            'SELECT message_credit, bonus_credit, permanent_credit, daily_limit, daily_used, monthly_limit, monthly_used, subscription_plan, monthly_expires_at FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
             [String(data.user_id)]
         );
         if (creditResult.rows.length > 0) {
             const row = creditResult.rows[0];
-            data.message_credit = row.message_credit || 0;
-            data.bonus_credit = row.bonus_credit || 0;
-            data.permanent_credit = row.permanent_credit || 0;
-            data.daily_limit = row.daily_limit || 0;
-            data.daily_used = row.daily_used || 0;
+            const availableMonthly = Math.max(0, Number(row.monthly_limit || 0) - Number(row.monthly_used || 0));
+            data.message_credit = availableMonthly + Number(row.bonus_credit || 0) + Number(row.message_credit || 0) + Number(row.permanent_credit || 0);
+            data.bonus_credit = Number(row.bonus_credit || 0);
+            data.permanent_credit = Number(row.permanent_credit || 0);
+            data.daily_limit = Number(row.daily_limit || 0);
+            data.daily_used = Number(row.daily_used || 0);
+            data.monthly_limit = Number(row.monthly_limit || 0);
+            data.monthly_used = Number(row.monthly_used || 0);
+            data.monthly_expires_at = row.monthly_expires_at;
             // Also sync subscription status if it's 'active' or 'none'
             if (row.subscription_plan) {
                 data.subscription_status = row.subscription_plan;
@@ -1369,10 +1904,14 @@ async function getWhatsAppConfig(sessionName) {
         data.cheap_engine = true;
         needsAiUpdate = true;
     }
+    if (data.pro_plus_mode === undefined || data.pro_plus_mode === null) {
+        data.pro_plus_mode = true;
+        needsAiUpdate = true;
+    }
     if (needsAiUpdate) {
         await query(
-            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, cheap_engine = $4 WHERE session_name = $5',
-            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.cheap_engine, sessionName]
+            'UPDATE whatsapp_message_database SET ai_provider = $1, chat_model = $2, voice_model = $3, vision_model = $4, cheap_engine = $5, pro_plus_mode = $6 WHERE session_name = $7',
+            [data.ai_provider || data.ai, data.chat_model, data.voice_model || null, data.vision_model || null, data.cheap_engine, data.pro_plus_mode, sessionName]
         );
     }
 
@@ -1399,8 +1938,8 @@ async function saveWhatsAppChat(data) {
     const run = async () => {
         await query(
             `INSERT INTO whatsapp_chats
-                (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                (session_name, sender_id, recipient_id, message_id, text, timestamp, status, reply_by, token_usage, model_used, is_group, group_id, group_name, admin_user_id, admin_email)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
              ON CONFLICT (message_id) DO UPDATE SET
                 text = EXCLUDED.text,
                 timestamp = EXCLUDED.timestamp,
@@ -1410,7 +1949,9 @@ async function saveWhatsAppChat(data) {
                 model_used = EXCLUDED.model_used,
                 is_group = EXCLUDED.is_group,
                 group_id = EXCLUDED.group_id,
-                group_name = EXCLUDED.group_name`,
+                group_name = EXCLUDED.group_name,
+                admin_user_id = COALESCE(EXCLUDED.admin_user_id, whatsapp_chats.admin_user_id),
+                admin_email = COALESCE(NULLIF(BTRIM(EXCLUDED.admin_email), ''), whatsapp_chats.admin_email)`,
             [
                 data.session_name,
                 data.sender_id,
@@ -1424,7 +1965,9 @@ async function saveWhatsAppChat(data) {
                 data.model_used || null,
                 data.is_group || false,
                 data.group_id || null,
-                data.group_name || null
+                data.group_name || null,
+                data.admin_user_id || null,
+                data.admin_email || null
             ]
         );
     };
@@ -1463,6 +2006,9 @@ async function ensureWhatsAppChatsTable() {
             group_name TEXT,
             model_used TEXT
         );
+        ALTER TABLE whatsapp_chats
+            ADD COLUMN IF NOT EXISTS admin_user_id UUID,
+            ADD COLUMN IF NOT EXISTS admin_email TEXT;
         CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_session_sender ON whatsapp_chats(session_name, sender_id);
         CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_timestamp ON whatsapp_chats(timestamp DESC);
         
@@ -1604,8 +2150,8 @@ async function approveDepositTransaction(txn) {
 
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
-    let { session_name, sender_id, product_name, number, location, product_quantity, price } = orderData;
-    const { query } = require('./pgClient');
+    let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, phone_optional, business_profile_id, business_type, order_mode, client } = orderData;
+    const db = client || { query };
 
     // Clean product name
     if (product_name) {
@@ -1615,20 +2161,22 @@ async function saveWhatsAppOrderTracking(orderData) {
     }
 
     try {
-        await query(`
+        await db.query(`
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
             ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS business_profile_id bigint;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS business_type text;
+            ALTER TABLE whatsapp_order_tracking ADD COLUMN IF NOT EXISTS order_mode text;
         `);
     } catch (e) {
         console.warn("[DB] whatsapp_order_tracking migration failed:", e.message);
     }
 
     try {
-        let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email } = orderData;
-        
         // SMART MERGE: Last 1 hour
-        const recentOrder = await query(
-            `SELECT id, product_name, number, location, product_quantity, price, customer_email 
+        const recentOrder = await db.query(
+            `SELECT id, product_name, number, location, product_quantity, price, customer_email, customer_name
              FROM whatsapp_order_tracking 
              WHERE session_name = $1::text AND sender_id = $2::text 
              AND created_at >= NOW() - INTERVAL '1 hour'
@@ -1666,34 +2214,45 @@ async function saveWhatsAppOrderTracking(orderData) {
                 updates.push(`customer_email = $${idx++}::text`);
                 values.push(customer_email);
             }
+            if (customer_name && customer_name !== 'Pending') {
+                updates.push(`customer_name = $${idx++}::text`);
+                values.push(customer_name);
+            }
 
             if (updates.length > 0) {
                 values.push(existing.id);
-                const updateResult = await query(
+                const updateResult = await db.query(
                     `UPDATE whatsapp_order_tracking SET ${updates.join(', ')} WHERE id = $${idx}::bigint RETURNING *`,
                     values
                 );
                 console.log(`[WA Order] Smart Merged data into ID ${existing.id}`);
-                return updateResult.rows[0];
+                return { ...updateResult.rows[0], status: 'updated', isNew: false };
             }
             
             if (number && existing.number && number !== existing.number) {
                 console.log(`[WA Order] New number for ${sender_id}. New row.`);
             } else {
-                return existing;
+                return { ...existing, status: 'updated', isNew: false };
             }
         }
 
-        if (!number && !product_name && !location) return null;
+        if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
+            if (phone_optional) {
+                number = sender_id || 'N/A';
+            } else {
+                console.log(`[WA Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+                return null;
+            }
+        }
 
-        const result = await query(
+        const result = await db.query(
             `INSERT INTO whatsapp_order_tracking
-                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text)
+                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, business_profile_id, business_type, order_mode)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text, $10::bigint, $11::text, $12::text)
              RETURNING *`,
-            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null]
+            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null, business_profile_id || null, business_type || null, order_mode || null]
         );
-        return result.rows[0];
+        return { ...result.rows[0], isNew: true };
     } catch (error) {
         console.error("Error in saveWhatsAppOrderTracking:", error);
         return null;
@@ -1704,16 +2263,31 @@ async function saveWhatsAppOrderTracking(orderData) {
 async function getWhatsAppChatHistory(sessionName, senderId, limit = 10) {
     const { query } = require('./pgClient');
     const result = await query(
-        `SELECT * FROM whatsapp_chats
-         WHERE session_name = $1
-           AND (
-                (sender_id = $2 AND recipient_id = $1)
-             OR (sender_id = $1 AND recipient_id = $2)
-           )
-         ORDER BY timestamp DESC
-         LIMIT $3`,
-        [sessionName, senderId, limit]
-    );
+            `SELECT * FROM whatsapp_chats
+             WHERE session_name = $1
+               AND (
+                    (sender_id = $2 AND recipient_id = $1)
+                 OR (sender_id = $1 AND recipient_id = $2)
+               )
+             ORDER BY timestamp DESC
+             LIMIT $3`,
+            [sessionName, senderId, limit]
+        );
+
+    // #region debug-point A:whatsapp-cross-routing
+    const foreignConversationRows = result.rows.filter(msg => {
+        const isInbound = String(msg.sender_id || '') === String(senderId || '') && String(msg.recipient_id || '') === String(sessionName || '');
+        const isOutbound = String(msg.sender_id || '') === String(sessionName || '') && String(msg.recipient_id || '') === String(senderId || '');
+        return !isInbound && !isOutbound;
+    });
+    reportWhatsAppRoutingDebug('A', 'dbService.js:getWhatsAppChatHistory', 'loaded AI chat history', {
+        sessionName: hashRoutingId(sessionName),
+        senderId: hashRoutingId(senderId),
+        rowCount: result.rows.length,
+        foreignConversationRowCount: foreignConversationRows.length,
+        foreignRecipientIds: [...new Set(foreignConversationRows.map(row => hashRoutingId(row.recipient_id)).filter(Boolean))]
+    });
+    // #endregion
 
     return result.rows.reverse().map(msg => ({
         role: msg.reply_by === 'user' ? 'user' : (msg.reply_by === 'system' ? 'system' : 'assistant'),
@@ -1740,7 +2314,7 @@ async function getLastWhatsAppMessage(sessionName, recipientId) {
     return result.rows[0];
 }
 
-// 18. Deduct WhatsApp Credit (Smart Routing: Daily -> Bonus -> Permanent)
+// 18. Deduct WhatsApp Credit (Smart Routing: Free -> Daily -> Bonus -> Permanent)
 async function deductWhatsAppCredit(sessionName, amount = 1) {
     const { query } = require('./pgClient');
 
@@ -1781,25 +2355,30 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
         }
 
         const config = configResult.rows[0];
+        await checkAndExpirePlan(userIdStr);
+        const updatedConfigResult = await query(
+            'SELECT * FROM user_configs WHERE user_id::text = $1::text LIMIT 1',
+            [userIdStr]
+        );
+        const finalConfig = updatedConfigResult.rows.length > 0 ? updatedConfigResult.rows[0] : config;
 
         // --- 1. RESET CHECKS (DAILY & MONTHLY) ---
         const now = new Date();
-        const lastReset = new Date(config.last_reset_at || 0);
-        const lastMonthlyReset = new Date(config.last_monthly_reset_at || 0);
+        const lastReset = new Date(finalConfig.last_reset_at || 0);
+        const lastMonthlyReset = new Date(finalConfig.last_monthly_reset_at || 0);
         
         const isNewDay = lastReset.toDateString() !== now.toDateString();
         const isNewMonth = lastMonthlyReset.getMonth() !== now.getMonth() || lastMonthlyReset.getFullYear() !== now.getFullYear();
 
-        let dailyUsed = Number(config.daily_used || 0);
-        let bonusCredit = Number(config.bonus_credit || 0);
-        let monthlyUsed = Number(config.monthly_used || 0);
+        let dailyUsed = Number(finalConfig.daily_used || 0);
+        let bonusCredit = Number(finalConfig.bonus_credit || 0);
+        let monthlyUsed = Number(finalConfig.monthly_used || 0);
 
         if (isNewMonth) {
-            // Reset usage counters AND Monthly Bonus for new month
             dailyUsed = 0;
             monthlyUsed = 0;
             await query(
-                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, bonus_credit = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
+                'UPDATE user_configs SET daily_used = 0, monthly_used = 0, last_reset_at = NOW(), last_monthly_reset_at = NOW() WHERE user_id::text = $1',
                 [userIdStr]
             );
         } else if (isNewDay) {
@@ -1810,32 +2389,11 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
             );
         }
 
-        // --- 2. DEDUCTION LOGIC (SMART ROUTING: Daily -> Bonus -> Free -> Permanent) ---
-        
-        // Priority 1: Daily Limit (RPD - Resets Daily)
-        if (Number(config.daily_limit || 0) > dailyUsed) {
-            await query(
-                'UPDATE user_configs SET daily_used = daily_used + $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
-                [amount, userIdStr]
-            );
-            console.log(`[WA Credit] Deducted from Daily Limit for User ${userIdStr}`);
-            return true;
-        }
+        // --- 2. DEDUCTION LOGIC (SMART ROUTING: Free -> Daily -> Bonus -> Permanent) ---
 
-        // Priority 2: Bonus Credit (Monthly Bonus - Resets Monthly)
-        if (bonusCredit > 0) {
-            const deduct = Math.min(bonusCredit, amount);
-            await query(
-                'UPDATE user_configs SET bonus_credit = bonus_credit - $1, monthly_used = monthly_used + $1 WHERE user_id::text = $2',
-                [deduct, userIdStr]
-            );
-            console.log(`[WA Credit] Deducted from Bonus Credit for User ${userIdStr}`);
-            return true;
-        }
-
-        // Priority 3: Legacy Message Credit (Free 100 Messages)
-        if (Number(config.message_credit || 0) > 0) {
-            const deduct = Math.min(Number(config.message_credit), amount);
+        // Priority 1: Free/Legacy Message Credit
+        if (Number(finalConfig.message_credit || 0) > 0) {
+            const deduct = Math.min(Number(finalConfig.message_credit), amount);
             await query(
                 'UPDATE user_configs SET message_credit = message_credit - $1 WHERE user_id::text = $2',
                 [deduct, userIdStr]
@@ -1844,9 +2402,33 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
             return true;
         }
 
+        const monthlyExpiresAt = finalConfig.monthly_expires_at ? new Date(finalConfig.monthly_expires_at) : null;
+        const isSubscriptionActive = !monthlyExpiresAt || now < monthlyExpiresAt;
+
+        // Priority 2: Daily Limit (Subscription Daily Quota)
+        if (isSubscriptionActive && Number(finalConfig.daily_limit || 0) > dailyUsed) {
+            await query(
+                'UPDATE user_configs SET daily_used = daily_used + $1 WHERE user_id::text = $2',
+                [amount, userIdStr]
+            );
+            console.log(`[WA Credit] Deducted from Daily Limit for User ${userIdStr}`);
+            return true;
+        }
+
+        // Priority 3: Bonus Credit (Monthly Bonus - Resets Monthly)
+        if (isSubscriptionActive && bonusCredit > 0) {
+            const deduct = Math.min(bonusCredit, amount);
+            await query(
+                'UPDATE user_configs SET bonus_credit = bonus_credit - $1 WHERE user_id::text = $2',
+                [deduct, userIdStr]
+            );
+            console.log(`[WA Credit] Deducted from Bonus Credit for User ${userIdStr}`);
+            return true;
+        }
+
         // Priority 4: Permanent Credit (Never Expires)
-        if (Number(config.permanent_credit || 0) > 0) {
-            const deduct = Math.min(Number(config.permanent_credit), amount);
+        if (Number(finalConfig.permanent_credit || 0) > 0) {
+            const deduct = Math.min(Number(finalConfig.permanent_credit), amount);
             await query(
                 'UPDATE user_configs SET permanent_credit = permanent_credit - $1 WHERE user_id::text = $2',
                 [deduct, userIdStr]
@@ -1866,45 +2448,50 @@ async function deductWhatsAppCredit(sessionName, amount = 1) {
 // 19. Save WhatsApp Contact (Lead)
 async function saveWhatsAppContact(data) {
     const { query } = require('./pgClient');
+    const profileName = normalizeContactName(data.name);
+    const hasProfileName = isValidContactName(profileName);
     const run = async () => {
-        const existingResult = await query(
-            'SELECT name FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
-            [data.session_name, data.phone_number]
-        );
-
-        const updates = {
-            session_name: data.session_name,
-            phone_number: data.phone_number,
-            last_interaction: new Date().toISOString()
-        };
-
-        if (data.lid) {
-            updates.lid = data.lid;
-        }
-
-        if (data.name && data.name !== 'Unknown' && data.name.trim() !== '') {
-            updates.name = data.name;
-        } else if (existingResult.rows.length === 0) {
-            updates.name = 'Unknown';
-        }
-
-        const params = [
-            updates.session_name,
-            updates.phone_number,
-            updates.lid || null,
-            updates.name || null,
-            updates.last_interaction
-        ];
-
         await query(
             `INSERT INTO whatsapp_contacts
-                (session_name, phone_number, lid, name, last_interaction)
-             VALUES ($1,$2,$3,$4,$5)
+                (session_name, phone_number, lid, wa_id, username, business_scoped_user_id, name, profile_name, name_source, last_interaction)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::text, $7::text, CASE WHEN $7::text IS NULL THEN NULL ELSE 'profile' END, $8)
              ON CONFLICT (session_name, phone_number) DO UPDATE SET
-                name = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
                 lid = COALESCE(EXCLUDED.lid, whatsapp_contacts.lid),
+                wa_id = COALESCE(EXCLUDED.wa_id, whatsapp_contacts.wa_id),
+                username = COALESCE(EXCLUDED.username, whatsapp_contacts.username),
+                business_scoped_user_id = COALESCE(EXCLUDED.business_scoped_user_id, whatsapp_contacts.business_scoped_user_id),
+                profile_name = COALESCE(EXCLUDED.profile_name, whatsapp_contacts.profile_name),
+                name = CASE
+                    WHEN whatsapp_contacts.is_locked OR whatsapp_contacts.name_source IN ('manual', 'custom') THEN whatsapp_contacts.name
+                    WHEN EXCLUDED.profile_name IS NOT NULL AND (
+                        whatsapp_contacts.name_source = 'profile'
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) = ''
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) ~ '^[0-9]+$'
+                        OR LOWER(BTRIM(COALESCE(whatsapp_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')
+                    ) THEN EXCLUDED.profile_name
+                    ELSE whatsapp_contacts.name
+                END,
+                name_source = CASE
+                    WHEN whatsapp_contacts.is_locked OR whatsapp_contacts.name_source IN ('manual', 'custom') THEN whatsapp_contacts.name_source
+                    WHEN EXCLUDED.profile_name IS NOT NULL AND (
+                        whatsapp_contacts.name_source = 'profile'
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) = ''
+                        OR BTRIM(COALESCE(whatsapp_contacts.name, '')) ~ '^[0-9]+$'
+                        OR LOWER(BTRIM(COALESCE(whatsapp_contacts.name, ''))) IN ('unknown', 'unknown user', 'customer', 'whatsapp user', 'messenger user', 'null', 'undefined')
+                    ) THEN 'profile'
+                    ELSE whatsapp_contacts.name_source
+                END,
                 last_interaction = EXCLUDED.last_interaction`,
-            params
+            [
+                data.session_name,
+                data.phone_number,
+                data.lid || null,
+                data.wa_id || null,
+                data.username || null,
+                data.business_scoped_user_id || null,
+                hasProfileName ? profileName : null,
+                new Date().toISOString()
+            ]
         );
     };
 
@@ -1929,12 +2516,16 @@ async function ensureWhatsAppContactsTable() {
             session_name TEXT NOT NULL,
             phone_number TEXT NOT NULL,
             lid TEXT,
+            wa_id TEXT,
+            username TEXT,
+            business_scoped_user_id TEXT,
             name TEXT,
+            profile_name TEXT,
+            name_source TEXT,
             is_locked BOOLEAN DEFAULT FALSE,
             last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             UNIQUE(session_name, phone_number)
         );
-        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
     `);
 
     await query(`
@@ -1946,8 +2537,23 @@ async function ensureWhatsAppContactsTable() {
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='lid') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN lid TEXT;
             END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='wa_id') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN wa_id TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='username') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN username TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='business_scoped_user_id') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN business_scoped_user_id TEXT;
+            END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN name TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='profile_name') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN profile_name TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='name_source') THEN
+                ALTER TABLE whatsapp_contacts ADD COLUMN name_source TEXT;
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='whatsapp_contacts' AND column_name='is_locked') THEN
                 ALTER TABLE whatsapp_contacts ADD COLUMN is_locked BOOLEAN DEFAULT FALSE;
@@ -1956,6 +2562,14 @@ async function ensureWhatsAppContactsTable() {
                 ALTER TABLE whatsapp_contacts ADD COLUMN last_interaction TIMESTAMP WITH TIME ZONE DEFAULT NOW();
             END IF;
         END $$;
+    `);
+
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_phone ON whatsapp_contacts(session_name, phone_number);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_lid ON whatsapp_contacts(session_name, lid);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_wa_id ON whatsapp_contacts(session_name, wa_id);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_username ON whatsapp_contacts(session_name, username);
+        CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_session_bsuid ON whatsapp_contacts(session_name, business_scoped_user_id);
     `);
 }
 // 20. Toggle WhatsApp Lock (Handover)
@@ -2005,6 +2619,7 @@ async function toggleWhatsAppLock(sessionName, phoneNumber, isLocked) {
 async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlockEmojis) {
     const { query } = require('./pgClient');
     try {
+        console.log(`[WA Lock] Checking emoji lock history. Lock emojis: [${lockEmojis.join(', ')}], Unlock emojis: [${unlockEmojis.join(', ')}]`);
         // Increase LIMIT to 20 for deeper history scan
         const numbers = Array.isArray(phoneNumber) ? phoneNumber.filter(Boolean) : [phoneNumber].filter(Boolean);
         const result = await query(
@@ -2023,9 +2638,9 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
         // Helper to normalize emojis (remove VS16 \uFE0F and NFC)
         const normalize = (str) => (str || '').replace(/\uFE0F/g, '').normalize('NFC');
 
-        // Pre-normalize config emojis
-        const normLock = lockEmojis.map(normalize);
-        const normUnlock = unlockEmojis.map(normalize);
+        // Pre-normalize config emojis and filter out any empty strings
+        const normLock = lockEmojis.map(normalize).filter(e => e.length > 0);
+        const normUnlock = unlockEmojis.map(normalize).filter(e => e.length > 0);
 
         for (const msg of result.rows) {
             const rawText = (msg.text || '').trim();
@@ -2036,7 +2651,7 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
             // Check Lock Emojis
             for (const emoji of normLock) {
                 if (normText.includes(emoji)) {
-                    console.log(`[WA Lock] Found Lock Emoji (Normalized) in message: "${rawText}"`);
+                    console.log(`[WA Lock] Found Lock Emoji (Normalized: ${emoji}) in message: "${rawText}"`);
                     return { locked: true, timestamp: msg.timestamp };
                 }
             }
@@ -2044,7 +2659,7 @@ async function checkWhatsAppEmojiLock(sessionName, phoneNumber, lockEmojis, unlo
             // Check Unlock Emojis
             for (const emoji of normUnlock) {
                 if (normText.includes(emoji)) {
-                    console.log(`[WA Lock] Found Unlock Emoji (Normalized) in message: "${rawText}"`);
+                    console.log(`[WA Lock] Found Unlock Emoji (Normalized: ${emoji}) in message: "${rawText}"`);
                     return { locked: false, timestamp: msg.timestamp };
                 }
             }
@@ -2193,31 +2808,62 @@ async function logMessage(msgData) {
 
 // 12. Save Order (Unified Wrapper)
 async function saveOrder(orderData) {
-    const { platform } = orderData;
-    if (platform === 'whatsapp') {
-        return await saveWhatsAppOrderTracking({
-            session_name: orderData.page_id, // For WA, page_id is session_name
-            sender_id: orderData.sender_id,
-            product_name: orderData.product_name,
-            number: orderData.phone,
-            location: orderData.address,
-            product_quantity: orderData.quantity,
-            price: orderData.price,
-            customer_email: orderData.customer_email
+    const { platform, phone_optional } = orderData;
+    const client = await getPool().connect();
+    try {
+        await client.query('BEGIN');
+        const saveWithClient = platform === 'whatsapp' ? saveWhatsAppOrderTracking : saveOrderTracking;
+        const result = await saveWithClient({
+            ...(platform === 'whatsapp'
+                ? {
+                    session_name: orderData.page_id,
+                    sender_id: orderData.sender_id,
+                    product_name: orderData.product_name,
+                    number: orderData.phone,
+                    location: orderData.address,
+                    product_quantity: orderData.quantity,
+                    price: orderData.price,
+                    customer_email: orderData.customer_email,
+                    customer_name: orderData.customer_name,
+                    phone_optional,
+                    business_profile_id: orderData.business_profile_id,
+                    business_type: orderData.business_type,
+                    order_mode: orderData.order_mode
+                }
+                : {
+                    page_id: orderData.page_id,
+                    sender_id: orderData.sender_id,
+                    product_name: orderData.product_name,
+                    number: orderData.phone,
+                    location: orderData.address,
+                    product_quantity: orderData.quantity,
+                    price: orderData.price,
+                    sender_number: orderData.phone,
+                    customer_email: orderData.customer_email,
+                    customer_name: orderData.customer_name,
+                    phone_optional,
+                    business_profile_id: orderData.business_profile_id,
+                    business_type: orderData.business_type,
+                    order_mode: orderData.order_mode
+                }),
+            client
         });
-    } else {
-        return await saveOrderTracking({
-            page_id: orderData.page_id,
-            sender_id: orderData.sender_id,
-            product_name: orderData.product_name,
-            number: orderData.phone,
-            location: orderData.address,
-            product_quantity: orderData.quantity,
-            price: orderData.price,
-            sender_number: orderData.phone,
-            customer_email: orderData.customer_email,
-            customer_name: orderData.customer_name
-        });
+
+        if (result?.isNew) {
+            await allocateNewOrder({
+                client,
+                source: platform === 'whatsapp' ? 'whatsapp' : 'fb',
+                resourceId: orderData.page_id,
+                orderIdentity: result.id
+            });
+        }
+        await client.query('COMMIT');
+        return result;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
     }
 }
 
@@ -2238,7 +2884,8 @@ async function updateContactPhone(pageId, senderId, phone) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email } = orderData;
+    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, phone_optional, business_profile_id, business_type, order_mode, client } = orderData;
+    const db = client || { query };
     
     // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
     const cleanValue = (val) => {
@@ -2273,7 +2920,7 @@ async function saveOrderTracking(orderData) {
     }
 
     try {
-        await query(`
+        await db.query(`
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='customer_name') THEN
@@ -2288,6 +2935,15 @@ async function saveOrderTracking(orderData) {
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='is_locked') THEN
                     ALTER TABLE fb_order_tracking ADD COLUMN is_locked boolean DEFAULT false;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='business_profile_id') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN business_profile_id bigint;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='business_type') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN business_type text;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_order_tracking' AND column_name='order_mode') THEN
+                    ALTER TABLE fb_order_tracking ADD COLUMN order_mode text;
+                END IF;
             END $$;
         `);
     } catch (e) {
@@ -2296,7 +2952,7 @@ async function saveOrderTracking(orderData) {
 
     try {
         // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
-        const recentOrder = await query(
+        const recentOrder = await db.query(
             `SELECT id, is_locked, status, product_name, number, location FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
@@ -2320,7 +2976,7 @@ async function saveOrderTracking(orderData) {
 
                 console.log(`[Order] Found active recent order (${orderId}). Incomplete: ${isMissingDetails}. Updating...`);
                 
-                await query(
+                await db.query(
                     `UPDATE fb_order_tracking SET
                         product_name = CASE 
                             WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> 'Unknown' AND $1::text <> '' THEN $1::text 
@@ -2354,29 +3010,36 @@ async function saveOrderTracking(orderData) {
                             WHEN $9::text IS NOT NULL AND $9::text <> '' THEN $9::text
                             ELSE customer_email
                         END,
+                        business_profile_id = COALESCE($10::bigint, business_profile_id),
+                        business_type = COALESCE($11::text, business_type),
+                        order_mode = COALESCE($12::text, order_mode),
                         updated_at = NOW()
                      WHERE id = $7::bigint`,
-                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null]
+                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null, business_profile_id || null, business_type || null, order_mode || null]
                 );
-                return { id: orderId, status: 'updated' };
+                return { id: orderId, status: 'updated', isNew: false };
             }
         }
 
         // --- 3. NEW ORDER (Strict Requirement: Must have a phone number to start a new row) ---
-        // If we reach here, no existing order was found. We ONLY create a new row if we have a phone number.
         if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
-            console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
-            return null;
+            if (phone_optional) {
+                number = sender_id || 'N/A';
+                sender_number = sender_number || number;
+            } else {
+                console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+                return null;
+            }
         }
 
-        const result = await query(
+        const result = await db.query(
             `INSERT INTO fb_order_tracking
-                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text)
+                (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email, business_profile_id, business_type, order_mode)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text, $11::bigint, $12::text, $13::text)
              RETURNING *`,
-            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null]
+            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null, business_profile_id || null, business_type || null, order_mode || null]
         );
-        return result.rows[0];
+        return { ...result.rows[0], isNew: true };
 
     } catch (error) {
         console.error("[Order] Smart Save Error:", error.message);
@@ -2444,7 +3107,8 @@ async function getWhatsAppDailyAICount(sessionName, senderId) {
 async function getAllActivePages() {
     try {
         const pagesResult = await query(
-            `SELECT page_id, user_id, message_credit, subscription_status, api_key, cheap_engine
+            `SELECT page_id, user_id, message_credit, subscription_status, api_key, cheap_engine,
+                    permanent_credit, bonus_credit, daily_limit, daily_used, monthly_limit, monthly_used
              FROM page_access_token_message
              WHERE subscription_status IN ('active','trial','active_trial','active_paid','none')`,
             []
@@ -2458,14 +3122,20 @@ async function getAllActivePages() {
 
         if (userIds.length > 0) {
             const configsResult = await query(
-                `SELECT user_id, message_credit
+                `SELECT user_id, message_credit, bonus_credit, permanent_credit,
+                        daily_limit, daily_used, monthly_limit, monthly_used
                  FROM user_configs
                  WHERE user_id::text = ANY($1::text[])`,
                 [userIds]
             );
             configsResult.rows.forEach(c => {
-                const total = Number(c.message_credit || 0);
-                userCredits[c.user_id] = total;
+                userCredits[c.user_id] = {
+                    legacy: Number(c.message_credit || 0),
+                    bonus: Number(c.bonus_credit || 0),
+                    permanent: Number(c.permanent_credit || 0),
+                    hasDaily: Number(c.daily_limit || 0) > Number(c.daily_used || 0),
+                    hasMonthly: Number(c.monthly_limit || 0) > Number(c.monthly_used || 0)
+                };
             });
         }
 
@@ -2475,11 +3145,24 @@ async function getAllActivePages() {
                 const isActive = ['active', 'trial', 'active_trial', 'active_paid', 'none'].includes(status);
                 if (!isActive) return false;
 
-                const sharedCredits = userCredits[p.user_id] || 0;
+                const sharedCredits = userCredits[p.user_id] || null;
                 const hasOwnKey = p.api_key && p.api_key.length > 5 && p.cheap_engine === false;
+                const hasPageLegacy = Number(p.message_credit || 0) > 0;
+                const hasPageBonus = Number(p.bonus_credit || 0) > 0;
+                const hasPagePermanent = Number(p.permanent_credit || 0) > 0;
+                const hasPageDaily = Number(p.daily_limit || 0) > Number(p.daily_used || 0);
+                const hasPageMonthly = Number(p.monthly_limit || 0) > Number(p.monthly_used || 0);
+                const hasSharedCredit = sharedCredits && (
+                    sharedCredits.legacy > 0 ||
+                    sharedCredits.bonus > 0 ||
+                    sharedCredits.permanent > 0 ||
+                    sharedCredits.hasDaily ||
+                    sharedCredits.hasMonthly
+                );
 
                 if (hasOwnKey) return true;
-                if (sharedCredits > 0) return true;
+                if (hasPageLegacy || hasPageBonus || hasPagePermanent || hasPageDaily || hasPageMonthly) return true;
+                if (hasSharedCredit) return true;
                 return false;
             })
             .map(p => p.page_id);
@@ -2488,6 +3171,26 @@ async function getAllActivePages() {
     } catch (error) {
         console.error("Error fetching active pages:", error);
         return [];
+    }
+}
+
+async function updatePageToken(pageId, newPageAccessToken) {
+    if (!pageId || !newPageAccessToken) {
+        return false;
+    }
+
+    try {
+        await query(
+            `UPDATE page_access_token_message
+             SET page_access_token = $1,
+                 subscription_status = 'active'
+             WHERE page_id = $2`,
+            [newPageAccessToken, String(pageId)]
+        );
+        return true;
+    } catch (error) {
+        console.error(`Error updating page token for ${pageId}:`, error);
+        return false;
     }
 }
 
@@ -2512,7 +3215,7 @@ async function markPageTokenInvalid(pageId) {
         recipient_id: pageId, // Self
         message_id: `sys_err_${Date.now()}`,
         text: "⚠️ SYSTEM ALERT: Facebook Page Token Expired. Please Reconnect Page in Dashboard.",
-        timestamp: new Date(),
+        timestamp: Date.now(), // Fixed: using Date.now() integer for BIGINT
         status: 'error',
         reply_by: 'bot'
     });
@@ -2534,33 +3237,6 @@ async function updateWhatsAppEntry(id, updates) {
             [...values, id]
         );
 
-        const sessionResult = await query(
-            'SELECT session_name FROM whatsapp_message_database WHERE id = $1 LIMIT 1',
-            [id]
-        );
-
-        if (sessionResult.rows.length > 0 && sessionResult.rows[0].session_name) {
-            const sessionName = sessionResult.rows[0].session_name;
-            const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
-            delete sessionUpdates.reply_message;
-            delete sessionUpdates.order_tracking;
-            delete sessionUpdates.text_prompt;
-            delete sessionUpdates.active;
-            delete sessionUpdates.subscription_status;
-
-            const sessionKeys = Object.keys(sessionUpdates);
-            if (sessionKeys.length === 0) return;
-
-            const sessionSet = sessionKeys.map((k, idx) => `${k} = $${idx + 1}`);
-            const sessionValues = sessionKeys.map(k => sessionUpdates[k]);
-
-            await query(
-                `UPDATE whatsapp_sessions
-                 SET ${sessionSet.join(', ')}
-                 WHERE session_name = $${sessionKeys.length + 1}`,
-                [...sessionValues, sessionName]
-            );
-        }
     } catch (error) {
         console.error("Error updating WhatsApp entry:", error.message);
     }
@@ -2582,92 +3258,8 @@ async function updateWhatsAppEntryByName(sessionName, updates) {
             [...values, sessionName]
         );
 
-        const sessionUpdates = { ...updates, updated_at: new Date().toISOString() };
-        delete sessionUpdates.reply_message;
-        delete sessionUpdates.order_tracking;
-        delete sessionUpdates.text_prompt;
-        delete sessionUpdates.active;
-        delete sessionUpdates.subscription_status;
-
-        const sessionKeys = Object.keys(sessionUpdates);
-        if (sessionKeys.length === 0) return;
-
-        const sessionSet = sessionKeys.map((k, idx) => `${k} = $${idx + 1}`);
-        const sessionValues = sessionKeys.map(k => sessionUpdates[k]);
-
-        await query(
-            `UPDATE whatsapp_sessions
-             SET ${sessionSet.join(', ')}
-             WHERE session_name = $${sessionKeys.length + 1}`,
-            [...sessionValues, sessionName]
-        );
     } catch (error) {
         console.error("Error updating WhatsApp entry by name:", error.message);
-    }
-}
-
-// 22. Renew WhatsApp Session
-async function renewWhatsAppSession(sessionName, days) {
-    const sessionResult = await query(
-        'SELECT expires_at, plan_days FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1',
-        [sessionName]
-    );
-
-    if (sessionResult.rows.length === 0) {
-        throw new Error("Session not found");
-    }
-
-    const session = sessionResult.rows[0];
-    let newExpiresAt = new Date();
-
-    if (session.expires_at && new Date(session.expires_at) > new Date()) {
-        newExpiresAt = new Date(session.expires_at);
-    }
-
-    newExpiresAt.setDate(newExpiresAt.getDate() + days);
-
-    const updateResult = await query(
-        `UPDATE whatsapp_message_database
-         SET expires_at = $2,
-             plan_days = COALESCE(plan_days, 0) + $3,
-             active = true,
-             status = 'working',
-             subscription_status = 'active'
-         WHERE session_name = $1
-         RETURNING *`,
-        [sessionName, newExpiresAt.toISOString(), days]
-    );
-
-    try {
-        await query(
-            `UPDATE whatsapp_sessions
-             SET expires_at = $2,
-                 plan_days = COALESCE(plan_days, 0) + $3,
-                 status = 'working',
-                 updated_at = now()
-             WHERE session_name = $1`,
-            [sessionName, newExpiresAt.toISOString(), days]
-        );
-    } catch (e) {}
-
-    return updateResult.rows[0];
-}
-
-// 23. Get Expired WhatsApp Sessions
-async function getExpiredWhatsAppSessions() {
-    const now = new Date().toISOString();
-    try {
-        const result = await query(
-            `SELECT session_name, user_id, expires_at
-             FROM whatsapp_message_database
-             WHERE expires_at < $1
-               AND active = true`,
-            [now]
-        );
-        return result.rows;
-    } catch (error) {
-        console.error("Error fetching expired sessions:", error);
-        return [];
     }
 }
 
@@ -2707,14 +3299,6 @@ async function deleteWhatsAppEntry(sessionName) {
         throw error;
     }
 
-    try {
-        await query(
-            'DELETE FROM whatsapp_sessions WHERE session_name = $1',
-            [sessionName]
-        );
-    } catch (e) {
-        console.warn("[DB] Failed to delete from whatsapp_sessions:", e.message);
-    }
 }
 
 async function deleteMessengerPage(pageId) {
@@ -2787,7 +3371,10 @@ async function checkWhatsAppLockStatus(sessionName, senderId) {
     try {
         const run = async () => {
             const result = await query(
-                'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+                `SELECT is_locked FROM whatsapp_contacts
+                 WHERE session_name = $1
+                   AND (phone_number = $2 OR lid = $2 OR username = $2 OR wa_id = $2 OR business_scoped_user_id = $2)
+                 LIMIT 1`,
                 [sessionName, senderId]
             );
             if (result.rows.length > 0) {
@@ -2802,7 +3389,10 @@ async function checkWhatsAppLockStatus(sessionName, senderId) {
             try {
                 await ensureWhatsAppContactsTable();
                 const result = await query(
-                    'SELECT is_locked FROM whatsapp_contacts WHERE session_name = $1 AND phone_number = $2 LIMIT 1',
+                    `SELECT is_locked FROM whatsapp_contacts
+                     WHERE session_name = $1
+                       AND (phone_number = $2 OR lid = $2 OR username = $2 OR wa_id = $2 OR business_scoped_user_id = $2)
+                     LIMIT 1`,
                     [sessionName, senderId]
                 );
                 if (result.rows.length > 0) {
@@ -2959,7 +3549,17 @@ async function getAllKeys() {
 async function addApiKey({ provider, api, model = 'default', email = null, gmail = null, mode = 'admin', owner_id = null }) {
     try {
         const result = await query(
-            'INSERT INTO api_list (provider, api, model, status, email, gmail, mode, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+            `INSERT INTO api_list (provider, api, model, status, email, gmail, mode, owner_id) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+             ON CONFLICT (api) DO UPDATE SET 
+                provider = EXCLUDED.provider,
+                model = EXCLUDED.model,
+                status = 'active',
+                email = EXCLUDED.email,
+                gmail = EXCLUDED.gmail,
+                mode = EXCLUDED.mode,
+                owner_id = EXCLUDED.owner_id
+             RETURNING *`,
             [provider, api, model, 'active', email, gmail, mode, owner_id]
         );
         return result.rows[0];
@@ -3098,6 +3698,24 @@ function calculateRequestCost(model, requests = 1) {
 // --- Semantic Cache Utilities ---
 async function getEmbeddingGlobalConfig() {
     try {
+        const defaultEmbeddingModel = 'qwen/qwen3-embedding-8b';
+        const defaultEmbeddingBaseUrl = 'https://openrouter.ai/api/v1';
+        const envModel = String(process.env.EMBEDDING_MODEL || process.env.VECTOR_EMBEDDING_MODEL || '').trim();
+        const envApiKey = String(process.env.EMBEDDING_API_KEY || process.env.VECTOR_EMBEDDING_API_KEY || process.env.OPENROUTER_API_KEY || '').trim();
+        const envBaseUrl = String(process.env.EMBEDDING_BASE_URL || process.env.VECTOR_EMBEDDING_BASE_URL || '').trim();
+        const envProviderRaw = String(process.env.EMBEDDING_PROVIDER || process.env.VECTOR_EMBEDDING_PROVIDER || '').trim().toLowerCase();
+        const envAccessMode = String(process.env.EMBEDDING_ACCESS_MODE || process.env.VECTOR_EMBEDDING_ACCESS_MODE || '').trim().toLowerCase();
+
+        if (envModel || envApiKey || envBaseUrl || envProviderRaw) {
+            const isOpenRouter = envProviderRaw === 'openrouter' || envAccessMode === 'openai_compatible' || (envApiKey && envApiKey.startsWith('sk-or-v1'));
+            return {
+                model: envModel || defaultEmbeddingModel,
+                base_url: envBaseUrl || (isOpenRouter ? defaultEmbeddingBaseUrl : 'https://api.openai.com/v1'),
+                api_key: envApiKey,
+                provider: isOpenRouter ? 'openai' : (envProviderRaw || 'openai')
+            };
+        }
+
         const result = await query(
             `SELECT text_model, text_model_details
              FROM openrouter_engine_config
@@ -3108,21 +3726,16 @@ async function getEmbeddingGlobalConfig() {
 
         const row = result.rows[0] || null;
         const details = (row && row.text_model_details) || {};
-        
-        // Handle different possible provider name formats
-        let provider = details.provider || 'openai';
-        if (row && row.text_model) {
-            const modelLower = row.text_model.toLowerCase();
-            if (modelLower.includes('gemini') || modelLower.includes('embedding-001')) {
-                provider = 'google';
-            }
-        }
+        const configuredProvider = String(details.provider || '').trim().toLowerCase();
+        const accessMode = String(details.access_mode || '').trim().toLowerCase();
+        const apiKey = String(details.api_key || '').trim();
+        const isOpenRouter = configuredProvider === 'openrouter' || accessMode === 'openai_compatible' || apiKey.startsWith('sk-or-v1');
 
         return {
-            model: (row && row.text_model) || 'text-embedding-3-small',
-            base_url: details.base_url || 'https://api.openai.com/v1',
-            api_key: details.api_key || '',
-            provider: provider
+            model: (row && row.text_model) || defaultEmbeddingModel,
+            base_url: details.base_url || (isOpenRouter ? defaultEmbeddingBaseUrl : 'https://api.openai.com/v1'),
+            api_key: apiKey,
+            provider: isOpenRouter ? 'openai' : (configuredProvider || 'openai')
         };
     } catch (e) {
         console.warn(`[DB] Failed to fetch embedding config: ${e.message}`);
@@ -3405,7 +4018,12 @@ async function deleteAdContext(adId, pageId) {
 }
 
 module.exports = {
-    getAllKeys,
+  checkAndExpirePlan,
+  getModelPricing,
+  getCostForModel,
+  logApiUsage,
+  deductUserBalance,
+  getAllKeys,
     addApiKey,
     deleteApiKey,
     deleteApiKeys,
@@ -3418,15 +4036,17 @@ module.exports = {
     calculateRequestCost,
     getPageConfig,
     getPagePrompts,
-    saveLead,
     getConversationState,
     setConversationState,
-    checkDuplicate,
+    updateConversationState,
     deductCredit,
     getChatHistory,
     saveChatMessage,
     saveFbChat,
+    updateFbChatSenderName,
     getFbChatHistory,
+    saveInstagramChat,
+    getInstagramChatHistory,
     checkN8nDebounce,
     saveFbComment,
     logMessage,
@@ -3436,6 +4056,7 @@ module.exports = {
     saveOrderTracking,
     checkLockStatus,
     getAllActivePages,
+    updatePageToken,
     markPageTokenInvalid,
     createWhatsAppEntry,
     getWhatsAppConfig,
@@ -3454,14 +4075,11 @@ module.exports = {
     toggleWhatsAppLock,
     getWhatsAppContact,
     getWhatsAppContactByLid,
-    renewWhatsAppSession,
-    getExpiredWhatsAppSessions,
     deductUserBalance,
     deleteWhatsAppEntry,
     deleteMessengerPage,
     checkWhatsAppLockStatus,
     checkWhatsAppEmojiLock,
-    createWhatsAppSessionEntry,
     getActiveWhatsAppSessions,
     getWhatsAppDailyAICount,
     checkFbLockStatus,
@@ -3474,6 +4092,10 @@ module.exports = {
     saveModelUsage,
     clearExpiredModelLocks,
     getAllModelUsagesForKey,
+    hasFbAdminReplySince,
+    hasWhatsAppAdminReplySince,
+    getLastFbUserMessageTimestamp,
+    getLastWhatsAppUserMessageTimestamp,
 
     // --- PRODUCT MANAGEMENT ---
     createProduct,
@@ -3488,12 +4110,25 @@ module.exports = {
     getProducts,
     getProductById,
     getProductByImageUrl,
+    getResourceProductsWithMedia,
     updateProduct,
     deleteProduct,
+    searchProductByImageVector,
+    searchProductByDirectImageVector,
+    searchProductImageEmbeddingRowsByDirectVector,
     searchProducts,
+    searchProductsForResource,
+    getIncomingImageAnalysis,
+    upsertIncomingImageAnalysis,
     getProductsByNames,
     checkProductFeatureAccess,
     updateProductEmbedding,
+    refreshProductEmbeddingsNow,
+    upsertProductImageEmbedding,
+    backfillGeneratedSkuMatrixForLegacyProducts,
+    normalizeProductRecord,
+    resolveProductSkuSelection,
+    buildProductSearchBlob,
 
     // --- ADMIN TOOLS ---
     addBalanceByEmail,
@@ -3518,17 +4153,6 @@ async function checkProductFeatureAccess(userId) {
         }
     }
 
-    const waResult = await query(
-        `SELECT COUNT(*)::int AS cnt
-         FROM whatsapp_sessions
-         WHERE user_id::text = $1::text
-           AND expires_at > NOW()`,
-        [String(userId)]
-    );
-
-    if (waResult.rows.length > 0 && waResult.rows[0].cnt > 0) {
-        return true;
-    }
 
     const fbResult = await query(
         `SELECT COUNT(*)::int AS cnt
@@ -3545,26 +4169,488 @@ async function checkProductFeatureAccess(userId) {
     return true;
 }
 
+function safeParseJson(value, fallback) {
+    if (value === undefined || value === null) return fallback;
+    if (typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return fallback;
+        }
+    }
+    return value;
+}
+
+function normalizeProductMode(mode) {
+    const value = String(mode || 'simple').trim().toLowerCase();
+    if (['simple', 'option-list', 'sku-matrix'].includes(value)) return value;
+    return 'simple';
+}
+
+function normalizeAttributeName(name, index = 0) {
+    const cleaned = String(name || `attribute_${index + 1}`)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return cleaned || `attribute_${index + 1}`;
+}
+
+function formatAttributeLabel(name) {
+    return String(name || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function normalizeTextToken(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+const SEARCH_STOP_TOKENS = new Set([
+    'amar', 'amr', 'ami', 'lagbe', 'lagbo', 'lage', 'ta', 'ti', 'eta', 'eita', 'ei',
+    'ase', 'ache', 'achi', 'koto', 'dam', 'price', 'please', 'plz', 'want', 'need',
+    'chai', 'lagbey', 'den', 'diben', 'diben', 'tai', 'sizeer', 'er', 'টা', 'দাম', 'আছে'
+]);
+
+function extractSearchTokens(value) {
+    return Array.from(new Set(
+        normalizeTextToken(value)
+            .split(' ')
+            .map((token) => token.trim())
+            .filter((token) => token && !SEARCH_STOP_TOKENS.has(token))
+    ));
+}
+
+function normalizeAttributeSchema(schema, skuMatrix = []) {
+    const parsed = safeParseJson(schema, []);
+    const base = Array.isArray(parsed) ? parsed : [];
+    const normalized = [];
+
+    base.forEach((item, index) => {
+        if (!item) return;
+        const rawName = typeof item === 'string' ? item : (item.name || item.key || item.label);
+        const name = normalizeAttributeName(rawName, index);
+        const label = String((typeof item === 'object' ? item.label : '') || formatAttributeLabel(name)).trim();
+        const rawValues = typeof item === 'object' ? (item.values || item.options || []) : [];
+        const values = Array.from(new Set((Array.isArray(rawValues) ? rawValues : [])
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)));
+        normalized.push({ name, label, values });
+    });
+
+    if (Array.isArray(skuMatrix) && skuMatrix.length > 0) {
+        skuMatrix.forEach((sku) => {
+            const attrs = sku?.attributes && typeof sku.attributes === 'object' ? sku.attributes : {};
+            Object.entries(attrs).forEach(([rawName, rawValue]) => {
+                const name = normalizeAttributeName(rawName);
+                const value = String(rawValue || '').trim();
+                if (!value) return;
+                let target = normalized.find((item) => item.name === name);
+                if (!target) {
+                    target = { name, label: formatAttributeLabel(name), values: [] };
+                    normalized.push(target);
+                }
+                if (!target.values.includes(value)) {
+                    target.values.push(value);
+                }
+            });
+        });
+    }
+
+    return normalized;
+}
+
+function buildSkuKey(attributes = {}) {
+    const pairs = Object.entries(attributes)
+        .map(([key, value]) => [normalizeAttributeName(key), String(value || '').trim()])
+        .filter(([, value]) => value)
+        .sort(([a], [b]) => a.localeCompare(b));
+    return pairs.map(([key, value]) => `${key}:${value.toLowerCase()}`).join('|');
+}
+
+function summarizeAttributes(attributes = {}) {
+    return Object.entries(attributes)
+        .map(([key, value]) => `${formatAttributeLabel(key)}: ${value}`)
+        .join(', ');
+}
+
+function buildSkuName(attributes = {}) {
+    const values = Object.values(attributes)
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+    return values.join(' / ') || 'Standard';
+}
+
+function encodeSkuSegment(value) {
+    return String(value || '')
+        .toUpperCase()
+        .replace(/(\d)\s*[.,]\s*(\d)/g, '$1P$2')
+        .replace(/[^A-Z0-9]+/g, '')
+        .slice(0, 8);
+}
+
+function buildSkuCodeFromAttributes(attributes = {}, index = 0, schema = []) {
+    const orderedValues = (Array.isArray(schema) && schema.length > 0
+        ? schema.map((item) => attributes[item.name])
+        : Object.values(attributes))
+        .filter(Boolean)
+        .slice(0, 3)
+        .map((value) => encodeSkuSegment(value));
+    return orderedValues.length > 0 ? orderedValues.join('-') : `SKU-${index + 1}`;
+}
+
+function generateSkuCombinations(attributeSchema = []) {
+    const normalizedSchema = (Array.isArray(attributeSchema) ? attributeSchema : [])
+        .map((item, index) => {
+            const name = normalizeAttributeName(item?.name || item?.label, index);
+            const values = Array.from(new Set((Array.isArray(item?.values) ? item.values : [])
+                .map((value) => String(value || '').trim())
+                .filter(Boolean)));
+            return { name, values };
+        })
+        .filter((item) => item.values.length > 0);
+
+    if (normalizedSchema.length === 0) return [];
+
+    let combinations = [{}];
+    normalizedSchema.forEach((attribute) => {
+        const next = [];
+        combinations.forEach((base) => {
+            attribute.values.forEach((value) => {
+                next.push({ ...base, [attribute.name]: value });
+            });
+        });
+        combinations = next;
+    });
+
+    return combinations;
+}
+
+function buildAutoSkuMatrix(attributeSchema = [], productDefaults = {}) {
+    const schema = normalizeAttributeSchema(attributeSchema, []);
+    const combinations = generateSkuCombinations(schema);
+    if (combinations.length === 0) return [];
+
+    return combinations.map((attributes, index) => ({
+        sku_id: null,
+        sku_code: buildSkuCodeFromAttributes(attributes, index, schema),
+        name: buildSkuName(attributes),
+        key: buildSkuKey(attributes) || `sku:${index + 1}`,
+        attributes,
+        price: productDefaults.price !== undefined && productDefaults.price !== null && productDefaults.price !== ''
+            ? Number(productDefaults.price)
+            : 0,
+        currency: String(productDefaults.currency || 'BDT').trim() || 'BDT',
+        available: productDefaults.available === undefined ? true : !!productDefaults.available,
+        image_url: null,
+        image_urls: [],
+        video_url: null,
+        bulk_price: '',
+        aliases: []
+    }));
+}
+
+function normalizeSkuMatrix(rawSkuMatrix, productDefaults = {}, attributeSchema = []) {
+    const parsed = safeParseJson(rawSkuMatrix, []);
+    const source = Array.isArray(parsed) ? parsed : [];
+    const normalized = source.map((item, index) => {
+        const attributes = item && typeof item.attributes === 'object' ? item.attributes : {};
+        const cleanedAttributes = {};
+        Object.entries(attributes).forEach(([key, value]) => {
+            const normalizedName = normalizeAttributeName(key);
+            const cleanedValue = String(value || '').trim();
+            if (cleanedValue) cleanedAttributes[normalizedName] = cleanedValue;
+        });
+
+        const fallbackName = summarizeAttributes(cleanedAttributes) || `SKU ${index + 1}`;
+        const key = buildSkuKey(cleanedAttributes) || `sku:${index + 1}`;
+        const aliases = Array.from(new Set((Array.isArray(item?.aliases) ? item.aliases : [])
+            .map((alias) => String(alias || '').trim())
+            .filter(Boolean)));
+        return {
+            sku_id: item?.sku_id ? String(item.sku_id) : null,
+            sku_code: item?.sku_code ? String(item.sku_code).trim() : '',
+            name: String(item?.name || fallbackName).trim(),
+            key,
+            attributes: cleanedAttributes,
+            price: item?.price !== undefined && item?.price !== null && item?.price !== '' ? Number(item.price) : Number(productDefaults.price || 0),
+            currency: String(item?.currency || productDefaults.currency || 'BDT').trim() || 'BDT',
+            available: item?.available === undefined ? true : !!item.available,
+            image_url: item?.image_url ? String(item.image_url).trim() : null,
+            image_urls: Array.isArray(item?.image_urls) ? item.image_urls.map(u => String(u || '').trim()).filter(Boolean) : (item?.image_url ? [String(item.image_url).trim()] : []),
+            video_url: item?.video_url ? String(item.video_url).trim() : null,
+            bulk_price: item?.bulk_price ? String(item.bulk_price).trim() : '',
+            aliases
+        };
+    });
+
+    const schema = normalizeAttributeSchema(attributeSchema, normalized);
+    if (
+        normalized.length === 0 &&
+        normalizeProductMode(productDefaults?.product_mode) === 'sku-matrix' &&
+        schema.some((item) => Array.isArray(item.values) && item.values.length > 0)
+    ) {
+        return buildAutoSkuMatrix(schema, productDefaults);
+    }
+
+    normalized.forEach((sku, index) => {
+        if (!sku.sku_code) {
+            sku.sku_code = buildSkuCodeFromAttributes(sku.attributes, index, schema);
+        }
+    });
+
+    return normalized;
+}
+
+function buildLegacyVariantsFromProduct(product) {
+    const skuMatrix = Array.isArray(product?.sku_matrix) ? product.sku_matrix : [];
+    if (skuMatrix.length > 0) {
+        return skuMatrix.map((sku, index) => ({
+            name: sku.name || summarizeAttributes(sku.attributes) || `Option ${index + 1}`,
+            price: String(sku.price ?? product?.price ?? 0),
+            currency: sku.currency || product?.currency || 'BDT',
+            available: sku.available !== false,
+            image_url: sku.image_url || null,
+            video_url: sku.video_url || null,
+            sku_code: sku.sku_code || null,
+            attributes: sku.attributes || {}
+        }));
+    }
+
+    const parsedVariants = safeParseJson(product?.variants, []);
+    return Array.isArray(parsedVariants) ? parsedVariants : [];
+}
+
+function normalizeVisualAnalysisEntries(value) {
+    let entries = [];
+    if (Array.isArray(value)) {
+        entries = value;
+    } else if (typeof value === 'string') {
+        const raw = value.trim();
+        if (!raw) return [];
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                entries = parsed;
+            } else if (typeof parsed === 'string') {
+                entries = [parsed];
+            } else {
+                entries = [raw];
+            }
+        } catch {
+            entries = [raw];
+        }
+    } else if (value != null) {
+        entries = [value];
+    }
+
+    const seen = new Set();
+    return entries
+        .map((entry) => String(entry || '').replace(/\r/g, '').trim())
+        .filter((entry) => {
+            if (!entry) return false;
+            const lowered = entry.toLowerCase();
+            if (seen.has(lowered)) return false;
+            seen.add(lowered);
+            return true;
+        });
+}
+
+function buildProductSearchBlob(product) {
+    let keywordText = product?.keywords;
+    if (typeof keywordText === 'string') {
+        try {
+            const parsed = JSON.parse(keywordText);
+            if (Array.isArray(parsed)) {
+                keywordText = parsed.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+            }
+        } catch {}
+    } else if (Array.isArray(keywordText)) {
+        keywordText = keywordText.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+    }
+
+    let visualText = product?.visual_tags;
+    if (typeof visualText === 'string') {
+        try {
+            const parsed = JSON.parse(visualText);
+            if (Array.isArray(parsed)) {
+                visualText = parsed.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+            }
+        } catch {}
+    } else if (Array.isArray(visualText)) {
+        visualText = visualText.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+    }
+
+    const parts = [
+        product?.name,
+        product?.description,
+        keywordText,
+        visualText,
+        product?.product_mode,
+        Array.isArray(product?.combo_items) ? product.combo_items.join(' ') : ''
+    ];
+
+    const schema = normalizeAttributeSchema(product?.attribute_schema, product?.sku_matrix);
+    schema.forEach((attribute) => {
+        parts.push(attribute.label);
+        parts.push((attribute.values || []).join(' '));
+    });
+
+    const skuMatrix = normalizeSkuMatrix(product?.sku_matrix, product, schema);
+    skuMatrix.forEach((sku) => {
+        parts.push(sku.name);
+        parts.push(sku.sku_code);
+        parts.push(String(sku.price ?? ''));
+        parts.push((sku.aliases || []).join(' '));
+        parts.push(Object.values(sku.attributes || {}).join(' '));
+    });
+
+    return parts
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join(' ');
+}
+
+function normalizeProductRecord(rawProduct) {
+    if (!rawProduct) return rawProduct;
+    const product = { ...rawProduct };
+    delete product.stock;
+    product.product_mode = normalizeProductMode(product.product_mode || (Array.isArray(product.variants) && product.variants.length > 1 ? 'option-list' : 'simple'));
+    product.combo_items = safeParseJson(product.combo_items, []);
+    product.additional_images = safeParseJson(product.additional_images, []);
+    product.allowed_messenger_ids = safeParseJson(product.allowed_messenger_ids, []);
+    product.allowed_wa_sessions = safeParseJson(product.allowed_wa_sessions, []);
+    product.visual_tags = normalizeVisualAnalysisEntries(product.visual_tags);
+    product.visual_fingerprint = safeParseJson(product.visual_fingerprint, {});
+    product.attribute_schema = normalizeAttributeSchema(product.attribute_schema, safeParseJson(product.sku_matrix, []));
+    product.sku_matrix = normalizeSkuMatrix(product.sku_matrix, product, product.attribute_schema);
+    product.variants = buildLegacyVariantsFromProduct(product);
+    product.searchable_text = String(product.searchable_text || buildProductSearchBlob(product)).trim();
+    return product;
+}
+
+function resolveProductSkuSelection(product, inputText = '', preferredSkuKey = null) {
+    const normalizedProduct = normalizeProductRecord(product);
+    const skuMatrix = Array.isArray(normalizedProduct?.sku_matrix) ? normalizedProduct.sku_matrix : [];
+    if (skuMatrix.length === 0) {
+        return { product: normalizedProduct, selectedSku: null, matches: [], missingAttributes: [], mentionedValues: [] };
+    }
+
+    const normalizedInput = normalizeTextToken(inputText);
+    const candidates = [];
+    const mentionedValues = [];
+
+    skuMatrix.forEach((sku) => {
+        let score = 0;
+        let strongSignalCount = 0;
+        const attrEntries = Object.entries(sku.attributes || {});
+        attrEntries.forEach(([attrName, rawValue]) => {
+            const value = normalizeTextToken(rawValue);
+            if (value && normalizedInput.includes(value)) {
+                score += 4;
+                strongSignalCount++;
+                mentionedValues.push(rawValue);
+            }
+            const compactValue = value.replace(/\s+/g, '');
+            if (compactValue && compactValue.length > 2 && normalizedInput.replace(/\s+/g, '').includes(compactValue)) {
+                score += 2;
+                strongSignalCount++;
+            }
+        });
+
+        const aliases = [sku.name, sku.sku_code, ...(sku.aliases || [])]
+            .map((item) => normalizeTextToken(item))
+            .filter(Boolean);
+        aliases.forEach((alias) => {
+            if (alias && normalizedInput.includes(alias)) {
+                score += 2;
+                strongSignalCount++;
+            }
+        });
+
+        if (preferredSkuKey && sku.key === preferredSkuKey) {
+            score += normalizedInput ? 1 : 4;
+            strongSignalCount++;
+        }
+
+        candidates.push({ sku, score, strongSignalCount });
+    });
+
+    const scored = candidates
+        .filter((item) => item.score > 0 && item.strongSignalCount > 0)
+        .sort((a, b) => b.score - a.score);
+
+    let matches = scored.map((item) => item.sku);
+    if (matches.length === 0 && preferredSkuKey) {
+        matches = skuMatrix.filter((sku) => sku.key === preferredSkuKey);
+    }
+    if (matches.length === 0 && !normalizedInput) {
+        matches = skuMatrix;
+    }
+
+    let selectedSku = null;
+    if (matches.length === 1) {
+        selectedSku = matches[0];
+    } else if (scored.length > 0 && scored[0].score >= (scored[1]?.score || 0) + 2) {
+        selectedSku = scored[0].sku;
+    }
+
+    const missingAttributes = [];
+    normalizedProduct.attribute_schema.forEach((attribute) => {
+        const distinctValues = Array.from(new Set(matches
+            .map((sku) => sku.attributes?.[attribute.name])
+            .filter(Boolean)));
+        if (distinctValues.length > 1) {
+            missingAttributes.push({
+                name: attribute.name,
+                label: attribute.label,
+                values: distinctValues
+            });
+        }
+    });
+
+    return {
+        product: normalizedProduct,
+        selectedSku,
+        matches,
+        missingAttributes,
+        mentionedValues: Array.from(new Set(mentionedValues))
+    };
+}
+
 // 28. Create Product
 async function createProduct(productData) {
+    const normalizedProduct = normalizeProductRecord(productData);
+    normalizedProduct.searchable_text = buildProductSearchBlob(normalizedProduct);
     const fields = [
         'user_id',
         'name',
         'description',
         'image_url',
+        'video_url',
         'additional_images',
         'variants',
         'is_active',
         'price',
         'currency',
-        'stock',
         'allowed_messenger_ids',
         'allowed_wa_sessions',
         'platform',
         'keywords',
+        'visual_tags',
+        'visual_fingerprint',
         'is_combo',
         'combo_items',
-        'allow_description'
+        'allow_description',
+        'isolate_sku_images',
+        'product_mode',
+        'attribute_schema',
+        'sku_matrix',
+        'searchable_text'
     ];
 
     const values = [];
@@ -3574,10 +4660,10 @@ async function createProduct(productData) {
         let p = `$${index + 1}`;
         placeholders.push(p);
         
-        let val = productData[field];
+        let val = normalizedProduct[field];
         
         // --- CLEAN PLAN: Ensure JSON/Array fields are strings for DB safety ---
-        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images'];
+        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images', 'attribute_schema', 'sku_matrix', 'visual_tags', 'visual_fingerprint'];
         if (jsonFields.includes(field)) {
             if (val && typeof val === 'object') {
                 val = JSON.stringify(val);
@@ -3600,18 +4686,11 @@ async function createProduct(productData) {
 
     // Background Embedding Update
     if (result.rows.length > 0) {
-        const product = result.rows[0];
-        const aiService = require('./aiService');
-        const embedText = `${product.name} ${product.description || ''} ${product.keywords || ''} ${(product.is_combo && Array.isArray(product.combo_items)) ? product.combo_items.join(' ') : ''}`.trim();
-        
-        aiService.getEmbedding(embedText).then(vector => {
-            if (vector) {
-                updateProductEmbedding(product.id, vector).catch(e => console.warn(`[DB] Background embedding update failed: ${e.message}`));
-            }
-        }).catch(e => console.warn(`[DB] Embedding generation failed: ${e.message}`));
+        const product = normalizeProductRecord(result.rows[0]);
+        queueProductEmbeddingRefresh(product);
     }
 
-    return result.rows[0];
+    return normalizeProductRecord(result.rows[0]);
 }
 
 async function resolvePageContextType(pageId) {
@@ -3621,17 +4700,17 @@ async function resolvePageContextType(pageId) {
     // 1. Check common WA session prefixes/patterns
     if (sId.startsWith('bottow_') || sId.includes('wa_') || sId.startsWith('session_') || sId.startsWith('waba_') || sId.includes('_wa')) return 'whatsapp';
     
-    // 2. Check Database for Session Existence
+    // 2. Check Database for WhatsApp Resource Existence
     try {
-        const waRes = await query('SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 LIMIT 1', [sId]);
+        const waRes = await query(
+            'SELECT 1 FROM whatsapp_message_database WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1 LIMIT 1',
+            [sId]
+        );
         if (waRes.rows.length > 0) return 'whatsapp';
-        
-        const waRes2 = await query('SELECT 1 FROM whatsapp_sessions WHERE session_name = $1 LIMIT 1', [sId]);
-        if (waRes2.rows.length > 0) return 'whatsapp';
     } catch (e) {
         console.warn("[DB] resolvePageContextType DB check failed:", e.message);
     }
-    
+
     // 3. Check for FB Page IDs (usually all numeric and > 10 digits)
     if (/^\d{10,}$/.test(sId)) return 'messenger';
     
@@ -3675,21 +4754,16 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
     const pIdx = params.length;
 
     if (isWhatsapp) {
-        whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text) OR platform = 'global')`;
+        whereClause += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
     } else {
-        // FOR MESSENGER: Only check allowed_messenger_ids (Modern Standard)
-        whereClause += ` AND (
-            (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text)) 
-            OR 
-            platform = 'global'
-        )`;
+        whereClause += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
     }
 
     // 2. Search Query
     if (searchQuery) {
         params.push(`%${searchQuery}%`);
         const sIdx = params.length;
-        whereClause += ` AND (name ILIKE $${sIdx} OR description ILIKE $${sIdx} OR keywords ILIKE $${sIdx})`;
+        whereClause += ` AND (name ILIKE $${sIdx} OR description ILIKE $${sIdx} OR keywords ILIKE $${sIdx} OR searchable_text ILIKE $${sIdx})`;
     }
 
     // 3. Permission Filter (for Team Members)
@@ -3727,20 +4801,22 @@ async function getProducts(userId, page = 1, limit = 20, searchQuery = null, pag
         params
     );
 
-    const data = dataResult.rows || [];
+    const data = (dataResult.rows || []).map(normalizeProductRecord);
 
     return { data, count: totalCount };
 }
 
 // 28. Get Product By ID
-async function getProductById(id) {
+async function getProductById(id, userId = null) {
     const result = await query(
-        'SELECT * FROM products WHERE id = $1 LIMIT 1',
-        [id]
+        userId
+            ? 'SELECT * FROM products WHERE id = $1 AND user_id::text = $2::text LIMIT 1'
+            : 'SELECT * FROM products WHERE id = $1 LIMIT 1',
+        userId ? [id, String(userId)] : [id]
     );
     
     if (result.rows.length === 0) return null;
-    return result.rows[0];
+    return normalizeProductRecord(result.rows[0]);
 }
 
 /**
@@ -3755,16 +4831,75 @@ async function getProductByImageUrl(userId, imageUrl) {
             'SELECT * FROM products WHERE user_id::text = $1::text AND (image_url = $2 OR additional_images::text LIKE $3) LIMIT 1',
             [String(userId), imageUrl, `%${imageUrl}%`]
         );
-        return result.rows.length > 0 ? result.rows[0] : null;
+        return result.rows.length > 0 ? normalizeProductRecord(result.rows[0]) : null;
     } catch (error) {
         console.error("[DB] getProductByImageUrl Error:", error.message);
         return null;
     }
 }
 
+async function getResourceProductsWithMedia(pageId) {
+    try {
+        if (!pageId) return [];
+
+        try {
+            await query(`
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='isolate_sku_images') THEN
+                        ALTER TABLE products ADD COLUMN isolate_sku_images BOOLEAN DEFAULT false;
+                    END IF;
+                END $$;
+            `);
+        } catch (e) {
+            console.warn("[DB] products migration failed:", e.message);
+        }
+
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        if (resourceIds.length === 0) return [];
+
+        let sql = `
+            SELECT id, name, description, image_url, additional_images, video_url, variants, product_mode, attribute_schema, sku_matrix
+            FROM products
+            WHERE is_active = true
+        `;
+        let params = [];
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
+        sql += ` ORDER BY id DESC`;
+
+        const result = await query(sql, params);
+        return (result.rows || []).map(normalizeProductRecord);
+    } catch (error) {
+        console.error("[DB] getResourceProductsWithMedia Error:", error.message);
+        return [];
+    }
+}
+
 // 29. Update Product
 async function updateProduct(id, userId, updates) {
-    const keys = Object.keys(updates || {});
+    // #region debug-point D:update-product-entry
+    (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'dbService.js:updateProduct:entry',msg:'[DEBUG] updateProduct entered',data:{userId,userIdType:typeof userId,id,idType:typeof id,updateKeys:Object.keys(updates||{}),keywordsType:typeof updates?.keywords},ts:Date.now()})}).catch(()=>{})})();
+    // #endregion
+    const normalizedUpdates = { ...(updates || {}) };
+    if (normalizedUpdates.product_mode !== undefined || normalizedUpdates.attribute_schema !== undefined || normalizedUpdates.sku_matrix !== undefined || normalizedUpdates.variants !== undefined) {
+        const existing = await getProductById(id);
+        const merged = normalizeProductRecord({
+            ...(existing || {}),
+            ...normalizedUpdates,
+            user_id: existing?.user_id || userId
+        });
+        normalizedUpdates.product_mode = merged.product_mode;
+        normalizedUpdates.attribute_schema = merged.attribute_schema;
+        normalizedUpdates.sku_matrix = merged.sku_matrix;
+        normalizedUpdates.variants = merged.variants;
+        normalizedUpdates.searchable_text = buildProductSearchBlob(merged);
+    } else if (normalizedUpdates.searchable_text === undefined) {
+        const existing = await getProductById(id);
+        if (existing) {
+            normalizedUpdates.searchable_text = buildProductSearchBlob({ ...existing, ...normalizedUpdates });
+        }
+    }
+    const keys = Object.keys(normalizedUpdates || {});
     
     if (keys.length === 0) {
         const existing = await getProductById(id);
@@ -3781,8 +4916,8 @@ async function updateProduct(id, userId, updates) {
     for (const key of keys) {
         setFragments.push(`${key} = $${idx}`);
         
-        let val = updates[key];
-        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images'];
+        let val = normalizedUpdates[key];
+        const jsonFields = ['variants', 'allowed_messenger_ids', 'allowed_wa_sessions', 'combo_items', 'additional_images', 'attribute_schema', 'sku_matrix', 'visual_tags', 'visual_fingerprint'];
         if (jsonFields.includes(key) && val !== undefined) {
             // Ensure JSONB fields are strings for Postgres
             if (typeof val === 'object') {
@@ -3797,11 +4932,27 @@ async function updateProduct(id, userId, updates) {
     values.push(String(userId));
     values.push(id);
 
+    try {
+        await query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='isolate_sku_images') THEN
+                    ALTER TABLE products ADD COLUMN isolate_sku_images BOOLEAN DEFAULT false;
+                END IF;
+            END $$;
+        `);
+    } catch (e) {
+        console.warn("[DB] products migration failed during update:", e.message);
+    }
+
     const sql = `
         UPDATE products
         SET ${setFragments.join(', ')}
         WHERE user_id::text = $${idx}::text AND id = $${idx + 1}
         RETURNING *`;
+    // #region debug-point D:update-product-sql
+    (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'dbService.js:updateProduct:sql',msg:'[DEBUG] updateProduct sql prepared',data:{sql,valuesLength:values.length,lastTwoValues:values.slice(-2),setFragments},ts:Date.now()})}).catch(()=>{})})();
+    // #endregion
 
     const result = await query(sql, values);
 
@@ -3810,17 +4961,10 @@ async function updateProduct(id, userId, updates) {
     }
 
     // Background Embedding Update
-    const product = result.rows[0];
-    const aiService = require('./aiService');
-    const embedText = `${product.name} ${product.description || ''} ${product.keywords || ''} ${(product.is_combo && Array.isArray(product.combo_items)) ? product.combo_items.join(' ') : ''}`.trim();
-    
-    aiService.getEmbedding(embedText).then(vector => {
-        if (vector) {
-            updateProductEmbedding(product.id, vector).catch(e => console.warn(`[DB] Background embedding update failed: ${e.message}`));
-        }
-    }).catch(e => console.warn(`[DB] Embedding generation failed: ${e.message}`));
+    const product = normalizeProductRecord(result.rows[0]);
+    queueProductEmbeddingRefresh(product);
 
-    return result.rows[0];
+    return normalizeProductRecord(result.rows[0]);
 }
 
 async function updateProductEmbedding(productId, vector) {
@@ -3833,6 +4977,294 @@ async function updateProductEmbedding(productId, vector) {
     } catch (e) {
         console.error(`[DB] updateProductEmbedding error: ${e.message}`);
         return false;
+    }
+}
+
+async function upsertProductImageEmbedding({ productId, userId, pageId, imageUrl, imageRole, vector, visualTags, visualFingerprint, imageVector, imageEmbeddingModel }) {
+    try {
+        if (!vector && !imageVector) return false;
+        // #region debug-point C:upsert-entry
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'dbService.js:upsertProductImageEmbedding:entry',msg:'[DEBUG] upsertProductImageEmbedding entered',data:{productId,productIdType:typeof productId,userId,userIdType:typeof userId,pageId:pageId||null,imageRole:imageRole||'primary',imageUrlLength:String(imageUrl||'').length,vectorLength:Array.isArray(vector)?vector.length:0,visualTagsType:Array.isArray(visualTags)?'array':typeof visualTags},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        // First delete any existing entry for same product_id and image_url
+        await query(
+            `DELETE FROM product_image_embeddings WHERE product_id = $1 AND image_url = $2`,
+            [productId, imageUrl]
+        );
+        // Then insert the new one
+        await query(
+            `INSERT INTO product_image_embeddings 
+             (product_id, user_id, page_id, image_url, image_role, embedding, visual_tags, visual_fingerprint, image_embedding_3072, image_embedding_model)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+                productId, 
+                String(userId), 
+                pageId ? String(pageId) : null, 
+                imageUrl, 
+                imageRole || 'primary', 
+                vector ? JSON.stringify(vector) : null,
+                visualTags ? JSON.stringify(visualTags) : '[]',
+                visualFingerprint ? JSON.stringify(visualFingerprint) : '{}',
+                imageVector ? JSON.stringify(imageVector) : null,
+                imageEmbeddingModel || null
+            ]
+        );
+        // #region debug-point C:upsert-success
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const e=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'dbService.js:upsertProductImageEmbedding:success',msg:'[DEBUG] upsertProductImageEmbedding completed',data:{productId,imageUrlLength:String(imageUrl||'').length},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        return true;
+    } catch (e) {
+        // #region debug-point C:upsert-error
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='auto-extract-500';try{const x=fs.readFileSync('.dbg/auto-extract-500.env','utf8');u=x.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=x.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'dbService.js:upsertProductImageEmbedding:catch',msg:'[DEBUG] upsertProductImageEmbedding failed',data:{message:e?.message||String(e),stack:e?.stack||null,productId,userId,pageId:pageId||null,imageRole:imageRole||'primary'},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        console.error(`[DB] upsertProductImageEmbedding error: ${e.message}`);
+        return false;
+    }
+}
+
+async function getIncomingImageAnalysis({ platform, pageId, senderId, imageUrl, imageHash }) {
+    try {
+        const conditions = ['platform = $1', 'page_id = $2', 'sender_id = $3'];
+        const params = [platform, pageId, senderId];
+
+        if (imageHash) {
+            params.push(imageHash);
+            conditions.push(`image_hash = $${params.length}`);
+        } else if (imageUrl) {
+            params.push(imageUrl);
+            conditions.push(`image_url = $${params.length}`);
+        } else {
+            return null;
+        }
+
+        const result = await query(
+            `SELECT * FROM incoming_image_analysis
+             WHERE ${conditions.join(' AND ')}
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+            params
+        );
+        return result.rows[0] || null;
+    } catch (e) {
+        if (e.code === '42P01') return null;
+        console.warn(`[DB] getIncomingImageAnalysis failed: ${e.message}`);
+        return null;
+    }
+}
+
+async function upsertIncomingImageAnalysis(data) {
+    try {
+        const matchedProducts = Array.isArray(data.matched_products) ? data.matched_products : [];
+        const visualFingerprint = data.visual_fingerprint && typeof data.visual_fingerprint === 'object' ? data.visual_fingerprint : {};
+        const result = await query(
+            `INSERT INTO incoming_image_analysis
+             (platform, page_id, sender_id, image_url, image_hash, image_index, batch_id, analysis_text, matched_product_id, match_score, matched_products, visual_fingerprint, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, NOW())
+             ON CONFLICT (platform, page_id, sender_id, image_url)
+             DO UPDATE SET
+                image_hash = COALESCE(EXCLUDED.image_hash, incoming_image_analysis.image_hash),
+                image_index = EXCLUDED.image_index,
+                batch_id = EXCLUDED.batch_id,
+                analysis_text = EXCLUDED.analysis_text,
+                matched_product_id = EXCLUDED.matched_product_id,
+                match_score = EXCLUDED.match_score,
+               matched_products = EXCLUDED.matched_products,
+               visual_fingerprint = EXCLUDED.visual_fingerprint,
+               updated_at = NOW()
+             RETURNING *`,
+            [
+                data.platform,
+                data.page_id,
+                data.sender_id,
+                data.image_url,
+                data.image_hash || null,
+                data.image_index ?? null,
+                data.batch_id || null,
+                data.analysis_text || null,
+                data.matched_product_id || null,
+                data.match_score === undefined || data.match_score === null ? null : Number(data.match_score),
+                JSON.stringify(matchedProducts),
+                JSON.stringify(visualFingerprint)
+            ]
+        );
+        return result.rows[0] || null;
+    } catch (e) {
+        console.warn(`[DB] upsertIncomingImageAnalysis failed: ${e.message}`);
+        return null;
+    }
+}
+
+function buildProductVisualAnalysisKey(productId, entryIndex) {
+    return `analysis://product/${productId}/visual/${entryIndex + 1}`;
+}
+
+async function syncProductVisualAnalysisEmbeddings(product, options = {}) {
+    if (!product?.id) return 0;
+
+    const normalizedProduct = normalizeProductRecord(product);
+    const visualEntries = normalizeVisualAnalysisEntries(normalizedProduct.visual_tags);
+
+    try {
+        await query(`DELETE FROM product_image_embeddings WHERE product_id = $1 AND image_role = 'analysis'`, [normalizedProduct.id]);
+    } catch (e) {
+        console.error(`[DB] syncProductVisualAnalysisEmbeddings cleanup failed for ${normalizedProduct.id}: ${e.message}`);
+        return 0;
+    }
+
+    if (visualEntries.length === 0) {
+        return 0;
+    }
+
+    const aiService = require('./aiService');
+    let savedCount = 0;
+
+    for (let idx = 0; idx < visualEntries.length; idx++) {
+        const visualEntry = visualEntries[idx];
+        try {
+            const vector = await aiService.getEmbedding(visualEntry, options.customApiKey || null);
+            if (!vector) continue;
+
+            const saved = await upsertProductImageEmbedding({
+                productId: normalizedProduct.id,
+                userId: normalizedProduct.user_id,
+                pageId: getPrimaryProductResourceId(normalizedProduct),
+                imageUrl: buildProductVisualAnalysisKey(normalizedProduct.id, idx),
+                imageRole: 'analysis',
+                vector,
+                visualTags: [visualEntry]
+            });
+
+            if (saved) savedCount++;
+        } catch (e) {
+            console.warn(`[DB] syncProductVisualAnalysisEmbeddings failed for ${normalizedProduct.id} entry ${idx + 1}: ${e.message}`);
+        }
+    }
+
+    return savedCount;
+}
+
+function getPrimaryProductResourceId(product) {
+    if (Array.isArray(product?.allowed_messenger_ids) && product.allowed_messenger_ids[0]) {
+        return product.allowed_messenger_ids[0];
+    }
+    if (Array.isArray(product?.allowed_wa_sessions) && product.allowed_wa_sessions[0]) {
+        return product.allowed_wa_sessions[0];
+    }
+    return null;
+}
+
+async function refreshProductEmbeddingsNow(product, options = {}) {
+    if (!product?.id) return { textUpdated: false, imageUpdated: 0 };
+
+    const aiService = require('./aiService');
+    const normalizedProduct = normalizeProductRecord(product);
+    const embedText = buildProductSearchBlob(normalizedProduct);
+    const resourceId = getPrimaryProductResourceId(normalizedProduct);
+    let textUpdated = false;
+    let imageUpdated = 0;
+
+    try {
+        const vector = await aiService.getEmbedding(embedText, options.customApiKey || null);
+        if (vector) {
+            textUpdated = await updateProductEmbedding(normalizedProduct.id, vector);
+        }
+    } catch (e) {
+        console.warn(`[DB] refreshProductEmbeddingsNow text embedding failed for ${normalizedProduct.id}: ${e.message}`);
+    }
+
+    imageUpdated = await syncProductVisualAnalysisEmbeddings({
+        ...normalizedProduct,
+        allowed_messenger_ids: normalizedProduct.allowed_messenger_ids,
+        allowed_wa_sessions: normalizedProduct.allowed_wa_sessions
+    }, {
+        ...options,
+        pageId: resourceId
+    });
+
+    return { textUpdated, imageUpdated };
+}
+
+function queueProductEmbeddingRefresh(product) {
+    if (!product?.id) return;
+    const aiService = require('./aiService');
+    const embedText = buildProductSearchBlob(product);
+    // #region debug-point A:embedding-refresh-start
+    (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const e=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'A',location:'dbService.js:queueProductEmbeddingRefresh:start',msg:'[DEBUG] queueProductEmbeddingRefresh invoked',data:{productId:product.id,name:product.name,hasPrimaryImage:Boolean(product.image_url),additionalImageCount:Array.isArray(product.additional_images)?product.additional_images.length:0,hasAllowedWa:Array.isArray(product.allowed_wa_sessions)&&product.allowed_wa_sessions.length>0,hasAllowedMessenger:Array.isArray(product.allowed_messenger_ids)&&product.allowed_messenger_ids.length>0,searchableTextLength:embedText?.length||0},ts:Date.now()})}).catch(()=>{})})();
+    // #endregion
+
+    // 1. Text Embedding
+    aiService.getEmbedding(embedText).then((vector) => {
+        // #region debug-point B:text-embedding-result
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const e=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'dbService.js:queueProductEmbeddingRefresh:text',msg:'[DEBUG] text embedding resolved',data:{productId:product.id,hasVector:Boolean(vector),vectorLength:Array.isArray(vector)?vector.length:0},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        if (vector) {
+            updateProductEmbedding(product.id, vector).catch((e) => console.warn(`[DB] Background embedding update failed: ${e.message}`));
+        }
+    }).catch((e) => {
+        // #region debug-point B:text-embedding-error
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const x=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=x.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=x.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'B',location:'dbService.js:queueProductEmbeddingRefresh:text-error',msg:'[DEBUG] text embedding failed',data:{productId:product.id,error:e?.message||String(e)},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        console.warn(`[DB] Embedding generation failed: ${e.message}`);
+    });
+
+    syncProductVisualAnalysisEmbeddings(product).then((savedCount) => {
+        // #region debug-point C:image-embedding-result
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const e=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'dbService.js:queueProductEmbeddingRefresh:image',msg:'[DEBUG] manual visual analysis embeddings synced',data:{productId:product.id,visualTagCount:Array.isArray(product.visual_tags)?product.visual_tags.length:0,savedCount,pageId:Array.isArray(product.allowed_messenger_ids)&&product.allowed_messenger_ids[0]?product.allowed_messenger_ids[0]:null},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+    }).catch((e) => {
+        // #region debug-point C:image-embedding-error
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const x=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=x.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=x.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'C',location:'dbService.js:queueProductEmbeddingRefresh:image-error',msg:'[DEBUG] manual visual analysis embedding sync failed',data:{productId:product.id,error:e?.message||String(e)},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+    });
+}
+
+async function backfillGeneratedSkuMatrixForLegacyProducts(limit = 200) {
+    try {
+        const result = await query(
+            `SELECT *
+             FROM products
+             WHERE product_mode = 'sku-matrix'
+               AND COALESCE(jsonb_array_length(sku_matrix), 0) = 0
+               AND COALESCE(jsonb_array_length(attribute_schema), 0) > 0
+             ORDER BY id DESC
+             LIMIT $1`,
+            [limit]
+        );
+
+        let repairedCount = 0;
+        for (const row of result.rows || []) {
+            const normalized = normalizeProductRecord(row);
+            if (!Array.isArray(normalized?.sku_matrix) || normalized.sku_matrix.length === 0) {
+                continue;
+            }
+
+            const nextSearchableText = buildProductSearchBlob(normalized);
+            await query(
+                `UPDATE products
+                 SET sku_matrix = $1,
+                     variants = $2,
+                     searchable_text = $3
+                 WHERE id = $4`,
+                [
+                    JSON.stringify(normalized.sku_matrix),
+                    JSON.stringify(normalized.variants || []),
+                    nextSearchableText,
+                    row.id
+                ]
+            );
+
+            normalized.searchable_text = nextSearchableText;
+            queueProductEmbeddingRefresh(normalized);
+            repairedCount++;
+        }
+
+        if (repairedCount > 0) {
+            console.log(`[DB] Legacy sku-matrix backfill repaired ${repairedCount} product(s).`);
+        }
+        return repairedCount;
+    } catch (error) {
+        console.warn(`[DB] Legacy sku-matrix backfill skipped: ${error.message}`);
+        return 0;
     }
 }
 
@@ -3880,10 +5312,330 @@ async function getProductsByNames(userId, productNames, pageId = null) {
     
     try {
         const result = await query(sql, params);
-        return result.rows;
+        return (result.rows || []).map(normalizeProductRecord);
     } catch (err) {
         console.warn("[DB] Failed to fetch products by names:", err.message);
         return [];
+    }
+}
+
+async function resolveResourceSearchContext(pageId) {
+    if (!pageId) {
+        return { contextType: null, isWhatsapp: false, resourceIds: [], ownerUserId: null };
+    }
+
+    const resourceId = String(pageId);
+    const contextType = await resolvePageContextType(resourceId);
+    const isWhatsapp = contextType === 'whatsapp';
+
+    if (!isWhatsapp) {
+        try {
+            const ownerRes = await query(
+                'SELECT user_id FROM page_access_token_message WHERE page_id = $1 LIMIT 1',
+                [resourceId]
+            );
+            return {
+                contextType,
+                isWhatsapp,
+                resourceIds: [resourceId],
+                ownerUserId: ownerRes.rows[0]?.user_id ? String(ownerRes.rows[0].user_id) : null
+            };
+        } catch (err) {
+            console.warn(`[DB] Failed to resolve messenger owner for ${resourceId}: ${err.message}`);
+            return { contextType, isWhatsapp, resourceIds: [resourceId], ownerUserId: null };
+        }
+    }
+
+    try {
+        const result = await query(
+            `SELECT session_name, waba_id, phone_number_id, user_id
+             FROM whatsapp_message_database
+             WHERE session_name = $1 OR waba_id = $1 OR phone_number_id = $1
+             ORDER BY
+                CASE
+                    WHEN session_name = $1 THEN 0
+                    WHEN waba_id = $1 THEN 1
+                    WHEN phone_number_id = $1 THEN 2
+                    ELSE 3
+                END
+             LIMIT 1`,
+            [resourceId]
+        );
+
+        const row = result.rows[0];
+        const resourceIds = Array.from(new Set(
+            [resourceId, row?.session_name, row?.waba_id, row?.phone_number_id]
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+        ));
+
+        const ownerUserId = row?.user_id ? String(row.user_id) : null;
+
+        return { contextType, isWhatsapp, resourceIds, ownerUserId };
+    } catch (err) {
+        console.warn(`[DB] resolveResourceSearchContext failed for ${resourceId}: ${err.message}`);
+        return { contextType, isWhatsapp, resourceIds: [resourceId], ownerUserId: null };
+    }
+}
+
+function appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId = null, tableAlias = '') {
+    const normalizedIds = Array.from(new Set(
+        (Array.isArray(resourceIds) ? resourceIds : [])
+            .map(id => String(id || '').trim())
+            .filter(Boolean)
+    ));
+
+    if (normalizedIds.length === 0) {
+        return { sql, params };
+    }
+
+    const prefix = tableAlias || '';
+    const column = `${prefix}${isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids'}`;
+
+    if (normalizedIds.length === 1) {
+        params.push(normalizedIds[0]);
+        const pIdx = params.length;
+        sql += ` AND (${column}::jsonb @> jsonb_build_array($${pIdx}::text))`;
+    } else {
+        params.push(normalizedIds);
+        const pIdx = params.length;
+        sql += ` AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(${column}, '[]'::jsonb)) AS elem
+            WHERE elem = ANY($${pIdx}::text[])
+        )`;
+    }
+
+    if (ownerUserId) {
+        params.push(String(ownerUserId));
+        sql += ` AND ${prefix}user_id::text = $${params.length}::text`;
+    }
+
+    return { sql, params };
+}
+
+function isVectorDimensionMismatchError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return error?.code === '22000' && message.includes('different vector dimensions');
+}
+
+async function searchProductsForResource(queryText, pageId = null) {
+    const cleanQuery = (queryText || '').trim();
+    const cacheKey = `${pageId || 'unknown'}:${cleanQuery.slice(0, 500)}`;
+    if (productResourceSearchInFlight.has(cacheKey)) {
+        return productResourceSearchInFlight.get(cacheKey);
+    }
+
+    const promise = searchProductsForResourceInternal(cleanQuery, pageId).finally(() => {
+        productResourceSearchInFlight.delete(cacheKey);
+    });
+    productResourceSearchInFlight.set(cacheKey, promise);
+    return promise;
+}
+
+async function searchProductsForResourceInternal(cleanQuery, pageId = null) {
+    const searchStartedAt = Date.now();
+    try {
+        if (!pageId) return [];
+
+        recordProductSearchStage(pageId, 'resource_context_started', searchStartedAt);
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        recordProductSearchStage(pageId, 'resource_context_finished', searchStartedAt, { resourceCount: resourceIds.length, isWhatsapp });
+        if (resourceIds.length === 0) return [];
+
+        const queryTokens = extractSearchTokens(cleanQuery);
+        const queryNumberTokens = queryTokens.filter((token) => /^\d+$/.test(token));
+        const applyExactNumberPreference = (products = []) => {
+            return (Array.isArray(products) ? products : [])
+                .filter((product) => {
+                    if (queryNumberTokens.length === 0) return true;
+                    const productTokens = extractSearchTokens([
+                        product?.name,
+                        product?.description,
+                        product?.searchable_text
+                    ].join(' '));
+                    const productNumberTokens = productTokens.filter((token) => /^\d+$/.test(token));
+                    if (productNumberTokens.length === 0) return true;
+                    return queryNumberTokens.some((token) => productNumberTokens.includes(token));
+                })
+                .sort((a, b) => Number(a?.distance ?? 999) - Number(b?.distance ?? 999));
+        };
+
+        const lexicalFallback = async (reason = 'fallback') => {
+            recordProductSearchStage(pageId, 'lexical_fallback_started', searchStartedAt, { reason });
+            let fallbackSql = `
+                SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text
+                FROM products
+                WHERE is_active = true
+            `;
+            let fallbackParams = [];
+        ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds, ownerUserId));
+            fallbackSql += ` ORDER BY id DESC LIMIT 100`;
+
+            const fallbackRes = await query(fallbackSql, fallbackParams);
+            recordProductSearchStage(pageId, 'lexical_query_finished', searchStartedAt, { reason, rowCount: fallbackRes.rows?.length || 0 });
+            const normalizedProducts = (fallbackRes.rows || []).map(normalizeProductRecord);
+            const ranked = normalizedProducts
+                .map((product) => {
+                    const haystack = normalizeTextToken([
+                        product.name,
+                        product.description,
+                        product.keywords,
+                        product.visual_tags,
+                        product.searchable_text
+                    ].join(' '));
+                    let score = 0;
+                    const productTokens = extractSearchTokens(haystack);
+                    const productTokenSet = new Set(productTokens);
+                    const productNumberTokens = productTokens.filter((token) => /^\d+$/.test(token));
+
+                    if (!haystack) return null;
+                    if (haystack.includes(normalizeTextToken(cleanQuery))) score += 60;
+                    queryTokens.forEach((token) => {
+                        if (token.length < 2) return;
+                        if (haystack.includes(token)) {
+                            score += product.name && normalizeTextToken(product.name).includes(token) ? 16 : 8;
+                        }
+                    });
+
+                    if (queryNumberTokens.length > 0) {
+                        // Strict Number Matching logic
+                        const matchedNumberCount = queryNumberTokens.filter((token) => productTokenSet.has(token)).length;
+                        score += matchedNumberCount * 40; // Increase weight
+                        
+                        // Critical fix: If a number was searched but NOT matched, penalize heavily
+                        if (matchedNumberCount < queryNumberTokens.length && productNumberTokens.length > 0) {
+                            score -= 80;
+                        }
+                    }
+
+                    const resolved = resolveProductSkuSelection(product, cleanQuery);
+                    if (resolved.selectedSku) score += 40; // Increase priority for exact SKU matches
+                    else if (resolved.matches.length > 0) score += 20;
+
+                    if (normalizeTextToken(product.name) === normalizeTextToken(cleanQuery)) score += 30;
+                    return score > 0 ? { ...product, distance: Math.max(0, 1 - (Math.min(score, 100) / 100)) } : null;
+                })
+                .filter(Boolean);
+
+            const preferred = applyExactNumberPreference(ranked).slice(0, 5);
+
+            if (preferred.length > 0) {
+                console.log(`[DB] searchProductsForResource lexical fallback matched ${preferred.length} product(s) for "${cleanQuery}"`);
+            }
+            recordProductSearchStage(pageId, 'lexical_ranking_finished', searchStartedAt, { reason, rankedCount: preferred.length });
+            return preferred;
+        };
+
+        if (!cleanQuery) {
+            let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text, 0 as distance FROM products WHERE is_active = true`;
+            let params = [];
+            ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
+            sql += ` ORDER BY id DESC LIMIT 5`;
+            recordProductSearchStage(pageId, 'empty_query_latest_started', searchStartedAt);
+            const res = await query(sql, params);
+            recordProductSearchStage(pageId, 'empty_query_latest_finished', searchStartedAt, { rowCount: res.rows?.length || 0 });
+            return (res.rows || []).map(normalizeProductRecord);
+        }
+
+        const aiService = require('./aiService');
+        let queryVector = null;
+        try {
+            recordProductSearchStage(pageId, 'embedding_started', searchStartedAt);
+            queryVector = await aiService.getEmbedding(cleanQuery);
+            recordProductSearchStage(pageId, 'embedding_finished', searchStartedAt, { hasVector: Boolean(queryVector) });
+        } catch (embeddingError) {
+            recordProductSearchStage(pageId, 'embedding_failed', searchStartedAt, { errorType: embeddingError?.code || 'error' });
+            console.warn(`[DB] Embedding generation failed for "${cleanQuery}", using lexical fallback: ${embeddingError.message}`);
+        }
+
+        if (!queryVector) {
+            return await lexicalFallback('no_vector');
+        }
+
+        let sql = `
+            SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text,
+                   (embedding <=> $1::vector) as distance
+            FROM products
+            WHERE is_active = true
+              AND embedding IS NOT NULL
+        `;
+
+        let params = [JSON.stringify(queryVector)];
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId));
+        sql += ` ORDER BY distance ASC LIMIT 5`;
+
+        const start = Date.now();
+        let result;
+        try {
+            recordProductSearchStage(pageId, 'vector_query_started', searchStartedAt);
+            result = await query(sql, params);
+            recordProductSearchStage(pageId, 'vector_query_finished', searchStartedAt, { rowCount: result.rows?.length || 0 });
+        } catch (vectorError) {
+            if (isVectorDimensionMismatchError(vectorError)) {
+                recordProductSearchStage(pageId, 'vector_query_failed', searchStartedAt, { errorType: 'dimension_mismatch' });
+                console.warn(`[DB] searchProductsForResource vector mismatch for "${cleanQuery}". Falling back to lexical ranking: ${vectorError.message}`);
+                return await lexicalFallback('vector_mismatch');
+            }
+            throw vectorError;
+        }
+        const end = Date.now();
+
+        if (end - start > 1000) {
+            console.warn(`[DB] searchProductsForResource SLOW query: ${end - start}ms for "${cleanQuery}"`);
+        }
+
+        let filtered = (result.rows || [])
+            .map(normalizeProductRecord)
+            .filter((p) => {
+                const numericDistance = Number(p.distance);
+                return Number.isFinite(numericDistance) && numericDistance < 0.4;
+            });
+        filtered = applyExactNumberPreference(filtered);
+        recordProductSearchStage(pageId, 'vector_filter_finished', searchStartedAt, { filteredCount: filtered.length });
+
+        if (filtered.length < 3) {
+            const lexicalMatches = await lexicalFallback('merge_low_vector_results');
+            if (lexicalMatches.length > 0) {
+                const seen = new Set(filtered.map((item) => String(item.id)));
+                lexicalMatches.forEach((item) => {
+                    if (!seen.has(String(item.id))) {
+                        filtered.push(item);
+                        seen.add(String(item.id));
+                    }
+                });
+                filtered = applyExactNumberPreference(filtered).slice(0, 5);
+            }
+        }
+        
+        // --- FALLBACK: If semantic results are weak or missing, try lexical ranking over searchable text ---
+        if (filtered.length === 0) {
+            const lexicalMatches = await lexicalFallback('empty_vector_results');
+            if (lexicalMatches.length > 0) {
+                return lexicalMatches;
+            }
+
+            const genericTerms = ['ki ki', 'product', 'item', 'list', 'show', 'ase', 'details', 'picture', 'photo', 'দাম', 'ছবি', 'প্রোডাক্ট'];
+            const isGeneric = genericTerms.some(term => cleanQuery.toLowerCase().includes(term)) || cleanQuery.length < 10;
+            
+            if (isGeneric) {
+                console.log(`[DB] No semantic matches but query is generic. Fetching latest 5 products as fallback.`);
+                let fallbackSql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, additional_images, product_mode, attribute_schema, sku_matrix, searchable_text, 0.5 as distance FROM products WHERE is_active = true`;
+                let fallbackParams = [];
+                ({ sql: fallbackSql, params: fallbackParams } = appendAssignmentFilter(fallbackSql, fallbackParams, isWhatsapp, resourceIds, ownerUserId));
+                fallbackSql += ` ORDER BY id DESC LIMIT 5`;
+                recordProductSearchStage(pageId, 'generic_latest_started', searchStartedAt);
+                const fallbackRes = await query(fallbackSql, fallbackParams);
+                recordProductSearchStage(pageId, 'generic_latest_finished', searchStartedAt, { rowCount: fallbackRes.rows?.length || 0 });
+                return (fallbackRes.rows || []).map(normalizeProductRecord);
+            }
+        }
+
+        recordProductSearchStage(pageId, 'search_products_for_resource_finished', searchStartedAt, { resultCount: filtered.length });
+        return filtered;
+    } catch (error) {
+        console.error("[DB] searchProductsForResource Error:", error.message);
+        throw error;
     }
 }
 
@@ -3897,16 +5649,16 @@ async function searchProducts(userId, queryText, pageId = null) {
         if (!cleanQuery) {
             const contextType = pageId ? await resolvePageContextType(pageId) : null;
             const isWhatsapp = contextType === 'whatsapp';
-            let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
+            let sql = `SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, product_mode, attribute_schema, sku_matrix, searchable_text, 0 as distance FROM products WHERE user_id::text = $1::text AND is_active = true`;
             const params = [String(userId)];
             if (pageId) {
                 params.push(String(pageId));
-                if (isWhatsapp) sql += ` AND ((allowed_wa_sessions::jsonb @> jsonb_build_array($2::text)) OR platform = 'global')`;
-                else sql += ` AND ((allowed_messenger_ids::jsonb @> jsonb_build_array($2::text)) OR platform = 'global')`;
+                if (isWhatsapp) sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($2::text))`;
+                else sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($2::text))`;
             }
             sql += ` ORDER BY id DESC LIMIT 5`;
             const res = await query(sql, params);
-            return res.rows;
+            return (res.rows || []).map(normalizeProductRecord);
         }
 
         const aiService = require('./aiService');
@@ -3921,10 +5673,11 @@ async function searchProducts(userId, queryText, pageId = null) {
         const pageColumn = isWhatsapp ? 'allowed_wa_sessions' : 'allowed_messenger_ids';
 
         let sql = `
-            SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description,
+            SELECT id, name, description, image_url, variants, is_active, price, currency, keywords, visual_tags, is_combo, combo_items, allow_description, product_mode, attribute_schema, sku_matrix, searchable_text,
                    (embedding <=> $1::vector) as distance
             FROM products
             WHERE user_id::text = $2::text AND is_active = true
+              AND embedding IS NOT NULL
         `;
         
         const params = [JSON.stringify(queryVector), String(userId)];
@@ -3934,17 +5687,25 @@ async function searchProducts(userId, queryText, pageId = null) {
             const pIdx = params.length;
 
             if (isWhatsapp) {
-                sql += ` AND ((allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text)) OR platform = 'global')`;
+                sql += ` AND (allowed_wa_sessions::jsonb @> jsonb_build_array($${pIdx}::text))`;
             } else {
-                // FOR MESSENGER: Only check allowed_messenger_ids (Modern Standard)
-                sql += ` AND ((allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text)) OR platform = 'global')`;
+                sql += ` AND (allowed_messenger_ids::jsonb @> jsonb_build_array($${pIdx}::text))`;
             }
         }
 
         sql += ` ORDER BY distance ASC LIMIT 5`;
 
         const start = Date.now();
-        const result = await query(sql, params);
+        let result;
+        try {
+            result = await query(sql, params);
+        } catch (vectorError) {
+            if (isVectorDimensionMismatchError(vectorError)) {
+                console.warn(`[DB] searchProducts vector mismatch for "${cleanQuery}". Returning empty result so callers can fallback safely: ${vectorError.message}`);
+                return [];
+            }
+            throw vectorError;
+        }
         const end = Date.now();
         
         if (end - start > 1000) {
@@ -3955,11 +5716,185 @@ async function searchProducts(userId, queryText, pageId = null) {
         
         // Return products only if they are reasonably similar (threshold check)
         // distance < 0.4 is usually a good match for cosine similarity
-        return result.rows.filter(p => p.distance < 0.4);
+        return (result.rows || [])
+            .map(normalizeProductRecord)
+            .filter((p) => {
+                const numericDistance = Number(p.distance);
+                return Number.isFinite(numericDistance) && numericDistance < 0.4;
+            });
         
     } catch (error) {
         console.error("[DB] searchProducts Vector Error:", error.message);
         throw error; // Throw error so controller can handle it (Status: 503)
+    }
+}
+
+// 31.5 Search Products by Image Vector
+async function searchProductByDirectImageVector(imageVector, pageId) {
+    try {
+        if (!imageVector || !pageId) return [];
+        if (!Array.isArray(imageVector) || imageVector.length !== 3072) return [];
+
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        if (resourceIds.length === 0) return [];
+
+        let sql = `
+            WITH ranked_matches AS (
+                SELECT p.id, p.name, p.description, p.image_url, p.price, p.currency, p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode, p.attribute_schema, p.sku_matrix,
+                       pie.image_role, pie.image_url AS matched_image_url, pie.visual_tags, pie.visual_fingerprint, pie.image_embedding_model,
+                       (pie.image_embedding_3072 <=> $1::vector) as distance
+                FROM product_image_embeddings pie
+                JOIN products p ON p.id = pie.product_id
+                WHERE p.is_active = true
+                  AND pie.image_embedding_3072 IS NOT NULL
+        `;
+        let params = [JSON.stringify(imageVector)];
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId, 'p.'));
+        sql += `
+            ),
+            best_ranked_matches AS (
+                SELECT DISTINCT ON (id) *
+                FROM ranked_matches
+                ORDER BY id, distance ASC
+            )
+            SELECT *
+            FROM best_ranked_matches
+            ORDER BY distance ASC
+            LIMIT 5
+        `;
+
+        const result = await query(sql, params);
+        return (result.rows || [])
+            .filter(row => row.distance !== null && row.distance !== undefined)
+            .map(row => {
+                const product = normalizeProductRecord(row);
+                return { ...product, distance: row.distance, image_embedding_model: row.image_embedding_model, match_layer: 'direct_image_embedding' };
+            });
+    } catch (error) {
+        if (error.code === '42703' || error.code === '42P01') {
+            console.warn(`[DB] Direct image embedding layer not ready. Run DB init/migration first: ${error.message}`);
+            return [];
+        }
+        if (isVectorDimensionMismatchError(error)) {
+            console.warn(`[DB] searchProductByDirectImageVector vector mismatch for page/session "${pageId}". Query vector length: ${Array.isArray(imageVector) ? imageVector.length : 'unknown'}. Error: ${error.message}`);
+            return [];
+        }
+        console.error("[DB] searchProductByDirectImageVector Error:", error.message);
+        return [];
+    }
+}
+
+async function searchProductImageEmbeddingRowsByDirectVector(imageVector, pageId, candidateLimit = Number(process.env.DIRECT_IMAGE_MATCH_CANDIDATE_LIMIT || 10)) {
+    try {
+        if (!imageVector || !pageId || !Array.isArray(imageVector) || imageVector.length !== 3072) return [];
+
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        if (resourceIds.length === 0) return [];
+
+        const limit = Math.max(1, Math.min(100, Number(candidateLimit) || 10));
+        let sql = `
+            SELECT p.id, p.name, p.description, p.image_url, p.additional_images, p.price, p.currency,
+                   p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode,
+                   p.attribute_schema, p.sku_matrix, p.searchable_text, p.keywords,
+                   pie.image_role, pie.image_url AS matched_image_url, pie.visual_tags,
+                   pie.visual_fingerprint, pie.image_embedding_model,
+                   (pie.image_embedding_3072 <=> $1::vector) AS distance
+            FROM product_image_embeddings pie
+            JOIN products p ON p.id = pie.product_id
+            WHERE p.is_active = true
+              AND pie.image_embedding_3072 IS NOT NULL
+        `;
+        let params = [JSON.stringify(imageVector)];
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId, 'p.'));
+        params.push(limit);
+        sql += ` ORDER BY distance ASC LIMIT $${params.length}`;
+
+        const result = await query(sql, params);
+        return (result.rows || [])
+            .filter(row => row.distance !== null && row.distance !== undefined)
+            .map(row => {
+                const product = normalizeProductRecord(row);
+                return {
+                    ...product,
+                    matched_image_url: row.matched_image_url,
+                    image_role: row.image_role,
+                    distance: row.distance,
+                    image_embedding_model: row.image_embedding_model,
+                    match_layer: 'direct_image_embedding_row'
+                };
+            });
+    } catch (error) {
+        if (error.code === '42703' || error.code === '42P01') {
+            console.warn(`[DB] Direct image embedding row layer not ready. Run DB init/migration first: ${error.message}`);
+            return [];
+        }
+        if (isVectorDimensionMismatchError(error)) {
+            console.warn(`[DB] searchProductImageEmbeddingRowsByDirectVector vector mismatch for page/session "${pageId}". Query vector length: ${Array.isArray(imageVector) ? imageVector.length : 'unknown'}. Error: ${error.message}`);
+            return [];
+        }
+        console.error('[DB] searchProductImageEmbeddingRowsByDirectVector Error:', error.message);
+        return [];
+    }
+}
+
+async function searchProductByImageVector(imageVector, pageId) {
+    try {
+        if (!imageVector || !pageId) return [];
+
+        const { isWhatsapp, resourceIds, ownerUserId } = await resolveResourceSearchContext(pageId);
+        // #region debug-point D:image-vector-search-input
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const e=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'dbService.js:searchProductByImageVector:start',msg:'[DEBUG] image vector search invoked',data:{pageId,isWhatsapp,resourceIds,hasVector:Boolean(imageVector),vectorLength:Array.isArray(imageVector)?imageVector.length:0},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        if (resourceIds.length === 0) return [];
+
+        let sql = `
+            WITH ranked_matches AS (
+                SELECT p.id, p.name, p.description, p.image_url, p.price, p.currency, p.variants, p.is_combo, p.combo_items, p.allow_description, p.product_mode, p.attribute_schema, p.sku_matrix,
+                       pie.image_role, pie.visual_tags, pie.visual_fingerprint,
+                       (pie.embedding <=> $1::vector) as distance
+                FROM product_image_embeddings pie
+                JOIN products p ON p.id = pie.product_id
+                WHERE p.is_active = true
+                  AND pie.embedding IS NOT NULL
+        `;
+
+        let params = [JSON.stringify(imageVector)];
+        
+        ({ sql, params } = appendAssignmentFilter(sql, params, isWhatsapp, resourceIds, ownerUserId, 'p.'));
+
+        sql += `
+            ),
+            best_ranked_matches AS (
+                SELECT DISTINCT ON (id) *
+                FROM ranked_matches
+                ORDER BY id, distance ASC
+            )
+            SELECT *
+            FROM best_ranked_matches
+            ORDER BY distance ASC
+            LIMIT 5
+        `;
+
+        const result = await query(sql, params);
+        // #region debug-point D:image-vector-search-output
+        (()=>{const fs=require('fs');let u='http://127.0.0.1:7777/event',s='image-match-stability';try{const e=fs.readFileSync('.dbg/image-match-stability.env','utf8');u=e.match(/DEBUG_SERVER_URL=(.+)/)?.[1]||u;s=e.match(/DEBUG_SESSION_ID=(.+)/)?.[1]||s}catch{}fetch(u,{method:'POST',body:JSON.stringify({sessionId:s,runId:'pre-fix',hypothesisId:'D',location:'dbService.js:searchProductByImageVector:result',msg:'[DEBUG] image vector search completed',data:{pageId,rowCount:(result.rows||[]).length,topMatches:(result.rows||[]).slice(0,3).map(r=>({id:r.id,name:r.name,distance:r.distance,price:r.price}))},ts:Date.now()})}).catch(()=>{})})();
+        // #endregion
+        
+        return (result.rows || [])
+            .filter(row => row.distance !== null && row.distance !== undefined)
+            .map(row => {
+                const product = normalizeProductRecord(row);
+                return { ...product, distance: row.distance };
+            });
+            
+    } catch (error) {
+        if (isVectorDimensionMismatchError(error)) {
+            console.warn(`[DB] searchProductByImageVector vector mismatch for page/session "${pageId}". Skipping image-vector matches; caller text search fallback will continue. Query vector length: ${Array.isArray(imageVector) ? imageVector.length : 'unknown'}. Error: ${error.message}`);
+            return [];
+        }
+
+        console.error("[DB] searchProductByImageVector Error:", error.message);
+        return [];
     }
 }
 
@@ -4090,5 +6025,85 @@ async function getAllModelUsagesForKey(apiKeyId) {
     } catch (error) {
         console.error("[DB] getAllModelUsagesForKey error:", error.message);
         return [];
+    }
+}
+
+// 53. Check if admin replied in fb_chats after a certain timestamp
+async function hasFbAdminReplySince(pageId, recipientId, sinceTs) {
+    try {
+        const result = await query(
+            `SELECT * FROM fb_chats 
+             WHERE page_id = $1 
+               AND (sender_id = $2 OR recipient_id = $2) 
+               AND reply_by = 'admin' 
+               AND timestamp > $3 
+             ORDER BY timestamp DESC LIMIT 1`,
+            [pageId, recipientId, sinceTs]
+        );
+        return result.rows.length > 0;
+    } catch (error) {
+        console.error("[DB] hasFbAdminReplySince error:", error.message);
+        return false;
+    }
+}
+
+// 54. Check if admin replied in whatsapp_chats after a certain timestamp
+async function hasWhatsAppAdminReplySince(sessionName, senderId, sinceTs) {
+    try {
+        const result = await query(
+            `SELECT * FROM whatsapp_chats 
+             WHERE session_name = $1 
+               AND (sender_id = $2 OR recipient_id = $2) 
+               AND reply_by = 'admin' 
+               AND timestamp > $3 
+             ORDER BY timestamp DESC LIMIT 1`,
+            [sessionName, senderId, sinceTs]
+        );
+        return result.rows.length > 0;
+    } catch (error) {
+        console.error("[DB] hasWhatsAppAdminReplySince error:", error.message);
+        return false;
+    }
+}
+
+// 55. Get timestamp of last user message in fb_chats
+async function getLastFbUserMessageTimestamp(pageId, senderId) {
+    try {
+        const result = await query(
+            `SELECT timestamp FROM fb_chats 
+             WHERE page_id = $1 
+               AND sender_id = $2 
+               AND reply_by = 'user' 
+             ORDER BY timestamp DESC LIMIT 1`,
+            [pageId, senderId]
+        );
+        if (result.rows.length > 0) {
+            return Number(result.rows[0].timestamp);
+        }
+        return null;
+    } catch (error) {
+        console.error("[DB] getLastFbUserMessageTimestamp error:", error.message);
+        return null;
+    }
+}
+
+// 56. Get timestamp of last user message in whatsapp_chats
+async function getLastWhatsAppUserMessageTimestamp(sessionName, senderId) {
+    try {
+        const result = await query(
+            `SELECT timestamp FROM whatsapp_chats 
+             WHERE session_name = $1 
+               AND (sender_id = $2 OR recipient_id = $2) 
+               AND reply_by = 'user' 
+             ORDER BY timestamp DESC LIMIT 1`,
+            [sessionName, senderId]
+        );
+        if (result.rows.length > 0) {
+            return Number(result.rows[0].timestamp);
+        }
+        return null;
+    } catch (error) {
+        console.error("[DB] getLastWhatsAppUserMessageTimestamp error:", error.message);
+        return null;
     }
 }

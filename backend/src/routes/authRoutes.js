@@ -5,6 +5,12 @@ const authMiddleware = require('../middleware/authMiddleware');
 const adminAuthMiddleware = require('../middleware/adminAuthMiddleware');
 
 router.post('/facebook/exchange-token', authController.exchangeToken);
+router.post('/facebook/messenger/complete-code', authMiddleware, authController.completeMessengerCode);
+router.post('/facebook/messenger/pages', authMiddleware, authController.resolveMessengerPages);
+router.post('/facebook/instagram/complete-code', authMiddleware, authController.completeInstagramCode);
+router.get('/facebook/start', authController.startFacebookAuth);
+router.get('/facebook/poll', authController.pollFacebookAuth);
+router.post('/facebook/callback-persist', authController.persistFacebookCallback);
 
 router.post('/admin/login', authController.adminLogin);
 router.post('/admin/topup', adminAuthMiddleware, authController.adminTopup);

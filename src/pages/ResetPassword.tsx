@@ -8,6 +8,7 @@ import { Lock, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
+import SEO from "@/components/SEO";
 
 const ResetPassword = () => {
   const { t } = useLanguage();
@@ -34,12 +35,13 @@ const ResetPassword = () => {
       toast.error(t("Please enter your email", "অনুগ্রহ করে আপনার ইমেইল দিন"));
       return;
     }
+    const normalizedEmail = email.trim().toLowerCase();
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: normalizedEmail }),
       });
 
       const body = await res.json().catch(() => ({}));
@@ -102,7 +104,7 @@ const ResetPassword = () => {
       const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code: otp, password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), code: otp, password }),
       });
 
       const body = await res.json().catch(() => ({}));
@@ -123,6 +125,7 @@ const ResetPassword = () => {
 
   return (
     <div className="flex min-h-screen bg-[#0b0b0b] text-white">
+      <SEO title="Set a new SalesmanChatbot password" noindex />
       <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:px-20 xl:px-24">
         <div className="mx-auto w-full max-w-md">
           <div className="mb-6">

@@ -12,7 +12,7 @@ import { BACKEND_URL } from "@/config";
 
 interface BulkCampaignModalProps {
     pageId: string;
-    platform: 'messenger' | 'whatsapp';
+    platform: 'messenger' | 'whatsapp' | 'instagram';
     trigger?: React.ReactNode;
 }
 
@@ -70,7 +70,7 @@ export function BulkCampaignModal({ pageId, platform, trigger }: BulkCampaignMod
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Send className="w-5 h-5 text-primary" />
-                        Send Bulk Message ({platform === 'messenger' ? 'Messenger' : 'WhatsApp'})
+                        Send Bulk Message ({platform === 'messenger' ? 'Messenger' : platform === 'instagram' ? 'Instagram' : 'WhatsApp'})
                     </DialogTitle>
                 </DialogHeader>
                 

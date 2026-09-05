@@ -1,47 +1,29 @@
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import HeroSection from "@/components/landing/HeroSection";
+import FeatureGrid from "@/components/landing/FeatureGrid";
+import HowItWorks from "@/components/landing/HowItWorks";
+import TestimonialsSection from "@/components/landing/TestimonialsSection";
+import FAQSection from "@/components/landing/FAQSection";
+import StatsSection from "@/components/landing/StatsSection";
+import CaseStudies from "@/components/landing/CaseStudies";
 import PricingSection from "@/components/landing/PricingSection";
 import { useLanguage } from "@/contexts/LanguageContext";
-import {
-  Zap,
-  MessageSquare,
-  Smartphone,
-  Globe,
-  CheckCircle2,
-  Star,
-  MessageCircle,
-  Disc as Discord,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { MessageCircle } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import SEO from "@/components/SEO";
 
 const Index = () => {
   const { t } = useLanguage();
   const [supportOpen, setSupportOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-
-  useEffect(() => {
-    // Check login status
-    const token = localStorage.getItem("auth_token");
-    setIsLoggedIn(!!token);
-
-    document.title = "Automation Hub BD — Automate Growth with AI Chatbots";
-    const metaDesc = document.querySelector('meta[name="description"]') || document.createElement('meta');
-    metaDesc.setAttribute('name', 'description');
-    metaDesc.setAttribute('content', 'Automation Hub BD helps business owners automate chat, orders, and growth with modern AI and automation tools.');
-    document.head.appendChild(metaDesc);
-    const metaOg = document.querySelector('meta[property="og:title"]') || document.createElement('meta');
-    metaOg.setAttribute('property', 'og:title');
-    metaOg.setAttribute('content', 'Automation Hub BD');
-    document.head.appendChild(metaOg);
-    const metaViewport = document.querySelector('meta[name="viewport"]') || document.createElement('meta');
-    metaViewport.setAttribute('name', 'viewport');
-    metaViewport.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
-    document.head.appendChild(metaViewport);
-  }, []);
 
   return (
-    <div className="min-h-screen bg-[#0b0b0b] text-white selection:bg-[#00ff88] selection:text-black relative overflow-x-hidden scroll-smooth">
+    <div className="min-h-screen bg-[#050505] text-white selection:bg-[#00ff88] selection:text-black relative overflow-x-hidden scroll-smooth">
+      <SEO
+        title="SalesmanChatbot — Automate Sales & Support with AI Agents"
+        description="SalesmanChatbot helps business owners automate chat, orders, and growth with modern AI and automation tools."
+      />
       <Navbar />
 
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-10 z-[60]">
@@ -108,216 +90,29 @@ const Index = () => {
       </div>
 
       <main className="relative">
-        <section id="hero" className="pt-24 pb-12 px-6 md:pt-36 md:pb-20">
-          <div className="max-w-6xl mx-auto text-center">
-            <h1 className="text-3xl sm:text-4xl md:text-6xl font-black tracking-tight leading-[1.2] sm:leading-tight">
-              {t("Automation Hub BD", "অটোমেশন হাব বিডি")}
-            </h1>
-            <p className="mt-4 text-sm sm:text-base text-gray-400 max-w-2xl mx-auto px-2">
-              {t(
-                "Automate sales and support using WhatsApp, Messenger and an OpenAI‑compatible API.",
-                "WhatsApp, Messenger এবং OpenAI‑compatible API দিয়ে সহজভাবে সেলস ও সাপোর্ট অটোমেট করুন।"
-              )}
-            </p>
-            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 px-4 sm:px-0">
-              <Link
-                to={isLoggedIn ? "/dashboard/whatsapp/control" : "/login"}
-                className="w-full sm:w-auto inline-flex h-12 px-8 items-center justify-center rounded-xl bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:shadow-[0_12px_36px_rgba(0,255,136,0.35)] transition-all hover:scale-[1.02] active:scale-95"
-              >
-                {isLoggedIn ? t("Go to Dashboard", "ড্যাশবোর্ডে যান") : t("Get Started", "শুরু করুন")}
-              </Link>
-              <a
-                  href="https://www.youtube.com/@SalesmanChatbot"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full sm:w-auto inline-flex h-12 px-8 items-center justify-center rounded-xl border border-gray-700 text-white hover:border-[#00ff88] hover:text-[#00ff88] transition-colors"
-                >
-                  See Demo
-                </a>
-            </div>
-          </div>
-        </section>
-
-        <section id="services" className="py-14 px-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {[
-                { Icon: MessageSquare, title: t("WhatsApp Automation", "WhatsApp অটোমেশন"), desc: t("Sessions, webhooks, auto‑reply, handover locks.", "Session, webhook, auto‑reply, handover lock — সব এক জায়গায়।") },
-                { Icon: Smartphone, title: t("Messenger Automation", "Messenger অটোমেশন"), desc: t("Facebook/Instagram pages, team sharing.", "Facebook/Instagram pages, team sharing, পরিষ্কার অপারেশন।") },
-                { Icon: Globe, title: t("OpenAI‑Compatible API", "OpenAI‑Compatible API"), desc: t("OpenAI-style endpoint with streaming and model routes.", "OpenAI style endpoint, streaming, model routes — ডেভ‑ফ্রেন্ডলি।") },
-                { Icon: Zap, title: t("Products & WooCommerce", "প্রোডাক্টস ও WooCommerce"), desc: t("Catalog CRUD, import, search in chat.", "Catalog CRUD, import, search — চ্যাটে দ্রুত উত্তর ও অর্ডার।") },
-              ].map((item, i) => (
-                <div key={i} className="group rounded-2xl border border-gray-800 bg-[#101010] p-6 hover:border-[#00ff88] transition-colors">
-                  <div className="w-10 h-10 rounded-xl bg-[#00ff88]/15 text-[#00ff88] flex items-center justify-center mb-4">
-                    <item.Icon className="w-5 h-5" />
-                  </div>
-                  <div className="font-bold">{item.title}</div>
-                  <div className="mt-2 text-sm text-gray-400">{item.desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="detailed" className="py-14 px-4">
-          <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              {
-                title: t("WhatsApp Automation", "WhatsApp অটোমেশন"),
-                desc: t(
-                  "Create/start/stop sessions, QR or pairing, webhooks to auto-reply, handover locks to control admin vs AI.",
-                  "Session create/start/stop, QR বা pairing, webhook‑এ auto‑reply, handover lock দিয়ে admin vs AI নিয়ন্ত্রণ।"
-                ),
-                points: [
-                  t("Session lifecycle with WAHA", "WAHA দিয়ে session lifecycle"),
-                  t("Echo guard and backlog filtering", "Echo guard ও backlog filtering"),
-                  t("Contacts, labels, locks", "Contacts, labels, locks")
-                ]
-              },
-              {
-                title: t("OpenAI‑Compatible API", "OpenAI‑Compatible API"),
-                desc: t(
-                  "OpenAI-style /v1/chat/completions, streaming responses, token-based usage and pricing.",
-                  "OpenAI‑style /v1/chat/completions, streaming response, token‑ভিত্তিক usage ও pricing।"
-                ),
-                points: [
-                  t("Lite & Pro engines (Groq/OpenRouter)", "Lite ও Pro engine (Groq/OpenRouter)"),
-                  t("Vision and audio support", "Vision ও audio সাপোর্ট"),
-                  t("Usage analytics and balance deduction", "Usage analytics ও balance deduction")
-                ]
-              },
-              {
-                title: t("Product Catalog & WooCommerce", "প্রোডাক্ট ক্যাটালগ ও WooCommerce"),
-                desc: t(
-                  "Manage catalog with image upload, import from WooCommerce, and answer product queries in chat.",
-                  "ইমেজ আপলোডসহ ক্যাটালগ ম্যানেজ, WooCommerce থেকে ইম্পোর্ট, আর চ্যাটে প্রোডাক্ট‑সম্পর্কিত উত্তর।"
-                ),
-                points: [
-                  t("CRUD with search", "CRUD ও সার্চ"),
-                  t("Access gating via credits/sessions/pages", "Credits/sessions/pages দিয়ে access gating"),
-                  t("Chat‑ready responses", "চ্যাট‑রেডি উত্তর")
-                ]
-              }
-            ].map((f, i) => (
-              <div key={i} className="rounded-2xl border border-gray-800 bg-[#101010] p-6">
-                <div className="font-bold">{f.title}</div>
-                <div className="mt-2 text-sm text-gray-400">{f.desc}</div>
-                <div className="mt-4 space-y-2">
-                  {f.points.map((p, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-[#00ff88]" />
-                      <span className="text-sm text-gray-300">{p}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="how" className="py-14 px-4">
-          <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { step: "01", title: "Connect", desc: "Link your pages and WhatsApp in minutes." },
-              { step: "02", title: "Automate", desc: "Turn on chatflows, order capture, follow‑ups." },
-              { step: "03", title: "Grow", desc: "Track conversions and scale confidently." },
-            ].map((s, i) => (
-              <div key={i} className="rounded-2xl border border-gray-800 bg-[#101010] p-6">
-                <div className="text-[#00ff88] font-black text-sm">{s.step}</div>
-                <div className="mt-2 font-bold">{s.title}</div>
-                <div className="mt-2 text-sm text-gray-400">{s.desc}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="benefits" className="py-14 px-4">
-          <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              {[
-                "Respond 24/7 — never miss a lead",
-                "Reduce support load up to 60%",
-                "Capture orders directly in chat",
-                "Increase conversion with follow‑ups",
-                "Simple setup, zero code",
-              ].map((b, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <CheckCircle2 className="w-5 h-5 text-[#00ff88]" />
-                  <span className="text-sm text-gray-300">{b}</span>
-                </div>
-              ))}
-            </div>
-            <div className="rounded-2xl border border-gray-800 bg-[#101010] p-6">
-              <div className="font-bold">Built for Business Owners</div>
-              <div className="mt-2 text-sm text-gray-400">Clean interface, premium feel, and conversion‑first UX.</div>
-            </div>
-          </div>
-        </section>
-
-        <section id="testimonials" className="py-14 px-4">
-          <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { name: "Retail Founder", text: "Order automation boosted our conversions without extra staff." },
-              { name: "DTC Brand", text: "WhatsApp + Messenger unified inbox saved serious time." },
-              { name: "SME Owner", text: "Setup took minutes. The green UI looks premium and converts." },
-            ].map((tItem, i) => (
-              <div key={i} className="rounded-2xl border border-gray-800 bg-[#101010] p-6">
-                <div className="flex items-center gap-2 text-[#00ff88]">
-                  <Star className="w-4 h-4" />
-                  <Star className="w-4 h-4" />
-                  <Star className="w-4 h-4" />
-                  <Star className="w-4 h-4" />
-                </div>
-                <div className="mt-3 text-sm text-gray-300">{tItem.text}</div>
-                <div className="mt-2 text-xs text-gray-500">{tItem.name}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Pricing Section */}
+        <HeroSection />
+        <StatsSection />
+        <FeatureGrid />
+        <HowItWorks />
+        <CaseStudies />
+        <TestimonialsSection />
         <PricingSection />
+        <FAQSection />
 
-        <section id="support" className="py-14 px-4">
-          <div className="max-w-6xl mx-auto text-center">
-            <h3 className="text-2xl md:text-3xl font-black tracking-tight">Get Support</h3>
-            <p className="mt-2 text-sm text-gray-400">WhatsApp or Discord — reach us instantly.</p>
-            <div className="mt-6 flex items-center justify-center gap-6">
-              <a
-                href="https://wa.me/8801956871403"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-12 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center transition-all"
-              >
-                <img
-                  src="https://cdn-icons-png.flaticon.com/512/733/733585.png"
-                  alt="WhatsApp"
-                  className="w-7 h-7"
-                />
-              </a>
-              <a
-                href="https://discord.gg/KEDXD7Ma4S"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-12 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center transition-all"
-              >
-                <img
-                  src="https://cdn-icons-png.flaticon.com/512/5968/5968756.png"
-                  alt="Discord"
-                  className="w-7 h-7"
-                />
-              </a>
+        <section id="cta" className="py-24 px-4 text-center bg-[#050505] relative overflow-hidden border-t border-white/5">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[#00ff88]/5 blur-[120px] rounded-full pointer-events-none" />
+          <div className="max-w-3xl mx-auto relative z-10">
+            <h2 className="text-4xl md:text-6xl font-black tracking-tight text-white mb-6">
+              {t("Automate. Convert. Grow.", "অটোমেট। কনভার্ট। গ্রো।")}
+            </h2>
+            <p className="mt-6 text-lg text-slate-400 font-medium">
+              {t("Join hundreds of businesses scaling with SalesmanChatbot today.", "আজই যোগ দিন শত শত উদ্যোক্তাদের সাথে যারা সেলসম্যানচ্যাটবট ব্যবহার করছেন।")}
+            </p>
+            <div className="mt-12">
+              <Link to="/register" className="inline-flex h-16 px-12 items-center justify-center rounded-[2rem] bg-[#00ff88] text-black font-black text-lg shadow-[0_20px_40px_rgba(0,255,136,0.2)] hover:shadow-[0_25px_50px_rgba(0,255,136,0.3)] transition-all hover:scale-105 active:scale-95 uppercase tracking-widest">
+                {t("Get Started Now", "এখনই শুরু করুন")}
+              </Link>
             </div>
-          </div>
-        </section>
-
-        <section id="cta" className="py-16 px-4 text-center">
-          <div className="max-w-3xl mx-auto">
-            <h2 className="text-3xl md:text-4xl font-black tracking-tight">Automate. Convert. Grow.</h2>
-            <p className="mt-3 text-sm md:text-base text-gray-400">Start free and see the impact in days — not months.</p>
-            <a href="/login" className="mt-8 inline-flex h-12 px-8 items-center justify-center rounded-xl bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:shadow-[0_12px_36px_rgba(0,255,136,0.35)] transition-transform hover:scale-[1.02] active:scale-95">
-              Get Started
-            </a>
           </div>
         </section>
       </main>

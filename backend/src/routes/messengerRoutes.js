@@ -1,11 +1,183 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
+const multer = require('multer');
 const dbService = require('../services/dbService');
+const orderService = require('../services/orderService');
+const facebookService = require('../services/facebookService');
+const imageService = require('../services/imageService');
 const pgClient = require('../services/pgClient');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
+const { resolveAuthorizedTeamResource } = require('../services/teamAuthorizationService');
 
 const webhookController = require('../controllers/webhookController');
+const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
+const commentAutomationService = require('../services/commentAutomationService');
+const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
+const smartInboxUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 16 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (!file.mimetype || !file.mimetype.startsWith('image/')) return cb(new Error('Only image uploads are supported.'));
+        cb(null, true);
+    }
+});
+
+async function ensureMessengerPageColumns() {
+    await pgClient.query(`
+        ALTER TABLE page_access_token_message
+        ADD COLUMN IF NOT EXISTS user_access_token text
+    `);
+}
+
+async function ensureMessengerOrderColumns() {
+    await pgClient.query(`
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS customer_name text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS customer_email text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS status text DEFAULT 'ongoing';
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS is_locked boolean DEFAULT false;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS business_type text DEFAULT 'ecommerce';
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS service_name text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS service_package text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS service_details text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS delivery_method text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_type text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_date text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_time text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS appointment_notes text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS assigned_to text;
+        ALTER TABLE fb_order_tracking ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    `);
+}
+
+async function getPageByPageId(pageId, userId, userEmail) {
+    const { rows } = await pgClient.query(
+        `SELECT * FROM page_access_token_message
+         WHERE page_id = $1
+           AND (user_id::text = $2 OR LOWER(email) = LOWER($3))
+         LIMIT 1`,
+        [String(pageId), String(userId || ''), String(userEmail || '')]
+    );
+    return rows[0] || null;
+}
+
+async function authorizeMessengerResource(req, pageId, module, action) {
+    return resolveAuthorizedTeamResource({
+        pgClient,
+        actorEmail: req.user?.email,
+        resourceType: 'fb_pages',
+        resourceId: String(pageId || '').trim(),
+        module,
+        action
+    });
+}
+
+async function requireMessengerResource(req, res, pageId, module, action) {
+    const authorization = await authorizeMessengerResource(req, pageId, module, action);
+    if (!authorization?.authorized) {
+        res.status(403).json({ error: 'Forbidden' });
+        return null;
+    }
+    return authorization;
+}
+
+function assignedOrderJoin(authorization, source, resourceId, orderIdColumn = 'o.id') {
+    if (authorization.isOwner) return { join: '', values: [] };
+    return {
+        join: ` INNER JOIN team_order_assignments toa
+                ON LOWER(toa.owner_email) = LOWER($2)
+               AND toa.source = $3
+               AND toa.resource_id = $1
+               AND toa.order_identity = ${orderIdColumn}::text
+               AND LOWER(toa.member_email) = LOWER($4) `,
+        values: [authorization.ownerEmail, source, resourceId, reqSafeEmail(authorization)]
+    };
+}
+
+function reqSafeEmail(authorization) {
+    return authorization.membership?.member_email || '';
+}
+
+function buildMessageTypeFilter(messageType) {
+    switch (messageType) {
+        case 'bot':
+            return "AND reply_by = 'bot'";
+        case 'reminder':
+            return "AND (status = 'reminder' OR reply_by = 'system')";
+        case 'user':
+            return "AND reply_by = 'user'";
+        case 'error':
+            return "AND status IN ('system_error', 'reminder_error')";
+        default:
+            return '';
+    }
+}
+
+async function subscribeMessengerPage(pageId, pageAccessToken) {
+    const fields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes', 'feed'];
+    try {
+        await axios.post(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}/subscribed_apps`, null, {
+            params: { access_token: pageAccessToken, subscribed_fields: fields.join(',') },
+            timeout: 15000
+        });
+        console.log(`[Messenger] Subscribed app to page ${pageId} fields: ${fields.join(',')}`);
+        return { success: true };
+    } catch (error) {
+        const facebookError = error.response?.data?.error;
+        const message = facebookError?.message || error.message || 'Facebook webhook subscription failed.';
+        console.warn(`[Messenger] Page subscription failed for ${pageId}:`, message);
+        return {
+            success: false,
+            code: facebookError?.code ? `FACEBOOK_SUBSCRIPTION_${facebookError.code}` : 'MESSENGER_SUBSCRIPTION_FAILED',
+            message
+        };
+    }
+}
+
+async function verifyFacebookPageAccessToken(pageId, pageAccessToken) {
+    console.log('🔍 [DEBUG] verifyFacebookPageAccessToken called for page ID:', pageId);
+    try {
+        console.log('🔍 [DEBUG] Calling Facebook Graph API to verify token...');
+        const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}`, {
+            params: {
+                fields: 'id,name',
+                access_token: pageAccessToken
+            },
+            timeout: 15000
+        });
+
+        console.log('✅ [DEBUG] Facebook Graph API verify response:', response.data);
+
+        if (!response.data?.id || String(response.data.id) !== String(pageId)) {
+            console.error('❌ [DEBUG] Page ID mismatch! Expected:', pageId, 'Got:', response.data?.id);
+            throw new Error('Facebook returned a different page ID for this token.');
+        }
+
+        console.log('✅ [DEBUG] Token verified successfully for page:', response.data.name);
+        return response.data;
+    } catch (error) {
+        console.error('❌ [DEBUG] Facebook token verification failed!', {
+            message: error.message,
+            responseData: error.response?.data,
+            statusCode: error.response?.status
+        });
+        const fbError = error.response?.data?.error;
+        if (fbError?.code === 190 || fbError?.code === 102) {
+            const mappedError = new Error('Invalid or expired Facebook page token. Please reconnect the page and approve all permissions again.');
+            mappedError.statusCode = 400;
+            throw mappedError;
+        }
+
+        if (fbError?.message) {
+            const mappedError = new Error(fbError.message);
+            mappedError.statusCode = error.response?.status || 400;
+            throw mappedError;
+        }
+
+        throw error;
+    }
+}
 
 // Get Messenger Pages (Merged with Team Permissions)
 router.get('/pages', async (req, res) => {
@@ -27,7 +199,23 @@ router.get('/pages', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        const requestedOwner = req.query?.team_owner || req.headers['x-team-owner'];
+        // [FIX]: Resolve missing email from token to prevent empty array
+        if (!userEmail && userId) {
+            try {
+                const userRes = await pgClient.query('SELECT email FROM users WHERE id = $1::uuid', [userId]);
+                if (userRes.rows.length > 0) {
+                    userEmail = userRes.rows[0].email;
+                }
+            } catch (e) {
+                console.error("[GET /pages] Failed to resolve missing email:", e);
+            }
+        }
+
+        let requestedOwner = req.query?.team_owner || req.headers['x-team-owner'];
+        // [FIX]: Sanitize string "null" from frontend localStorage bug
+        if (requestedOwner === 'null' || requestedOwner === 'undefined') {
+            requestedOwner = null;
+        }
 
         console.log(`[GET /pages] User: ${userEmail}, RequestedOwner: ${requestedOwner}`);
 
@@ -39,7 +227,8 @@ router.get('/pages', async (req, res) => {
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
                  LEFT JOIN user_configs u ON LOWER(u.email) = LOWER(p.email)
-                 WHERE LOWER(p.email) = LOWER($1) OR p.user_id::text = $2`,
+                 WHERE (LOWER(p.email) = LOWER($1) OR p.user_id::text = $2)
+                   AND COALESCE(p.platform, 'messenger') = 'messenger'`,
                 [userEmail, userId]
             );
             myPages = rows;
@@ -78,7 +267,8 @@ router.get('/pages', async (req, res) => {
                 `SELECT p.*, u.message_credit AS user_message_credit
                  FROM page_access_token_message p
                  LEFT JOIN user_configs u ON LOWER(u.email) = LOWER(p.email)
-                 WHERE p.page_id = ANY($1::text[])`,
+                 WHERE p.page_id = ANY($1::text[])
+                   AND COALESCE(p.platform, 'messenger') = 'messenger'`,
                 [sharedPageIds]
             );
             sharedPages = sharedData;
@@ -114,7 +304,7 @@ router.get('/pages', async (req, res) => {
                         `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
                          VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [p.page_id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
+                        [p.page_id, 'You are a helpful sales assistant.', 'salesmanchatbot-pro-plus', 2, true, true, true]
                     );
                     dbInfo = insertRes.rows[0];
                 } catch (err) {
@@ -140,14 +330,34 @@ router.get('/pages', async (req, res) => {
 
 // Manual Upsert for Messenger Pages (Used by Facebook Connect + Manual Flow)
 router.post('/pages/manual', authMiddleware, async (req, res) => {
+    console.log('🔍 [DEBUG] /api/messenger/pages/manual called with data:', {
+        page_id: req.body.page_id,
+        name: req.body.name,
+        email: req.body.email,
+        hasAccessToken: !!req.body.page_access_token
+    });
     try {
-        const { page_id, name, page_access_token, email } = req.body;
+        const { page_id, name, page_access_token, user_access_token, email } = req.body;
         const userId = req.user.id;
 
         if (!page_id || !name || !page_access_token || !email) {
+            console.log('❌ [DEBUG] Missing required fields!');
             return res.status(400).json({ error: 'page_id, name, page_access_token, and email are required' });
         }
 
+        await ensureMessengerPageColumns();
+        console.log('✅ [DEBUG] Step 1: Ensured messenger page columns exist');
+
+        console.log('✅ [DEBUG] Step 2: Starting Facebook token verification...');
+        const verifiedPage = await verifyFacebookPageAccessToken(page_id, page_access_token);
+        console.log('✅ [DEBUG] Step 2: Token verified successfully!', verifiedPage);
+
+        const pageExists = await pgClient.query(
+            'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
+            [String(page_id)]
+        );
+
+        console.log('✅ [DEBUG] Step 3: Checking if fb_message_database entry exists...');
         const existsResult = await pgClient.query(
             'SELECT id FROM fb_message_database WHERE page_id = $1 LIMIT 1',
             [String(page_id)]
@@ -160,7 +370,7 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)
                  RETURNING id`,
-                [String(page_id), 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
+                [String(page_id), 'You are a helpful sales assistant.', 'salesmanchatbot-pro-plus', 2, true, true, true]
             );
             dbId = insertResult.rows[0].id;
         } else {
@@ -169,22 +379,34 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         const ownerEmail = email.toLowerCase();
 
-        // Check if page already exists to avoid giving double free credits
-        const pageExists = await pgClient.query(
-            'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
-            [String(page_id)]
-        );
-
         await pgClient.query(
-            `INSERT INTO page_access_token_message (page_id, name, page_access_token, email, user_id, ai, chat_model, cheap_engine)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `INSERT INTO page_access_token_message (page_id, name, page_access_token, user_access_token, email, user_id, ai, chat_model, cheap_engine, subscription_status)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
              ON CONFLICT (page_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 page_access_token = EXCLUDED.page_access_token,
+                user_access_token = COALESCE(EXCLUDED.user_access_token, page_access_token_message.user_access_token),
                 email = EXCLUDED.email,
-                user_id = EXCLUDED.user_id`,
-            [String(page_id), name, page_access_token, ownerEmail, userId, 'gemini', 'salesmanchatbot-flash', true]
+                user_id = EXCLUDED.user_id,
+                subscription_status = EXCLUDED.subscription_status`,
+            [
+                String(page_id),
+                verifiedPage?.name || name,
+                page_access_token,
+                typeof user_access_token === 'string' && user_access_token.trim() ? user_access_token.trim() : null,
+                ownerEmail,
+                userId,
+                'gemini',
+                'salesmanchatbot-pro-plus',
+                true,
+                'active'
+            ]
         );
+
+        const subscription = await subscribeMessengerPage(String(page_id), page_access_token);
+        if (!subscription.success) {
+            console.warn(`[Messenger] Page saved, but automatic webhook field subscription failed for ${page_id}: ${subscription.message}`);
+        }
 
         // SYNC ALL PRODUCTS TO THIS NEW PAGE ID (Automatic)
         try {
@@ -221,10 +443,11 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                     if (userConfig.rowCount > 0) {
                         const targetUserId = String(userConfig.rows[0].user_id);
                         
-                        await pgClient.query(
-                            'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1',
-                            [targetUserId]
-                        );
+                        // --- FREE CREDITS REMOVED ---
+                        // await pgClient.query(
+                        //     'UPDATE user_configs SET message_credit = message_credit + 100 WHERE user_id::text = $1',
+                        //     [targetUserId]
+                        // );
                         
                         // Mark as granted permanently
                         await pgClient.query(
@@ -264,10 +487,14 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         webhookController.clearPageCache(page_id);
 
-        res.json({ id: dbId });
+        res.json({
+            id: dbId,
+            subscription_status: subscription.success ? 'active' : 'saved_subscription_failed',
+            subscription_error: subscription.success ? null : subscription.message
+        });
     } catch (error) {
         console.error('Error saving Messenger page (manual):', error);
-        res.status(500).json({ error: error.message });
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 });
 
@@ -287,6 +514,7 @@ router.get('/config/:id', async (req, res) => {
         const payload = jwt.verify(token, secret);
 
         const userEmail = payload.email;
+        req.user = { ...req.user, id: payload.sub, email: userEmail };
 
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.set('Pragma', 'no-cache');
@@ -294,6 +522,17 @@ router.get('/config/:id', async (req, res) => {
         res.set('Surrogate-Control', 'no-store');
 
         console.log(`[GET /config/:id] Request ID: ${id}, User: ${userEmail}`);
+
+        // Ensure columns exist in page_access_token_message (Migration on the fly)
+        try {
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS vision_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
+        } catch (e) {
+            console.warn("[Messenger] GET migration failed:", e.message);
+        }
 
         // Try lookup by page_id (String) first since that's what the frontend mostly sends
         const configByPageId = await pgClient.query(
@@ -320,7 +559,7 @@ router.get('/config/:id', async (req, res) => {
                         `INSERT INTO fb_message_database (page_id, text_prompt, engine_override, wait, image_send, image_detection, template)
                          VALUES ($1, $2, $3, $4, $5, $6, $7)
                          RETURNING *`,
-                        [id, 'You are a helpful sales assistant.', 'salesmanchatbot-flash', 2, true, true, true]
+                        [id, 'You are a helpful sales assistant.', 'salesmanchatbot-pro-plus', 2, true, true, true]
                     );
                     configRow = insertRes.rows[0];
                     console.log(`[GET /config/:id] Auto-created config for Page ID: ${id}`);
@@ -339,53 +578,33 @@ router.get('/config/:id', async (req, res) => {
         }
 
         const pageId = configRow.page_id;
+        const authorization = await requireMessengerResource(req, res, pageId, 'ai_settings', 'view');
+        if (!authorization) return;
 
         const pageResult = await pgClient.query(
-            'SELECT page_id, email, page_access_token, api_key, ai, chat_model, cheap_engine, custom_base_url FROM page_access_token_message WHERE page_id = $1',
+            'SELECT page_id, api_key, ai, chat_model, voice_model, vision_model, cheap_engine, custom_base_url, pro_plus_mode FROM page_access_token_message WHERE page_id = $1',
             [pageId]
         );
-
         const pageRow = pageResult.rows[0] || null;
 
-        let allowed = false;
-
-        // Case insensitive email check
-        if (pageRow && pageRow.email && pageRow.email.toLowerCase() === userEmail.toLowerCase()) {
-            allowed = true;
-        }
-
-        if (!allowed && userEmail) {
-            const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
-            );
-
-            for (const t of teamData) {
-                const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
-                    ? t.permissions.fb_pages
-                    : [];
-                if (pages.map(String).includes(String(pageId))) {
-                    allowed = true;
-                    break;
-                }
-            }
-        }
-
-        if (!allowed) {
-            console.warn(`[GET /config/:id] Forbidden. Page Owner: ${pageRow?.email}, User: ${userEmail}`);
-            return res.status(403).json({ error: 'Forbidden' });
-        }
-
-        // Merge credentials from page_access_token_message into configRow
         if (pageRow) {
             configRow = {
                 ...configRow,
                 api_key: pageRow.api_key || configRow.api_key,
                 ai_provider: pageRow.ai || configRow.ai_provider,
                 chat_model: pageRow.chat_model || configRow.chat_model,
+                voice_model: pageRow.voice_model || configRow.voice_model,
+                vision_model: pageRow.vision_model || configRow.vision_model,
                 cheap_engine: pageRow.cheap_engine !== undefined ? pageRow.cheap_engine : configRow.cheap_engine,
-                custom_base_url: pageRow.custom_base_url || configRow.custom_base_url
+                custom_base_url: pageRow.custom_base_url || configRow.custom_base_url,
+                pro_plus_mode: true // force enabled globally until code unlock changes it
             };
+        }
+
+        if (!authorization.isOwner) {
+            delete configRow.api_key;
+            delete configRow.page_access_token;
+            delete configRow.user_access_token;
         }
 
         res.json(configRow);
@@ -444,40 +663,8 @@ router.put('/config/:id', async (req, res) => {
 
         const pageId = configRow.page_id;
         const dbId = configRow.id;
-
-        // Check Permissions
-        const pageResult = await pgClient.query(
-            'SELECT page_id, email FROM page_access_token_message WHERE page_id = $1',
-            [pageId]
-        );
-        
-        const pageRow = pageResult.rows[0];
-        let allowed = false;
-
-        if (pageRow && pageRow.email && userEmail && pageRow.email.toLowerCase() === userEmail.toLowerCase()) {
-            allowed = true;
-        }
-
-        if (!allowed && userEmail) {
-            const { rows: teamData } = await pgClient.query(
-                'SELECT permissions FROM team_members WHERE member_email = $1 AND status = $2',
-                [userEmail, 'active']
-            );
-
-            for (const t of teamData) {
-                const pages = t.permissions && Array.isArray(t.permissions.fb_pages)
-                    ? t.permissions.fb_pages
-                    : [];
-                if (pages.map(String).includes(String(pageId))) {
-                    allowed = true;
-                    break;
-                }
-            }
-        }
-
-        if (!allowed) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
+        req.user = { ...req.user, id: payload.sub, email: userEmail };
+        if (!await requireMessengerResource(req, res, pageId, 'ai_settings', 'manage')) return;
 
         console.log(`[PUT /config/:id] Body:`, req.body);
 
@@ -488,7 +675,7 @@ router.put('/config/:id', async (req, res) => {
             'temperature', 'top_p',
             'memory_context_name', 'order_lock_minutes', 'audio_detection',
             'semantic_cache_enabled', 'semantic_cache_threshold', 'embed_enabled',
-            'order_email_confirmation_enabled', 'admin_notification_email',
+            'order_business_type', 'order_email_confirmation_enabled', 'admin_notification_email',
             'order_reminder_enabled', 'order_reminder_delay_hours', 'order_reminder_message'
         ];
 
@@ -514,6 +701,9 @@ router.put('/config/:id', async (req, res) => {
                     END IF;
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='embed_enabled') THEN
                         ALTER TABLE fb_message_database ADD COLUMN embed_enabled boolean DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_business_type') THEN
+                        ALTER TABLE fb_message_database ADD COLUMN order_business_type text DEFAULT 'ecommerce';
                     END IF;
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='fb_message_database' AND column_name='order_email_confirmation_enabled') THEN
                         ALTER TABLE fb_message_database ADD COLUMN order_email_confirmation_enabled boolean DEFAULT false;
@@ -607,6 +797,9 @@ router.put('/config/:id', async (req, res) => {
         try {
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS custom_base_url text`);
             await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS cheap_engine boolean DEFAULT false`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS voice_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS vision_model text`);
+            await pgClient.query(`ALTER TABLE page_access_token_message ADD COLUMN IF NOT EXISTS pro_plus_mode boolean DEFAULT false`);
         } catch (e) {
             console.warn("[Messenger] Failed to add migration columns:", e.message);
         }
@@ -614,12 +807,15 @@ router.put('/config/:id', async (req, res) => {
         // Map frontend fields to DB columns
         const aiProvider = req.body.ai_provider || req.body.ai || req.body.provider;
         const chatModel = req.body.chat_model || req.body.model || req.body.model_name;
+        const voiceModel = req.body.voice_model || req.body.audio_model;
+        const visionModel = req.body.vision_model || req.body.image_model;
         const apiKey = req.body.api_key;
         const pageAccessToken = req.body.page_access_token_message || req.body.page_access_token;
         const cheapEngine = req.body.cheap_engine;
         const customBaseUrl = req.body.custom_base_url;
+        const proPlusMode = true; // force enabled for all users until code unlock changes it
 
-        console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}`);
+        console.log(`[PUT /config/:id] Token Updates - API Key: ${apiKey ? 'Provided' : 'Missing'}, Provider: ${aiProvider}, Model: ${chatModel}, Voice Model: ${voiceModel || 'unchanged'}`);
 
         if (aiProvider !== undefined) {
             tokenUpdates.push(`ai = $${tIdx}`);
@@ -629,6 +825,16 @@ router.put('/config/:id', async (req, res) => {
         if (chatModel !== undefined) {
             tokenUpdates.push(`chat_model = $${tIdx}`);
             tokenValues.push(chatModel);
+            tIdx++;
+        }
+        if (voiceModel !== undefined) {
+            tokenUpdates.push(`voice_model = $${tIdx}`);
+            tokenValues.push(voiceModel);
+            tIdx++;
+        }
+        if (visionModel !== undefined) {
+            tokenUpdates.push(`vision_model = $${tIdx}`);
+            tokenValues.push(visionModel);
             tIdx++;
         }
         if (apiKey !== undefined) {
@@ -644,6 +850,11 @@ router.put('/config/:id', async (req, res) => {
         if (cheapEngine !== undefined) {
             tokenUpdates.push(`cheap_engine = $${tIdx}`);
             tokenValues.push(cheapEngine);
+            tIdx++;
+        }
+        if (proPlusMode !== undefined) {
+            tokenUpdates.push(`pro_plus_mode = $${tIdx}`);
+            tokenValues.push(false); // permanently locked; change in code when unlock is needed
             tIdx++;
         }
         // Always update custom_base_url (can be null)
@@ -673,8 +884,11 @@ router.put('/config/:id', async (req, res) => {
                         api_key: updatedTokenRow.api_key,
                         ai_provider: updatedTokenRow.ai,
                         chat_model: updatedTokenRow.chat_model,
+                        voice_model: updatedTokenRow.voice_model,
+                        vision_model: updatedTokenRow.vision_model,
                         cheap_engine: updatedTokenRow.cheap_engine,
-                        custom_base_url: updatedTokenRow.custom_base_url
+                        custom_base_url: updatedTokenRow.custom_base_url,
+                        pro_plus_mode: updatedTokenRow.pro_plus_mode
                      };
                 } else {
                     console.warn(`[PUT /config/:id] Failed to update token table for Page ${pageId}. Row not found?`);
@@ -756,7 +970,7 @@ router.delete('/pages/:pageId', async (req, res) => {
                 if (pageRow.page_access_token) {
                     try {
                         const axios = require('axios');
-                        await axios.delete(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`, {
+                        await axios.delete(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}/subscribed_apps`, {
                             params: { access_token: pageRow.page_access_token }
                         });
                         console.log(`[Facebook] App unsubscribed from page ${pageId}`);
@@ -777,39 +991,81 @@ router.delete('/pages/:pageId', async (req, res) => {
 });
 
 
+router.get('/order-states', authMiddleware, async (req, res) => {
+    try {
+        const pageId = String(req.query.page_id || '').trim();
+        const section = String(req.query.section || '').trim();
+        const from = req.query.from ? Number(req.query.from) : null;
+        const to = req.query.to ? Number(req.query.to) : null;
+        const limit = req.query.limit ? Number(req.query.limit) : 200;
+        if (!pageId) return res.status(400).json({ error: 'page_id is required' });
+        if (!await requireMessengerResource(req, res, pageId, 'orders', 'view_all')) return;
+
+        const rows = await orderService.listOrderStates({
+            platform: 'messenger',
+            pageId,
+            section: section || null,
+            from,
+            to,
+            limit
+        });
+        res.json(rows);
+    } catch (err) {
+        console.error('Messenger order states error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/orders', authMiddleware, async (req, res) => {
     try {
+        await ensureMessengerOrderColumns();
         const pageId = String(req.query.page_id || '').trim();
         const from = req.query.from ? Number(req.query.from) : null;
         const to = req.query.to ? Number(req.query.to) : null;
+        const businessType = String(req.query.business_type || '').trim().toLowerCase();
+        if (!pageId) return res.status(400).json({ error: 'page_id is required' });
 
-        if (!pageId) {
-            return res.status(400).json({ error: 'page_id is required' });
+        let authorization = await authorizeMessengerResource(req, pageId, 'orders', 'view_all');
+        let assignedOnly = false;
+        if (!authorization?.authorized) {
+            authorization = await authorizeMessengerResource(req, pageId, 'orders', 'view_assigned');
+            if (!authorization?.authorized) return res.status(403).json({ error: 'Forbidden' });
+            assignedOnly = !authorization.isOwner;
         }
 
-        const values = [pageId];
-        const conditions = ['page_id = $1'];
-        let idx = 2;
-
-        if (Number.isFinite(from)) {
-            conditions.push(`created_at >= to_timestamp($${idx} / 1000.0)`);
-            values.push(from);
+        const values = [authorization.resourceId, authorization.ownerEmail];
+        const conditions = ['o.page_id = $1'];
+        let idx = 3;
+        if (assignedOnly) {
+            conditions.push(`EXISTS (SELECT 1 FROM team_order_assignments toa WHERE LOWER(toa.owner_email) = LOWER($${idx}) AND toa.source = 'fb' AND toa.resource_id = $1 AND toa.order_identity = o.id::text AND LOWER(toa.member_email) = LOWER($${idx + 1}))`);
+            values.push(authorization.ownerEmail, authorization.membership.member_email);
+            idx += 2;
+        }
+        if (Number.isFinite(from)) { conditions.push(`o.created_at >= to_timestamp($${idx} / 1000.0)`); values.push(from); idx += 1; }
+        if (Number.isFinite(to)) { conditions.push(`o.created_at <= to_timestamp($${idx} / 1000.0)`); values.push(to); idx += 1; }
+        if (['ecommerce', 'service', 'appointment'].includes(businessType)) {
+            const typeAliases = businessType === 'service'
+                ? ['service', 'digital_service']
+                : businessType === 'ecommerce'
+                    ? ['ecommerce', 'physical_ecommerce']
+                    : ['appointment'];
+            conditions.push(`COALESCE(o.business_type, 'ecommerce') = ANY($${idx}::text[])`);
+            values.push(typeAliases);
             idx += 1;
         }
-        if (Number.isFinite(to)) {
-            conditions.push(`created_at <= to_timestamp($${idx} / 1000.0)`);
-            values.push(to);
-        }
 
-        const where = conditions.join(' AND ');
-        const queryText = `
-            SELECT id, product_name, number, location, product_quantity, price, created_at, sender_id, status, is_locked
-            FROM fb_order_tracking
-            WHERE ${where}
-            ORDER BY created_at DESC
-        `;
-
-        const result = await pgClient.query(queryText, values);
+        const result = await pgClient.query(`
+            SELECT o.id, o.product_name, o.number, o.location, o.product_quantity, o.price, o.created_at, o.sender_id, o.status, o.is_locked, o.customer_name,
+                   COALESCE(o.business_type, 'ecommerce') AS business_type, o.service_name, o.service_package, o.service_details, o.delivery_method,
+                   o.appointment_type, o.appointment_date, o.appointment_time, o.appointment_notes, o.assigned_to,
+                   (SELECT toa.member_email
+                    FROM team_order_assignments toa
+                    WHERE LOWER(toa.owner_email) = LOWER($2)
+                      AND toa.source = 'fb'
+                      AND toa.resource_id = $1
+                      AND toa.order_identity = o.id::text
+                    LIMIT 1) AS assigned_member_email
+            FROM fb_order_tracking o WHERE ${conditions.join(' AND ')} ORDER BY o.created_at DESC`, values);
         res.json(result.rows);
     } catch (err) {
         console.error('Messenger orders error:', err);
@@ -822,6 +1078,8 @@ router.get('/chats', authMiddleware, async (req, res) => {
         const pageId = String(req.query.page_id || '').trim();
         const from = req.query.from ? String(req.query.from) : null;
         const to = req.query.to ? String(req.query.to) : null;
+        const senderId = String(req.query.sender_id || '').trim();
+        const messageType = String(req.query.message_type || 'all').trim().toLowerCase();
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const offset = (page - 1) * limit;
@@ -833,6 +1091,17 @@ router.get('/chats', authMiddleware, async (req, res) => {
         if (!from || !to) {
             return res.status(400).json({ error: 'from and to are required ISO date strings' });
         }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
+
+        const senderFilterSql = senderId ? `AND (sender_id = $6 OR recipient_id = $6)` : '';
+        const aggregateSenderFilterSql = senderId ? `AND (sender_id = $4 OR recipient_id = $4)` : '';
+        const messageTypeFilterSql = buildMessageTypeFilter(messageType);
+        const baseParams = senderId
+            ? [pageId, from, to, limit, offset, senderId]
+            : [pageId, from, to, limit, offset];
+        const aggregateParams = senderId
+            ? [pageId, from, to, senderId]
+            : [pageId, from, to];
 
         // 1. Fetch Paginated Data
         const dataResult = await pgClient.query(
@@ -842,10 +1111,12 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
+              ${senderFilterSql}
+              ${messageTypeFilterSql}
             ORDER BY created_at DESC, timestamp DESC
             LIMIT $4 OFFSET $5
             `,
-            [pageId, from, to, limit, offset]
+            baseParams
         );
 
         // 2. Fetch Total Count for Pagination
@@ -856,8 +1127,10 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
+              ${aggregateSenderFilterSql}
+              ${messageTypeFilterSql}
             `,
-            [pageId, from, to]
+            aggregateParams
         );
 
         // 3. Fetch Filtered Stats (Total for the selected range)
@@ -871,8 +1144,10 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
+              ${aggregateSenderFilterSql}
+              ${messageTypeFilterSql}
             `,
-            [pageId, from, to]
+            aggregateParams
         );
 
         // 4. Fetch Token Breakdown for the range
@@ -883,11 +1158,13 @@ router.get('/chats', authMiddleware, async (req, res) => {
             WHERE page_id = $1
               AND (created_at >= $2::timestamptz OR timestamp >= EXTRACT(EPOCH FROM $2::timestamptz) * 1000)
               AND (created_at <= $3::timestamptz OR timestamp <= EXTRACT(EPOCH FROM $3::timestamptz) * 1000)
+              ${aggregateSenderFilterSql}
+              ${messageTypeFilterSql}
               AND reply_by = 'bot'
               AND token > 0
             GROUP BY ai_model
             `,
-            [pageId, from, to]
+            aggregateParams
         );
 
         const tokenBreakdown = {};
@@ -923,6 +1200,8 @@ router.get('/stats', authMiddleware, async (req, res) => {
             console.warn('[GET /stats] Missing page_id');
             return res.status(400).json({ error: 'page_id is required' });
         }
+
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'analytics')) return;
 
         console.log('[GET /stats] Querying reply count...');
         const replyResult = await pgClient.query(
@@ -960,13 +1239,23 @@ router.get('/stats', authMiddleware, async (req, res) => {
 
 router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
     try {
+        await ensureMessengerOrderColumns();
         const { id } = req.params;
         const { status } = req.body;
-        const allowedStatuses = ['ongoing', 'delivered', 'locked', 'cancelled'];
+        const allowedStatuses = ['pending', 'ongoing', 'delivered', 'locked', 'cancelled', 'new', 'in_progress', 'waiting_customer', 'completed', 'requested', 'confirmed', 'rescheduled', 'no_show'];
 
         if (!allowedStatuses.includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });
         }
+
+        const orderResult = await pgClient.query(
+            'SELECT page_id FROM fb_order_tracking WHERE id = $1 LIMIT 1',
+            [id]
+        );
+        if (orderResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        if (!await requireMessengerResource(req, res, orderResult.rows[0].page_id, 'orders', 'assign')) return;
 
         const isLocked = (status === 'delivered' || status === 'locked');
 
@@ -998,6 +1287,7 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
         if (!pageId || !from || !to) {
             return res.status(400).json({ error: 'page_id, from, and to are required' });
         }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
 
         const conversationHistory = await pgClient.query(
             `SELECT created_at, reply_by, text, sender_id FROM fb_chats WHERE page_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY sender_id, created_at ASC`,
@@ -1027,6 +1317,182 @@ router.get('/download-conversation', authMiddleware, async (req, res) => {
         console.error('Error downloading conversation:', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const { pageId } = req.params;
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
+        const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId, { limit });
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/messages/:pageId/:senderId', authMiddleware, async (req, res) => {
+    try {
+        const { pageId, senderId } = req.params;
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 10), 120);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
+        const { rows } = await pgClient.query(
+            `SELECT *
+             FROM (
+                SELECT
+                    id,
+                    message_id,
+                    CASE WHEN reply_by IN ('bot', 'admin', 'system') THEN 'me' ELSE sender_id END as from,
+                    text as body,
+                    COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) as timestamp,
+                    reply_by,
+                    status,
+                    (reply_by IN ('bot', 'system') OR status = 'reminder') as is_ai
+                FROM fb_chats
+                WHERE page_id = $1 AND (sender_id = $2 OR recipient_id = $2)
+                ORDER BY COALESCE(timestamp, EXTRACT(EPOCH FROM created_at) * 1000) DESC
+                LIMIT $3 OFFSET $4
+             ) recent_messages
+             ORDER BY timestamp ASC`,
+            [pageId, senderId, limit, offset]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.patch('/conversations/:pageId/:senderId/labels', authMiddleware, async (req, res) => {
+    try {
+        const { pageId, senderId } = req.params;
+        const { labelKey, active } = req.body || {};
+
+        if (typeof active !== 'boolean' || !labelKey) {
+            return res.status(400).json({ error: 'labelKey and boolean active are required' });
+        }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'reply')) return;
+
+        const updatedConversation = await upsertSmartInboxLabel(pgClient, {
+            platform: 'messenger',
+            resourceId: pageId,
+            senderId,
+            labelKey,
+            isActive: active
+        });
+
+        res.json({
+            success: true,
+            conversation: updatedConversation
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post('/send', authMiddleware, smartInboxUpload.single('image'), async (req, res) => {
+    try {
+        const { pageId, to } = req.body || {};
+        const message = String(req.body?.message || '').trim();
+
+        if (!pageId || !to || (!message && !req.file)) {
+            return res.status(400).json({ error: 'pageId, to and message or image are required' });
+        }
+        if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'reply')) return;
+
+        const pageConfig = await dbService.getPageConfig(String(pageId));
+        if (!pageConfig?.page_access_token) {
+            return res.status(400).json({ error: 'Messenger page access token not found' });
+        }
+
+        const sentParts = [];
+        if (req.file) {
+            const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+            const imageUrl = await imageService.uploadProductImage(req.file.buffer, req.file.mimetype, `smart-inbox/${String(pageId)}`, baseUrl);
+            const imageResponse = await facebookService.sendImageMessage(String(pageId), String(to), imageUrl, pageConfig.page_access_token);
+            const imageMessageId = imageResponse?.message_id || imageResponse?.messageId || `smart_inbox_admin_image_${Date.now()}`;
+            const imageText = `[Image Message]\n[Image URL]: ${imageUrl}${message ? `\n${message}` : ''}`;
+            await dbService.saveFbChat({
+                page_id: String(pageId),
+                sender_id: String(pageId),
+                recipient_id: String(to),
+                message_id: String(imageMessageId),
+                text: imageText,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin',
+                admin_user_id: req.user.id,
+                admin_email: String(req.user.email || '').trim().toLowerCase() || null
+            });
+            sentParts.push({ messageId: imageMessageId, imageUrl, body: imageText });
+        }
+
+        if (message) {
+            const response = await facebookService.sendMessage(String(pageId), String(to), message, pageConfig.page_access_token);
+            const messageId = response?.message_id || response?.messageId || `smart_inbox_admin_${Date.now()}`;
+            await dbService.saveFbChat({
+                page_id: String(pageId),
+                sender_id: String(pageId),
+                recipient_id: String(to),
+                message_id: String(messageId),
+                text: message,
+                timestamp: Date.now(),
+                status: 'sent',
+                reply_by: 'admin',
+                admin_user_id: req.user.id,
+                admin_email: String(req.user.email || '').trim().toLowerCase() || null
+            });
+            sentParts.push({ messageId, body: message });
+        }
+
+        res.json({
+            success: true,
+            message: {
+                message_id: sentParts[0]?.messageId || null,
+                from: 'me',
+                body: sentParts.map((part) => part.body).filter(Boolean).join('\n\n'),
+                timestamp: Date.now(),
+                reply_by: 'admin',
+                is_ai: false
+            },
+            sent: sentParts
+        });
+    } catch (err) {
+        console.error('Error sending Messenger smart inbox message:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/comment-automation/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.getConfig('messenger', page.page_id));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.put('/comment-automation/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.updateConfig('messenger', page.page_id, req.body));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.get('/post-mappings/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.listMappings('messenger', page.page_id));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/post-mappings/:pageId', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        res.json(await commentAutomationService.upsertMapping('messenger', page.page_id, req.body));
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 module.exports = router;

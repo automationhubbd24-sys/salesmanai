@@ -12,7 +12,7 @@ const StatsSection = () => {
   ];
 
   return (
-    <section className="py-20 bg-[#000000] relative overflow-hidden">
+    <section className="py-20 bg-[#050505] border-y border-white/5 relative overflow-hidden">
       <div className="container mx-auto px-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
           {stats.map((stat, index) => (
@@ -24,10 +24,10 @@ const StatsSection = () => {
               transition={{ delay: index * 0.1 }}
               className="text-center"
             >
-              <div className="text-3xl md:text-5xl font-black text-white mb-2 bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
+              <div className="text-3xl md:text-5xl font-black mb-2 bg-gradient-to-r from-[#00ff88] to-emerald-400 bg-clip-text text-transparent">
                 {stat.value}
               </div>
-              <div className="text-slate-400 text-sm font-medium uppercase tracking-wider">
+              <div className="text-slate-500 text-xs font-black uppercase tracking-[0.2em]">
                 {stat.label}
               </div>
             </motion.div>
