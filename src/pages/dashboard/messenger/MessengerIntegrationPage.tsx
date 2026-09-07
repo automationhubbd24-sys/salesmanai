@@ -580,7 +580,7 @@ export default function MessengerIntegrationPage() {
                     } else {
                         reject(new Error('User cancelled login or did not fully authorize.'));
                     }
-                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,business_management'});
+                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_read_user_engagement,pages_manage_engagement,pages_manage_metadata,business_management'});
             });
 
             console.log('Successfully logged in, exchanging token...');

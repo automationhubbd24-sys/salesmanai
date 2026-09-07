@@ -244,7 +244,7 @@ async function processCommentAutomationEvent(event) {
     try { await facebookService.deleteComment(commentId, accessToken); publicStatus = 'deleted'; } catch (error) { publicStatus = 'failed'; errors.push(`delete: ${error.message}`); }
   } else {
     if (decision.reaction !== 'NONE') {
-      try { await facebookService.reactToComment(commentId, decision.reaction, accessToken); reactionStatus = 'sent'; } catch (error) { reactionStatus = 'failed'; errors.push(`reaction: ${error.message}`); }
+      reactionStatus = 'unsupported';
     }
     if (decision.public_reply) {
       try { await facebookService.replyToComment(commentId, decision.public_reply, accessToken); publicStatus = 'sent'; } catch (error) { publicStatus = 'failed'; errors.push(`reply: ${error.message}`); }

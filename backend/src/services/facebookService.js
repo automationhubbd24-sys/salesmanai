@@ -404,7 +404,7 @@ async function sendCarouselMessage(pageId, recipientId, elements, accessToken) {
 async function replyToComment(commentId, message, accessToken) {
     try {
         // Public Reply (reply to the comment thread)
-        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}/comments?access_token=${accessToken}`;
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}?access_token=${accessToken}`;
         
         console.log(`Replying to comment ${commentId}`);
         const response = await axios.post(url, { message: message });
