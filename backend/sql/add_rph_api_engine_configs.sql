@@ -1,0 +1,3 @@
+ALTER TABLE api_engine_configs ADD COLUMN IF NOT EXISTS text_rph INT DEFAULT 0;
+ALTER TABLE api_engine_configs ADD COLUMN IF NOT EXISTS vision_rph INT DEFAULT 0;
+ALTER TABLE api_engine_configs ADD COLUMN IF NOT EXISTS voice_rph INT DEFAULT 0;
