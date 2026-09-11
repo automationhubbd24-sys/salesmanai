@@ -18,6 +18,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw, MessageSquare } from "lucide-react";
@@ -93,6 +94,7 @@ export default function MessengerOrderTrackingPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
+  const [orderView, setOrderView] = useState<'active' | 'draft'>('active');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const lastFetchParams = useRef("");
@@ -103,6 +105,9 @@ export default function MessengerOrderTrackingPage() {
 
   const activePageId = currentPage?.page_id || null;
   const activeDbId = currentPage?.db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_fb_db_id") || 0) : 0);
+  const draftOrders = orders.filter((order) => order.status === "pending" || order.status === "draft");
+  const activeOrders = orders.filter((order) => order.status !== "pending" && order.status !== "draft");
+  const visibleOrders = orderView === "draft" ? draftOrders : activeOrders;
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const token = localStorage.getItem("auth_token");
@@ -248,12 +253,12 @@ Phone: ${order.number || 'N/A'}`;
   }, [fetchOrders, activePageId]);
 
   const downloadCSV = () => {
-    if (!orders.length) {
+    if (!visibleOrders.length) {
       toast.error("No orders to export");
       return;
     }
 
-    const csvContent = getOrderExportRows(orders)
+    const csvContent = getOrderExportRows(visibleOrders)
       .map((row) => row.map(escapeCsvCell).join(","))
       .join("\r\n");
 
@@ -265,12 +270,12 @@ Phone: ${order.number || 'N/A'}`;
   };
 
   const downloadGoogleSheet = () => {
-    if (!orders.length) {
+    if (!visibleOrders.length) {
       toast.error("No orders to export");
       return;
     }
 
-    const tableRows = getOrderExportRows(orders)
+    const tableRows = getOrderExportRows(visibleOrders)
       .map((row) => `<tr>${row.map((cell) => `<td>${escapeSheetCell(cell)}</td>`).join("")}</tr>`)
       .join("");
     const sheetContent = `<!DOCTYPE html><html><head><meta charset="UTF-8" /></head><body><table>${tableRows}</table></body></html>`;
@@ -307,12 +312,20 @@ Phone: ${order.number || 'N/A'}`;
       <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)] border-l-4 border-l-[#00ff88]">
         <CardHeader>
            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                  <CardTitle className="flex items-center gap-2">
-                      <ShoppingBag className="h-5 w-5" />
-                      Order List
-                  </CardTitle>
-                  <CardDescription>All orders within the selected period.</CardDescription>
+              <div className="space-y-4">
+                  <div>
+                      <CardTitle className="flex items-center gap-2">
+                          <ShoppingBag className="h-5 w-5" />
+                          Order List
+                      </CardTitle>
+                      <CardDescription>Active orders and draft orders are separated for faster review.</CardDescription>
+                  </div>
+                  <Tabs value={orderView} onValueChange={(value) => setOrderView(value as 'active' | 'draft')}>
+                      <TabsList className="grid w-full grid-cols-2 bg-muted/40 sm:w-[360px]">
+                          <TabsTrigger value="active">Active Orders ({activeOrders.length})</TabsTrigger>
+                          <TabsTrigger value="draft">Draft Orders ({draftOrders.length})</TabsTrigger>
+                      </TabsList>
+                  </Tabs>
               </div>
               <div className="flex flex-wrap items-center gap-6">
                   <Select value={dateFilter} onValueChange={(val: 'today' | 'yesterday' | 'custom' | 'all') => setDateFilter(val)}>
@@ -373,6 +386,11 @@ Phone: ${order.number || 'N/A'}`;
                   <ShoppingBag className="mx-auto h-12 w-12 opacity-20 mb-3" />
                   <p>No orders found for the selected period.</p>
               </div>
+          ) : visibleOrders.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground border-2 border-dashed rounded-lg">
+                  <ShoppingBag className="mx-auto h-12 w-12 opacity-20 mb-3" />
+                  <p>No {orderView} orders found for the selected period.</p>
+              </div>
           ) : (
               <div className="rounded-md border overflow-hidden">
                   <Table>
@@ -391,7 +409,7 @@ Phone: ${order.number || 'N/A'}`;
                           </TableRow>
                       </TableHeader>
                       <TableBody>
-                          {orders.map((order) => (
+                          {visibleOrders.map((order) => (
                               <TableRow key={order.id} className="hover:bg-muted/50">
                                   <TableCell className="font-medium whitespace-nowrap">
                                       {format(new Date(order.created_at), "MMM d, HH:mm")}
@@ -427,6 +445,7 @@ Phone: ${order.number || 'N/A'}`;
                                     >
                                       <SelectTrigger className={cn(
                                         "w-[110px] h-8 text-xs font-medium border-none",
+                                        (order.status === 'pending' || order.status === 'draft') && "bg-orange-500/10 text-orange-500 hover:bg-orange-500/20",
                                         (order.status === 'ongoing' || !order.status) && "bg-[#00ff88]/10 text-[#00ff88] hover:bg-[#00ff88]/20",
                                         order.status === 'delivered' && "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20",
                                         order.status === 'locked' && "bg-red-500/10 text-red-500 hover:bg-red-500/20",
@@ -435,6 +454,7 @@ Phone: ${order.number || 'N/A'}`;
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
+                                        <SelectItem value="pending">Draft</SelectItem>
                                         <SelectItem value="ongoing">Ongoing</SelectItem>
                                         <SelectItem value="delivered">Delivered</SelectItem>
                                         <SelectItem value="locked">Locked</SelectItem>
