@@ -2148,6 +2148,22 @@ async function approveDepositTransaction(txn) {
     }
 }
 
+function isUsableOrderValue(value) {
+    if (value === null || value === undefined) return false;
+    const text = String(value).trim();
+    return Boolean(text) && !['pending', 'null', 'undefined', 'unknown', 'n/a'].includes(text.toLowerCase());
+}
+
+function getOrderLifecycleStatus({ product_name, number, location }) {
+    return isUsableOrderValue(product_name)
+        && product_name !== 'Recovered Lead'
+        && isUsableOrderValue(number)
+        && String(number).replace(/\D/g, '').length >= 8
+        && isUsableOrderValue(location)
+        ? 'ongoing'
+        : 'draft';
+}
+
 // 17. Save WhatsApp Order Tracking
 async function saveWhatsAppOrderTracking(orderData) {
     let { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, client } = orderData;
@@ -2183,9 +2199,15 @@ async function saveWhatsAppOrderTracking(orderData) {
 
         if (recentOrder.rows.length > 0) {
             const existing = recentOrder.rows[0];
-            const updates = [];
-            const values = [];
-            let idx = 1;
+            const mergedOrder = {
+                product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
+                number: number && number !== 'Pending' ? number : existing.number,
+                location: location && location !== 'N/A' && location !== 'Pending' && location !== '' ? location : existing.location
+            };
+            const nextStatus = getOrderLifecycleStatus(mergedOrder);
+            const updates = ['status = $1::text'];
+            const values = [nextStatus];
+            let idx = 2;
 
             if (product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending') {
                 updates.push(`product_name = $${idx++}::text`);
@@ -2233,17 +2255,18 @@ async function saveWhatsAppOrderTracking(orderData) {
             }
         }
 
-        if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
-            console.log(`[WA Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
+        if (!sender_id || !session_name) {
+            console.log(`[WA Order] Skipping New Order Creation: Missing identifiers (Session: ${session_name}, Sender: ${sender_id}).`);
             return null;
         }
 
+        const nextStatus = getOrderLifecycleStatus({ product_name, number, location });
         const result = await db.query(
             `INSERT INTO whatsapp_order_tracking
-                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text)
+                (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, status)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text, $10::text)
              RETURNING *`,
-            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null]
+            [session_name || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, customer_email || null, customer_name || null, nextStatus]
         );
         return { ...result.rows[0], isNew: true };
     } catch (error) {
@@ -2951,6 +2974,13 @@ async function saveOrderTracking(orderData) {
                                        !existing.location || existing.location === 'Pending';
 
                 console.log(`[Order] Found active recent order (${orderId}). Incomplete: ${isMissingDetails}. Updating...`);
+
+                const mergedOrder = {
+                    product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
+                    number: number && number !== 'Pending' && number !== 'null' ? number : existing.number,
+                    location: location && location !== 'N/A' && location !== 'Pending' && location !== 'null' && location !== '' ? location : existing.location
+                };
+                const nextStatus = getOrderLifecycleStatus(mergedOrder);
                 
                 await db.query(
                     `UPDATE fb_order_tracking SET
@@ -2986,26 +3016,23 @@ async function saveOrderTracking(orderData) {
                             WHEN $9::text IS NOT NULL AND $9::text <> '' THEN $9::text
                             ELSE customer_email
                         END,
+                        status = $10::text,
                         updated_at = NOW()
                      WHERE id = $7::bigint`,
-                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null]
+                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null, nextStatus]
                 );
                 return { id: orderId, status: 'updated', isNew: false };
             }
         }
 
-        // --- 3. NEW ORDER (Strict Requirement: Must have a phone number to start a new row) ---
-        if (!number || number === 'Pending' || number === 'null' || number.length < 8) {
-            console.log(`[Order] Skipping New Order Creation: Missing or invalid phone number (${number}).`);
-            return null;
-        }
-
+        // --- 3. NEW ORDER ---
+        const nextStatus = getOrderLifecycleStatus({ product_name, number, location });
         const result = await db.query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)
-             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), 'ongoing', FALSE, $9::text, $10::text)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, NOW(), $9::text, FALSE, $10::text, $11::text)
              RETURNING *`,
-            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderData.customer_name || null, customer_email || null]
+            [page_id || null, sender_id || null, product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, nextStatus, orderData.customer_name || null, customer_email || null]
         );
         return { ...result.rows[0], isNew: true };
 

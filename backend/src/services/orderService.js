@@ -104,10 +104,6 @@ async function orchestrateOrder(params) {
 
     // Handle Intent: Upsert (Create or Update)
     if (intent === 'upsert' || intent === 'order_create_or_update') {
-        const hasPhone = extracted.phone && extracted.phone.length >= 8;
-        
-        if (!hasPhone) return { status: 'NO_ACTION', reason: 'PHONE_REQUIRED' };
-
         let resolvedProductName = extracted.product_name || 'Recovered Lead';
         try {
             if ((!resolvedProductName || resolvedProductName === 'Recovered Lead') && extracted.product_id) {

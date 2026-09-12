@@ -569,7 +569,7 @@ router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        const allowedStatuses = ['pending', 'ongoing', 'delivered', 'locked', 'cancelled'];
+        const allowedStatuses = ['draft', 'pending', 'ongoing', 'delivered', 'locked', 'cancelled'];
 
         if (!allowedStatuses.includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });
