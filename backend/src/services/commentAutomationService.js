@@ -168,17 +168,31 @@ ${productSummary(products)}
 }
 
 function extractJson(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value) && ('delete_comment' in value || 'public_reply' in value || 'send_dm' in value)) return value;
-  const source = typeof value === 'string' ? value : (value?.reply_text || value?.reply || '');
+  if (value && typeof value === 'object' && !Array.isArray(value) && ('hide_comment' in value || 'delete_comment' in value || 'public_reply' in value || 'send_dm' in value)) return value;
+  const source = typeof value === 'string' ? value : (value?.reply_text || value?.reply || value?.message || value?.response || '');
   const text = String(source).replace(/```json\s*|```/gi, '').trim();
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try { return JSON.parse(match[0]); } catch { return null; }
 }
 
+function extractFallbackReply(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const text = value.reply_text || value.reply || value.message || value.response;
+    return typeof text === 'string' ? text.trim().slice(0, MAX_PUBLIC_REPLY_LENGTH) : '';
+  }
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.includes('"action"') || text.includes('"public_reply"')) return '';
+  return text.slice(0, MAX_PUBLIC_REPLY_LENGTH);
+}
+
 function normalizeCommentDecision(value) {
   const source = extractJson(value);
-  if (!source || typeof source !== 'object') return { action: 'SKIP', hide_comment: false, delete_comment: false, reaction: 'NONE', public_reply: '', send_dm: false, dm_message: '', reason: 'invalid_ai_decision' };
+  if (!source || typeof source !== 'object') {
+    const fallbackReply = extractFallbackReply(value);
+    if (fallbackReply) return { action: 'ENGAGE', hide_comment: false, delete_comment: false, reaction: 'LIKE', public_reply: fallbackReply, send_dm: false, dm_message: '', reason: 'fallback_reply_text' };
+    return { action: 'SKIP', hide_comment: false, delete_comment: false, reaction: 'NONE', public_reply: '', send_dm: false, dm_message: '', reason: 'invalid_ai_decision' };
+  }
   const action = String(source.action || 'ENGAGE').toUpperCase();
   const hideComment = source.hide_comment === true;
   const deleteComment = source.delete_comment === true;
