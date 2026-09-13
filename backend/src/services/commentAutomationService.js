@@ -190,7 +190,7 @@ function normalizeCommentDecision(value) {
   const source = extractJson(value);
   if (!source || typeof source !== 'object') {
     const fallbackReply = extractFallbackReply(value);
-    if (fallbackReply) return { action: 'ENGAGE', hide_comment: false, delete_comment: false, reaction: 'LIKE', public_reply: fallbackReply, send_dm: false, dm_message: '', reason: 'fallback_reply_text' };
+    if (fallbackReply) return { action: 'ENGAGE', hide_comment: false, delete_comment: false, reaction: 'NONE', public_reply: fallbackReply, send_dm: false, dm_message: '', reason: 'fallback_reply_text' };
     return { action: 'SKIP', hide_comment: false, delete_comment: false, reaction: 'NONE', public_reply: '', send_dm: false, dm_message: '', reason: 'invalid_ai_decision' };
   }
   const action = String(source.action || 'ENGAGE').toUpperCase();

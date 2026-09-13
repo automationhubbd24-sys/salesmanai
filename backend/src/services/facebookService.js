@@ -143,7 +143,7 @@ async function sendMessage(pageId, recipientId, text, accessToken) {
             return await sendWithRetry(payload);
         }
     } catch (error) {
-        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        const errData = attachFacebookError(error);
         console.error(`Error sending FB message for page ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         await handleFacebookError(error, pageId);
         throw error;
@@ -412,6 +412,15 @@ function formatFacebookError(error) {
     };
 }
 
+function attachFacebookError(error) {
+    const detail = formatFacebookError(error);
+    error.facebookError = detail;
+    if (detail && typeof detail === 'object') {
+        error.message = `Facebook API error${detail.code ? ` ${detail.code}` : ''}${detail.subcode ? `/${detail.subcode}` : ''}: ${detail.message || 'Unknown error'}`;
+    }
+    return detail;
+}
+
 // Reply to a Comment publicly
 async function replyToComment(commentId, message, accessToken) {
     try {
@@ -421,7 +430,7 @@ async function replyToComment(commentId, message, accessToken) {
         const response = await axios.post(url, { message });
         return response.data;
     } catch (error) {
-        const errData = formatFacebookError(error);
+        const errData = attachFacebookError(error);
         console.error(`Error replying to comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
@@ -439,7 +448,7 @@ async function reactToComment(commentId, reactionType, accessToken) {
         const response = await axios.post(url, { type });
         return response.data;
     } catch (error) {
-        const errData = formatFacebookError(error);
+        const errData = attachFacebookError(error);
         console.error(`Error reacting to comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
@@ -452,7 +461,7 @@ async function likeComment(commentId, accessToken) {
         const response = await axios.post(url);
         return response.data;
     } catch (error) {
-        const errData = formatFacebookError(error);
+        const errData = attachFacebookError(error);
         console.error(`Error liking comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
@@ -465,7 +474,7 @@ async function hideComment(commentId, accessToken, hidden = true) {
         const response = await axios.post(url, { is_hidden: hidden });
         return response.data;
     } catch (error) {
-        const errData = formatFacebookError(error);
+        const errData = attachFacebookError(error);
         console.error(`Error hiding comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
@@ -478,7 +487,7 @@ async function deleteComment(commentId, accessToken) {
         const response = await axios.delete(url);
         return response.data;
     } catch (error) {
-        const errData = formatFacebookError(error);
+        const errData = attachFacebookError(error);
         console.error(`Error deleting comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
