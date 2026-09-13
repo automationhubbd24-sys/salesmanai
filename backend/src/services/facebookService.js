@@ -493,6 +493,31 @@ async function deleteComment(commentId, accessToken) {
     }
 }
 
+async function listPagePosts(pageId, accessToken, { limit = 10, maxPages = 5 } = {}) {
+    const posts = [];
+    let url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}/feed`;
+    let params = {
+        fields: 'id,message,story,created_time,full_picture,picture,permalink_url',
+        limit,
+        access_token: accessToken
+    };
+
+    for (let page = 0; page < maxPages && url; page += 1) {
+        try {
+            const response = await axios.get(url, { params, timeout: 20000 });
+            posts.push(...(response.data?.data || []));
+            url = response.data?.paging?.next || null;
+            params = undefined;
+        } catch (error) {
+            const errData = error.response ? (error.response.data || 'No data') : error.message;
+            console.error(`Error listing page posts ${pageId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+            throw error;
+        }
+    }
+
+    return posts;
+}
+
 // Get Comment Replies (to check if already replied)
 async function getCommentReplies(commentId, accessToken) {
     try {
@@ -548,6 +573,7 @@ module.exports = {
     likeComment,
     hideComment,
     deleteComment,
+    listPagePosts,
     getCommentReplies,
     getUserProfile,
     getMessageById

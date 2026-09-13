@@ -1400,6 +1400,15 @@ router.get('/post-mappings/:pageId', authMiddleware, async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+router.post('/post-mappings/:pageId/sync', authMiddleware, async (req, res) => {
+    try {
+        const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+        if (!page.page_access_token) return res.status(400).json({ error: 'Page access token not found' });
+        res.json(await commentAutomationService.syncFacebookPosts('messenger', page.page_id, page.page_access_token));
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 router.post('/post-mappings/:pageId', authMiddleware, async (req, res) => {
     try {
         const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);

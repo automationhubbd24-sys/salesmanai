@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import {
   Bot,
   Check,
+  ExternalLink,
   Loader2,
   MessageCircle,
-  Plus,
   RefreshCw,
   Save,
   ShieldAlert,
@@ -31,14 +31,25 @@ type Mapping = {
   post_id: string;
   caption?: string;
   media_url?: string;
+  permalink_url?: string;
   product_ids: string[];
   is_active?: boolean;
+  auto_like?: boolean;
+  auto_like_children_comment?: boolean;
+  auto_reply?: boolean;
+  auto_reply_children_comment?: boolean;
+  auto_hidden?: boolean;
+  auto_comment?: boolean;
+  prompt_comment?: string;
+  post_created_at?: string;
 };
 type Decision = {
   action?: string;
   reason?: string;
-  reaction?: string;
-  delete_comment?: boolean;
+  auto_like?: boolean;
+  auto_reply?: boolean;
+  auto_hidden?: boolean;
+  auto_comment?: boolean;
 };
 type AutomationEvent = {
   id: number | string;
@@ -50,6 +61,7 @@ type AutomationEvent = {
   dm_status?: string;
   reaction_status?: string;
   reaction_type?: string;
+  moderation_status?: string;
   decision?: Decision;
   error_message?: string | null;
   created_at: string;
@@ -57,22 +69,56 @@ type AutomationEvent = {
 
 const defaultConfig: Config = {
   enabled: false,
-  system_prompt: "You are a social media comment automation assistant. Read the customer comment and the post/product context. Decide whether to reply publicly, send a private DM, react, delete, or skip. Use Bangla for customer-facing text. Never invent product price, stock, or features.",
+  system_prompt: "You are a social media comment automation assistant. Use Bangla for customer-facing text. Never invent product price, stock, or features.",
 };
+
+const defaultPromptComment = "Customer comment er upor base kore short, helpful Bangla reply dao. Post context/product info thakle sudhu oi information use korbe. Unknown hole polite vabe inbox korte bolo.";
+
+function emptyMapping(): Mapping {
+  return {
+    post_id: "",
+    caption: "",
+    media_url: "",
+    permalink_url: "",
+    product_ids: [],
+    is_active: true,
+    auto_like: false,
+    auto_like_children_comment: false,
+    auto_reply: false,
+    auto_reply_children_comment: false,
+    auto_hidden: false,
+    auto_comment: false,
+    prompt_comment: defaultPromptComment,
+  };
+}
 
 function AuditStatus({ label, value }: { label: string; value?: string }) {
   const normalized = value || "pending";
-  const variant = normalized === "sent" ? "default" : normalized === "deleted" || normalized === "failed" ? "destructive" : "secondary";
+  const variant = normalized === "sent" || normalized === "hidden" ? "default" : normalized === "failed" ? "destructive" : "secondary";
   return <Badge variant={variant} className="font-normal">{label}: {normalized}</Badge>;
+}
+
+function ToggleRow({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/20 p-3">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
 }
 
 export function CommentAutomationSettings({ platform, resourceId }: { platform: Platform; resourceId: string | null }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [savingPostId, setSavingPostId] = useState<string | null>(null);
   const [config, setConfig] = useState<Config>(defaultConfig);
   const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [mapping, setMapping] = useState<Mapping>({ post_id: "", caption: "", media_url: "", product_ids: [] });
+  const [newMapping, setNewMapping] = useState<Mapping>(emptyMapping());
   const [auditEvents, setAuditEvents] = useState<AutomationEvent[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const base = `${BACKEND_URL}/api/${platform}`;
@@ -151,23 +197,53 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
     }
   };
 
-  const saveMapping = async () => {
+  const syncPosts = async () => {
+    if (!resourceId) return;
+    if (platform !== "messenger") {
+      toast.info("Post sync আপাতত Facebook page এর জন্য enabled");
+      return;
+    }
+    setSyncing(true);
+    try {
+      const response = await fetch(`${base}/post-mappings/${resourceId}/sync`, {
+        method: "POST",
+        headers: headers(),
+      });
+      if (!response.ok) throw new Error("Page posts sync করা যায়নি");
+      const data = await response.json();
+      toast.success(`${data.synced || 0} ta post synced`);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Page posts sync করা যায়নি");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const saveMapping = async (mapping: Mapping, resetAfterSave = false) => {
     if (!resourceId || !mapping.post_id.trim()) {
       toast.error("Post / Media ID দিন");
       return;
     }
+    setSavingPostId(mapping.post_id);
     try {
       const response = await fetch(`${base}/post-mappings/${resourceId}`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify(mapping),
       });
-      if (!response.ok) throw new Error("Post mapping save করা যায়নি");
-      setMapping({ post_id: "", caption: "", media_url: "", product_ids: [] });
-      toast.success("Post mapping saved");
-      await load();
+      if (!response.ok) throw new Error("Post settings save করা যায়নি");
+      const saved = await response.json();
+      setMappings((current) => {
+        const exists = current.some((item) => item.post_id === saved.post_id);
+        return exists ? current.map((item) => item.post_id === saved.post_id ? saved : item) : [saved, ...current];
+      });
+      if (resetAfterSave) setNewMapping(emptyMapping());
+      toast.success("Post settings saved");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Post mapping save করা যায়নি");
+      toast.error(error instanceof Error ? error.message : "Post settings save করা যায়নি");
+    } finally {
+      setSavingPostId(null);
     }
   };
 
@@ -179,19 +255,24 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
         method: "DELETE",
         headers: headers(),
       });
-      if (!response.ok) throw new Error("Post mapping delete করা যায়নি");
+      if (!response.ok) throw new Error("Post settings delete করা যায়নি");
       setMappings((current) => current.filter((item) => item.post_id !== postId));
-      toast.success("Post mapping deleted");
+      toast.success("Post settings deleted");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Post mapping delete করা যায়নি");
+      toast.error(error instanceof Error ? error.message : "Post settings delete করা যায়নি");
     } finally {
       setDeletingPostId(null);
     }
   };
 
-  const updateMappingProducts = (value: string) => {
-    setMapping({ ...mapping, product_ids: value.split(",").map((item) => item.trim()).filter(Boolean) });
+  const updateMapping = (postId: string, patch: Partial<Mapping>) => {
+    setMappings((current) => current.map((item) => item.post_id === postId ? { ...item, ...patch } : item));
   };
+
+  const updateProducts = (mapping: Mapping, value: string): Mapping => ({
+    ...mapping,
+    product_ids: value.split(",").map((item) => item.trim()).filter(Boolean),
+  });
 
   if (!resourceId) return <Card><CardContent className="py-12 text-center text-muted-foreground">একটি {platform === "instagram" ? "Instagram account" : "Messenger page"} select করুন।</CardContent></Card>;
   if (loading) return <Card><CardContent className="flex justify-center py-12"><Loader2 className="animate-spin text-primary" /></CardContent></Card>;
@@ -207,10 +288,10 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
               <Badge variant={config.enabled ? "default" : "secondary"}>{config.enabled ? "Active" : "Paused"}</Badge>
             </div>
             <h1 className="text-2xl font-bold tracking-tight">Comment Automation</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">System prompt অনুযায়ী AI নিজে reply, DM, reaction, delete অথবা skip সিদ্ধান্ত নেবে।</p>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">n8n workflow-er moto post-wise true/false toggle diye auto like, reply, hide control korun.</p>
           </div>
           <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-right"><p className="text-sm font-medium">Master enable</p><p className="text-xs text-muted-foreground">সব automation চালু বা বন্ধ করুন</p></div>
+            <div className="text-right"><p className="text-sm font-medium">Master enable</p><p className="text-xs text-muted-foreground">সব automation চালু বা বন্ধ</p></div>
             <Switch checked={config.enabled} onCheckedChange={(enabled) => setConfig({ ...config, enabled })} aria-label="Enable comment automation" />
             <Button onClick={() => void saveConfig()} disabled={saving} size="lg" className="shrink-0 bg-primary text-black hover:bg-primary/90">
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save
@@ -221,48 +302,98 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
 
       <Card className="border-primary/10 bg-card/95">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5 text-primary" />Comment Automation System Prompt</CardTitle>
-          <CardDescription>এই prompt-ই AI-এর একমাত্র automation rulebook। আলাদা keyword, cooldown বা fixed reply rule নেই।</CardDescription>
+          <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5 text-primary" />Global AI Prompt</CardTitle>
+          <CardDescription>Eta global safety/system prompt. Proti post-er Prompt Comment alada set kora jabe.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
             <Label htmlFor="comment-automation-system-prompt">System prompt</Label>
-            <Textarea id="comment-automation-system-prompt" className="mt-1 min-h-72 text-sm leading-6" value={config.system_prompt} onChange={(event) => setConfig({ ...config, system_prompt: event.target.value })} />
+            <Textarea id="comment-automation-system-prompt" className="mt-1 min-h-32 text-sm leading-6" value={config.system_prompt} onChange={(event) => setConfig({ ...config, system_prompt: event.target.value })} />
           </div>
-          <div className="grid gap-3 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground md:grid-cols-2">
-            <p><Check className="mr-1 inline h-4 w-4 text-emerald-500" />আপনার prompt-এ কখন <strong>public reply</strong>, <strong>DM</strong>, <strong>reaction</strong>, <strong>delete</strong> অথবা <strong>skip</strong> করতে হবে লিখুন।</p>
-            <p><Check className="mr-1 inline h-4 w-4 text-emerald-500" />AI শুধু mapped product তথ্য ব্যবহার করবে; price, stock বা feature অনুমান করতে পারবে না।</p>
+          <Button onClick={() => void saveConfig()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save global prompt</Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle>Page posts & automation toggles</CardTitle>
+            <CardDescription>Post sync kore tarpor prottek post er jonno n8n Sheet-er true/false gula set korun.</CardDescription>
           </div>
-          <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">
-            Example: “দাম বা order সম্পর্কিত প্রশ্নে ভদ্রভাবে public reply দিন এবং বিস্তারিত DM করুন। abusive বা spam comment delete করুন। সাধারণ প্রশংসার comment-এ LOVE react দিন, দরকার হলে ছোট thank-you reply দিন। অনিশ্চিত হলে skip করুন।”
+          <Button variant="outline" onClick={() => void syncPosts()} disabled={syncing || platform !== "messenger"}>
+            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Sync posts
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="rounded-2xl border border-dashed p-4">
+            <h3 className="font-medium">Manual post add</h3>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div><Label>Post / media ID</Label><Input className="mt-1" value={newMapping.post_id} onChange={(event) => setNewMapping({ ...newMapping, post_id: event.target.value })} placeholder={platform === "instagram" ? "Instagram media ID" : "Facebook post ID"} /></div>
+              <div><Label>Product IDs</Label><Input className="mt-1" value={newMapping.product_ids.join(", ")} onChange={(event) => setNewMapping(updateProducts(newMapping, event.target.value))} placeholder="12, 15, 20" /></div>
+              <div><Label>Post caption / context</Label><Textarea className="mt-1" value={newMapping.caption} onChange={(event) => setNewMapping({ ...newMapping, caption: event.target.value })} /></div>
+              <div><Label>Prompt Comment</Label><Textarea className="mt-1" value={newMapping.prompt_comment} onChange={(event) => setNewMapping({ ...newMapping, prompt_comment: event.target.value })} /></div>
+            </div>
+            <Button className="mt-4" variant="outline" onClick={() => void saveMapping(newMapping, true)} disabled={savingPostId === newMapping.post_id}>
+              {savingPostId === newMapping.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}Add post
+            </Button>
+          </div>
+
+          <Separator />
+
+          <div className="grid gap-4">
+            {mappings.length === 0 ? <div className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No post found. Sync posts অথবা manual post add করুন।</div> : mappings.map((item) => (
+              <Card key={item.id || item.post_id} className="overflow-hidden">
+                <CardContent className="p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row">
+                    {item.media_url ? <img src={item.media_url} alt="Post media" className="h-28 w-full rounded-xl object-cover lg:w-40" /> : <div className="flex h-28 w-full items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground lg:w-40">No image</div>}
+                    <div className="min-w-0 flex-1 space-y-4">
+                      <div className="flex flex-col justify-between gap-3 sm:flex-row">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{item.post_id}</p>
+                          {item.post_created_at ? <p className="text-xs text-muted-foreground">{new Date(item.post_created_at).toLocaleString()}</p> : null}
+                          {item.caption ? <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{item.caption}</p> : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {item.permalink_url ? <Button variant="ghost" size="icon" asChild><a href={item.permalink_url} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /></a></Button> : null}
+                          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => void deleteMapping(item.post_id)} disabled={deletingPostId === item.post_id}>{deletingPostId === item.post_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <ToggleRow label="Auto Like" description="Top-level comment like korbe" checked={Boolean(item.auto_like)} onChange={(value) => updateMapping(item.post_id, { auto_like: value })} />
+                        <ToggleRow label="Auto Like Children Comment" description="Reply/child comment-o like korbe" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_like_children_comment: value })} />
+                        <ToggleRow label="Auto Reply" description="Top-level comment e AI reply dibe" checked={Boolean(item.auto_reply)} onChange={(value) => updateMapping(item.post_id, { auto_reply: value })} />
+                        <ToggleRow label="Auto Reply Children Comment" description="Reply/child comment e AI reply dibe" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_reply_children_comment: value })} />
+                        <ToggleRow label="Auto Hidden" description="Comment hide kore dibe" checked={Boolean(item.auto_hidden)} onChange={(value) => updateMapping(item.post_id, { auto_hidden: value })} />
+                        <ToggleRow label="Auto Comment" description="n8n sheet-er Auto Comment flag" checked={Boolean(item.auto_comment)} onChange={(value) => updateMapping(item.post_id, { auto_comment: value })} />
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div><Label>Product IDs</Label><Input className="mt-1" value={item.product_ids?.join(", ") || ""} onChange={(event) => updateMapping(item.post_id, updateProducts(item, event.target.value))} /></div>
+                        <div><Label>Active</Label><div className="mt-3"><Switch checked={item.is_active !== false} onCheckedChange={(value) => updateMapping(item.post_id, { is_active: value })} /></div></div>
+                        <div><Label>Post context</Label><Textarea className="mt-1" value={item.caption || ""} onChange={(event) => updateMapping(item.post_id, { caption: event.target.value })} /></div>
+                        <div><Label>Prompt Comment</Label><Textarea className="mt-1" value={item.prompt_comment || defaultPromptComment} onChange={(event) => updateMapping(item.post_id, { prompt_comment: event.target.value })} /></div>
+                      </div>
+
+                      <Button onClick={() => void saveMapping(item)} disabled={savingPostId === item.post_id}>
+                        {savingPostId === item.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save this post
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
-          <div><CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-primary" />Automation event audit</CardTitle><CardDescription>AI কী সিদ্ধান্ত নিয়েছে এবং কোন Meta action সফল হয়েছে দেখুন।</CardDescription></div>
+          <div><CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-primary" />Automation event audit</CardTitle><CardDescription>Kon comment e kon action hoyeche dekha jabe.</CardDescription></div>
           <Button variant="outline" size="sm" onClick={() => void loadAuditEvents()} disabled={auditLoading}>{auditLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Refresh</Button>
         </CardHeader>
         <CardContent>
-          {auditEvents.length === 0 ? <div className="rounded-xl border border-dashed py-7 text-center text-sm text-muted-foreground">এখনও দেখানোর মতো কোনো automation event নেই।</div> : <div className="space-y-3">{auditEvents.slice(0, 10).map((event) => <div key={event.id} className="rounded-xl border bg-muted/30 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="truncate font-medium">{event.comment_text || "Comment text পাওয়া যায়নি"}</p><p className="mt-1 text-xs text-muted-foreground">Comment: {event.comment_id}{event.post_id ? ` · Post: ${event.post_id}` : ""}</p>{event.product_ids?.length ? <p className="mt-1 text-xs text-muted-foreground">Products: {event.product_ids.join(", ")}</p> : null}{event.decision?.reason ? <p className="mt-1 text-xs text-muted-foreground">AI reason: {event.decision.reason}</p> : null}</div><span className="shrink-0 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div><div className="mt-3 flex flex-wrap gap-2"><AuditStatus label="Action" value={event.decision?.action} /><AuditStatus label="Reply" value={event.public_reply_status} /><AuditStatus label="DM" value={event.dm_status} /><AuditStatus label={event.reaction_type ? `React (${event.reaction_type})` : "React"} value={event.reaction_status} />{event.error_message ? <Badge variant="destructive" className="font-normal">Error: {event.error_message}</Badge> : null}</div></div>)}</div>}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Post & product mapping</CardTitle><CardDescription>এখানেই AI জানবে কোন post-এ কোন product আছে। Product IDs comma দিয়ে লিখুন।</CardDescription></CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div><Label>Post / media ID <span className="text-destructive">*</span></Label><Input className="mt-1" value={mapping.post_id} onChange={(event) => setMapping({ ...mapping, post_id: event.target.value })} placeholder={platform === "instagram" ? "Instagram media ID" : "Facebook post ID"} /></div>
-            <div><Label>Product IDs</Label><Input className="mt-1" value={mapping.product_ids.join(", ")} onChange={(event) => updateMappingProducts(event.target.value)} placeholder="12, 15, 20" /></div>
-            <div><Label>Post caption / context</Label><Textarea className="mt-1" value={mapping.caption} onChange={(event) => setMapping({ ...mapping, caption: event.target.value })} placeholder="যেমন: Red Panjabi Eid offer post — price 1200" /></div>
-            <div><Label>Media URL <span className="text-muted-foreground">(optional)</span></Label><Input className="mt-1" value={mapping.media_url} onChange={(event) => setMapping({ ...mapping, media_url: event.target.value })} placeholder="https://..." /></div>
-          </div>
-          <Button variant="outline" onClick={() => void saveMapping()}><Plus className="mr-2 h-4 w-4" />Add mapping</Button>
-          <Separator />
-          <div className="space-y-2">
-            {mappings.length === 0 ? <div className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No mappings yet. Add a post and its product IDs above.</div> : mappings.map((item) => <div key={item.id || item.post_id} className="flex items-start justify-between gap-3 rounded-xl border p-4"><div className="min-w-0"><p className="font-medium">{item.post_id}</p><p className="mt-1 text-xs text-muted-foreground">Products: {item.product_ids?.join(", ") || "No product linked"}</p>{item.caption && <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{item.caption}</p>}</div><Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-destructive" onClick={() => void deleteMapping(item.post_id)} disabled={deletingPostId === item.post_id} aria-label={`${item.post_id} mapping delete করুন`}>{deletingPostId === item.post_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button></div>)}
-          </div>
+          {auditEvents.length === 0 ? <div className="rounded-xl border border-dashed py-7 text-center text-sm text-muted-foreground">এখনও দেখানোর মতো কোনো automation event নেই।</div> : <div className="space-y-3">{auditEvents.slice(0, 10).map((event) => <div key={event.id} className="rounded-xl border bg-muted/30 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="truncate font-medium">{event.comment_text || "Comment text পাওয়া যায়নি"}</p><p className="mt-1 text-xs text-muted-foreground">Comment: {event.comment_id}{event.post_id ? ` · Post: ${event.post_id}` : ""}</p>{event.decision?.reason ? <p className="mt-1 text-xs text-muted-foreground">Reason: {event.decision.reason}</p> : null}</div><span className="shrink-0 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div><div className="mt-3 flex flex-wrap gap-2"><AuditStatus label="Action" value={event.decision?.action} /><AuditStatus label="Reply" value={event.public_reply_status} /><AuditStatus label={event.reaction_type ? `Like (${event.reaction_type})` : "Like"} value={event.reaction_status} /><AuditStatus label="Hide" value={event.moderation_status} />{event.error_message ? <Badge variant="destructive" className="font-normal">Error: {event.error_message}</Badge> : null}</div></div>)}</div>}
         </CardContent>
       </Card>
     </div>
