@@ -400,17 +400,28 @@ async function sendCarouselMessage(pageId, recipientId, elements, accessToken) {
     }
 }
 
-// Reply to a Comment (Private or Public)
+function formatFacebookError(error) {
+    const fbError = error.response?.data?.error;
+    if (!fbError) return error.response?.data || error.message;
+    return {
+        message: fbError.message,
+        type: fbError.type,
+        code: fbError.code,
+        subcode: fbError.error_subcode,
+        fbtrace_id: fbError.fbtrace_id
+    };
+}
+
+// Reply to a Comment publicly
 async function replyToComment(commentId, message, accessToken) {
     try {
-        // Public Reply (reply to the comment thread)
-        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}?access_token=${accessToken}`;
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}/comments?access_token=${accessToken}`;
         
         console.log(`Replying to comment ${commentId}`);
-        const response = await axios.post(url, { message: message });
+        const response = await axios.post(url, { message });
         return response.data;
     } catch (error) {
-        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        const errData = formatFacebookError(error);
         console.error(`Error replying to comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
@@ -428,8 +439,34 @@ async function reactToComment(commentId, reactionType, accessToken) {
         const response = await axios.post(url, { type });
         return response.data;
     } catch (error) {
-        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        const errData = formatFacebookError(error);
         console.error(`Error reacting to comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        throw error;
+    }
+}
+
+async function likeComment(commentId, accessToken) {
+    try {
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}/likes?access_token=${accessToken}`;
+        console.log(`Liking comment ${commentId}`);
+        const response = await axios.post(url);
+        return response.data;
+    } catch (error) {
+        const errData = formatFacebookError(error);
+        console.error(`Error liking comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        throw error;
+    }
+}
+
+async function hideComment(commentId, accessToken, hidden = true) {
+    try {
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}?access_token=${accessToken}`;
+        console.log(`${hidden ? 'Hiding' : 'Unhiding'} comment ${commentId}`);
+        const response = await axios.post(url, { is_hidden: hidden });
+        return response.data;
+    } catch (error) {
+        const errData = formatFacebookError(error);
+        console.error(`Error hiding comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
 }
@@ -441,7 +478,7 @@ async function deleteComment(commentId, accessToken) {
         const response = await axios.delete(url);
         return response.data;
     } catch (error) {
-        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        const errData = formatFacebookError(error);
         console.error(`Error deleting comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
         throw error;
     }
@@ -499,6 +536,8 @@ module.exports = {
     getConversationMessages,
     replyToComment,
     reactToComment,
+    likeComment,
+    hideComment,
     deleteComment,
     getCommentReplies,
     getUserProfile,

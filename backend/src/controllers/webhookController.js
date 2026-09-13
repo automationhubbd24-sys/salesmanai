@@ -5278,6 +5278,8 @@ async function processCommentEvent(changeValue, entryPageId = null) {
             commentId: changeValue?.comment_id || changeValue?.id,
             senderId: changeValue?.from?.id || changeValue?.sender_id,
             postId: changeValue?.post_id,
+            parentId: changeValue?.parent_id,
+            isReplyComment: Boolean(changeValue?.parent_id && changeValue?.post_id && changeValue.parent_id !== changeValue.post_id),
             message: changeValue?.message || changeValue?.text
         });
         // #endregion
@@ -5289,6 +5291,8 @@ async function processCommentEvent(changeValue, entryPageId = null) {
         const message = changeValue.message;
         const senderId = changeValue.from?.id;
         const postId = changeValue.post_id;
+        const parentId = changeValue.parent_id || postId;
+        const isReplyComment = Boolean(parentId && postId && parentId !== postId);
         const pageId = entryPageId || postId?.split('_')?.[0];
         if (!commentId || !senderId || !postId || !pageId || senderId === pageId) {
             reportCommentWebhookDebug('D', 'webhookController.processCommentEvent:4871', 'comment processor skipped missing/self fields', { commentId, senderId, postId, pageId, senderEqualsPage: senderId === pageId });
@@ -5306,11 +5310,13 @@ async function processCommentEvent(changeValue, entryPageId = null) {
             return;
         }
 
-        reportCommentWebhookDebug('C', 'webhookController.processCommentEvent:4876', 'comment automation dispatching', { pageId, postId, commentId, senderId, message });
+        reportCommentWebhookDebug('C', 'webhookController.processCommentEvent:4876', 'comment automation dispatching', { pageId, postId, parentId, isReplyComment, commentId, senderId, message });
         await commentAutomationService.processCommentAutomationEvent({
             platform: 'messenger',
             accountId: pageId,
             postId,
+            parentId,
+            isReplyComment,
             commentId,
             commenterId: senderId,
             commentText: message,
