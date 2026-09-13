@@ -231,6 +231,7 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
                 status
             FROM ${config.orderTable}
             WHERE ${config.resourceColumn} = $1
+              AND LOWER(COALESCE(status, '')) NOT IN ('draft', 'pending')
             ORDER BY sender_id, id DESC
         )
         SELECT
