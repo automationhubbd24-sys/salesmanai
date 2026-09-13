@@ -325,16 +325,32 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           </Button>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="rounded-2xl border border-dashed p-4">
-            <h3 className="font-medium">Manual post add</h3>
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
+            <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+              <div>
+                <h3 className="font-semibold">Manual post add + automation setup</h3>
+                <p className="text-sm text-muted-foreground">Backend-er sob true/false setting ekhanei select kore post save korun.</p>
+              </div>
+              <Badge variant="outline">n8n Sheet controls</Badge>
+            </div>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div><Label>Post / media ID</Label><Input className="mt-1" value={newMapping.post_id} onChange={(event) => setNewMapping({ ...newMapping, post_id: event.target.value })} placeholder={platform === "instagram" ? "Instagram media ID" : "Facebook post ID"} /></div>
               <div><Label>Product IDs</Label><Input className="mt-1" value={newMapping.product_ids.join(", ")} onChange={(event) => setNewMapping(updateProducts(newMapping, event.target.value))} placeholder="12, 15, 20" /></div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <ToggleRow label="Auto Like" description="Top-level comment like korbe" checked={Boolean(newMapping.auto_like)} onChange={(value) => setNewMapping({ ...newMapping, auto_like: value })} />
+              <ToggleRow label="Auto Like Children Comment" description="Reply/child comment-o like korbe" checked={Boolean(newMapping.auto_like_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_like_children_comment: value })} />
+              <ToggleRow label="Auto Reply" description="Top-level comment e AI reply dibe" checked={Boolean(newMapping.auto_reply)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply: value })} />
+              <ToggleRow label="Auto Reply Children Comment" description="Reply/child comment e AI reply dibe" checked={Boolean(newMapping.auto_reply_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply_children_comment: value })} />
+              <ToggleRow label="Auto Hidden" description="Comment hide kore dibe" checked={Boolean(newMapping.auto_hidden)} onChange={(value) => setNewMapping({ ...newMapping, auto_hidden: value })} />
+              <ToggleRow label="Auto Comment" description="n8n sheet-er Auto Comment flag" checked={Boolean(newMapping.auto_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_comment: value })} />
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div><Label>Post caption / context</Label><Textarea className="mt-1" value={newMapping.caption} onChange={(event) => setNewMapping({ ...newMapping, caption: event.target.value })} /></div>
               <div><Label>Prompt Comment</Label><Textarea className="mt-1" value={newMapping.prompt_comment} onChange={(event) => setNewMapping({ ...newMapping, prompt_comment: event.target.value })} /></div>
             </div>
-            <Button className="mt-4" variant="outline" onClick={() => void saveMapping(newMapping, true)} disabled={savingPostId === newMapping.post_id}>
-              {savingPostId === newMapping.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}Add post
+            <Button className="mt-4" onClick={() => void saveMapping(newMapping, true)} disabled={savingPostId === newMapping.post_id}>
+              {savingPostId === newMapping.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}Add post with settings
             </Button>
           </div>
 
