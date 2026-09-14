@@ -424,7 +424,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           <CardContent className="space-y-4">
             <div>
               <Label>Global Hide Instruction</Label>
-              <Textarea className="mt-1 min-h-32" value={config.hide_ai_instruction} onChange={(event) => setConfig({ ...config, hide_ai_instruction: event.target.value, hide_ai_enabled: true })} placeholder="Example: Hide abusive, vulgar, spam, scam, competitor promotion, or harmful comments. Hide obfuscated profanity like f u c k, f.u.c.k, or Banglish slang. Do not hide normal customer questions." />
+              <Textarea className="mt-1 min-h-32" value={config.hide_ai_instruction} onChange={(event) => setConfig({ ...config, hide_ai_instruction: event.target.value, hide_ai_enabled: true })} placeholder="Example: Hide fake negative reviews, false product-not-working claims, abusive/vulgar comments, competitor spam, scam, or market-down comments. Understand Bangla/Banglish/slang/obfuscated words. Do not hide normal customer questions." />
               <p className="mt-1 text-xs text-muted-foreground">Post-er Hide Comments ON thakle ei policy apply hobe. Keyword list lage na.</p>
             </div>
             <Button onClick={() => void saveConfig({ ...config, hide_ai_enabled: true })} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save hide policy</Button>

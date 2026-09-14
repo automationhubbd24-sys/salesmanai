@@ -124,18 +124,29 @@ function keywordMatches(commentText, keywords) {
 }
 
 function parseHideDecision(value) {
-  const raw = typeof value === 'string' ? value : (value?.reply || value?.text || value?.response || value?.message || '');
-  const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
+  const rawValue = typeof value === 'string' ? value : (value?.output ?? value?.hide ?? value?.reply ?? value?.text ?? value?.response ?? value?.message ?? '');
+  if (typeof rawValue === 'boolean') return { hide: rawValue, reason: rawValue ? 'ai_true' : 'ai_false' };
+
+  const cleaned = String(rawValue || '').replace(/```json|```/gi, '').trim();
+  const lowered = cleaned.toLowerCase();
+  if (['true', 'yes', 'hide'].includes(lowered)) return { hide: true, reason: 'ai_true' };
+  if (['false', 'no', 'skip', 'do not hide'].includes(lowered)) return { hide: false, reason: 'ai_false' };
+
   try {
     const parsed = JSON.parse(cleaned.match(/\{[\s\S]*\}/)?.[0] || cleaned);
-    return { hide: Boolean(parsed.hide), reason: String(parsed.reason || 'ai_decision').slice(0, 250) };
+    const decision = parsed.hide ?? parsed.hidden ?? parsed.output ?? parsed.shouldHide ?? parsed.should_hide;
+    if (typeof decision === 'boolean') return { hide: decision, reason: String(parsed.reason || (decision ? 'ai_true' : 'ai_false')).slice(0, 250) };
+    if (typeof decision === 'string') {
+      const normalized = decision.trim().toLowerCase();
+      if (['true', 'yes', 'hide'].includes(normalized)) return { hide: true, reason: String(parsed.reason || 'ai_true').slice(0, 250) };
+      if (['false', 'no', 'skip', 'do not hide'].includes(normalized)) return { hide: false, reason: String(parsed.reason || 'ai_false').slice(0, 250) };
+    }
   } catch (_) {
-    const lowered = cleaned.toLowerCase();
     if (/\bhide\b/.test(lowered) && !/\b(no|not|false|skip)\b/.test(lowered)) {
       return { hide: true, reason: 'ai_text_hide' };
     }
-    return { hide: false, reason: 'ai_parse_failed' };
   }
+  return { hide: false, reason: 'ai_parse_failed' };
 }
 
 function normalizeObfuscatedText(value) {
@@ -153,21 +164,26 @@ function normalizeObfuscatedText(value) {
 
 function buildHidePrompt({ commentText, postId, isReplyComment, caption, globalInstruction, postInstruction }) {
   const normalizedComment = normalizeObfuscatedText(commentText);
-  return `You are a strict Facebook comment moderation engine for a business page.
+  return `You are a Facebook comment moderation judge for a business page.
 
-Your only job: decide whether the customer comment should be hidden.
-Return ONLY valid JSON, no markdown, no explanation:
-{"hide":true,"reason":"short reason"}
+Task:
+Read the business owner's hide policy and the user's comment.
+If the comment matches the hide policy, output true.
+If the comment does not match the hide policy, output false.
 
-Hide policy from business owner:
-Global policy: ${globalInstruction || 'Hide abusive, vulgar, spam, scam, competitor promotion, or harmful comments.'}
+Output rule:
+Return ONLY one word: true or false.
+No markdown. No explanation.
+
+Business owner's hide policy:
+Global policy: ${globalInstruction || 'Hide abusive, vulgar, fake bad review, false product-not-working claim, spam, scam, competitor promotion, or harmful comments.'}
 Post policy: ${postInstruction || 'No extra post-specific policy.'}
 
 Important intelligence rules:
-- Understand Bangla, Banglish, English, slang, misspellings, and obfuscated profanity.
-- Treat variants like "fuck", "f u c k", "f.u.c.k", "f-u-c-k", "fu ck", and similar bypass attempts as the same abusive intent.
-- Hide if the user intent matches the hide policy even when exact keywords do not match.
-- Do not hide normal product questions, price questions, or genuine customer interest unless the policy explicitly says to hide them.
+- Understand Bangla, Banglish, English, slang, misspellings, sarcasm, and obfuscated words.
+- Detect same meaning even if exact keyword is not present.
+- Examples of hide-worthy intent if policy asks for it: fake negative review, "product kaj kore na", "service scam", abusive language, competitor spam.
+- Do not hide genuine customer questions, order questions, price questions, or real support requests unless the policy says to hide them.
 
 Context:
 Post ID: ${postId}
@@ -364,7 +380,7 @@ async function evaluateHideRules({ config, mapping, commentText, postId, isReply
       history: [],
       imageUrls: [],
       audioUrls: [],
-      config: { ...accountConfig, text_prompt: 'You are a strict comment moderation engine. Return only valid JSON with hide boolean and reason.' },
+      config: { ...accountConfig, text_prompt: 'You are a strict comment moderation judge. Return only one word: true or false.' },
       platform
     });
     const parsed = parseHideDecision(result);
