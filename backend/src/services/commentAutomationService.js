@@ -124,12 +124,16 @@ function keywordMatches(commentText, keywords) {
 }
 
 function parseHideDecision(value) {
-  const raw = typeof value === 'string' ? value : (value?.text || value?.response || value?.message || '');
+  const raw = typeof value === 'string' ? value : (value?.reply || value?.text || value?.response || value?.message || '');
   const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
   try {
     const parsed = JSON.parse(cleaned.match(/\{[\s\S]*\}/)?.[0] || cleaned);
     return { hide: Boolean(parsed.hide), reason: String(parsed.reason || 'ai_decision').slice(0, 250) };
   } catch (_) {
+    const lowered = cleaned.toLowerCase();
+    if (/\bhide\b/.test(lowered) && !/\b(no|not|false|skip)\b/.test(lowered)) {
+      return { hide: true, reason: 'ai_text_hide' };
+    }
     return { hide: false, reason: 'ai_parse_failed' };
   }
 }
