@@ -162,6 +162,40 @@ function normalizeObfuscatedText(value) {
     .replace(/[7]/g, 't');
 }
 
+function normalizeRepeatSignature(value) {
+  return normalizeObfuscatedText(value)
+    .replace(/[^a-z0-9\u0980-\u09ff]+/g, '')
+    .slice(0, 500);
+}
+
+function isSameRepeatComment(a, b) {
+  const left = normalizeRepeatSignature(a);
+  const right = normalizeRepeatSignature(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const longer = left.length >= right.length ? left : right;
+  const shorter = left.length >= right.length ? right : left;
+  return shorter.length >= 12 && longer.includes(shorter);
+}
+
+async function findRepeatedComment({ platform, accountId, postId, commenterId, commentId, commentText }) {
+  const { rows } = await pgClient.query(
+    `SELECT comment_id, comment_text, created_at
+     FROM comment_automation_events
+     WHERE platform = $1
+       AND account_id = $2
+       AND post_id = $3
+       AND commenter_id = $4
+       AND comment_id <> $5
+       AND created_at >= NOW() - INTERVAL '30 days'
+     ORDER BY created_at ASC
+     LIMIT 100`,
+    [platform, String(accountId), String(postId), String(commenterId), String(commentId)]
+  );
+  const repeats = rows.filter((row) => isSameRepeatComment(row.comment_text, commentText));
+  return { isRepeat: repeats.length > 0, repeatCount: repeats.length + 1, firstCommentId: repeats[0]?.comment_id || null };
+}
+
 function buildHidePrompt({ commentText, postId, isReplyComment, caption, globalInstruction, postInstruction }) {
   const normalizedComment = normalizeObfuscatedText(commentText);
   return `You are a Facebook comment moderation judge for a business page.
@@ -433,7 +467,12 @@ async function processCommentAutomationEvent(event) {
 
   const shouldLike = Boolean(mapping.auto_like) && (!isReplyComment || Boolean(mapping.auto_like_children_comment));
   const shouldReply = Boolean(mapping.auto_reply) && (!isReplyComment || Boolean(mapping.auto_reply_children_comment));
-  const hideDecision = await evaluateHideRules({ config, mapping, commentText, postId, isReplyComment, accountConfig: event.accountConfig, platform, accountId, commenterId });
+  const repeatDecision = Boolean(mapping.auto_hidden)
+    ? await findRepeatedComment({ platform, accountId, postId, commenterId, commentId, commentText })
+    : { isRepeat: false, repeatCount: 1, firstCommentId: null };
+  const hideDecision = repeatDecision.isRepeat
+    ? { shouldHide: true, reason: 'repeat_comment_memory', matchedKeywords: [], mode: 'comment_memory', aiHide: false, aiReason: `repeat_count:${repeatDecision.repeatCount}` }
+    : await evaluateHideRules({ config, mapping, commentText, postId, isReplyComment, accountConfig: event.accountConfig, platform, accountId, commenterId });
   const shouldHide = hideDecision.shouldHide;
   const errors = [];
   let publicStatus = 'skipped';
@@ -452,6 +491,9 @@ async function processCommentAutomationEvent(event) {
     hide_matched_keywords: hideDecision.matchedKeywords,
     hide_ai_enabled: Boolean(config.hide_ai_enabled) || Boolean(mapping.hide_ai_enabled),
     hide_ai_reason: hideDecision.aiReason,
+    repeat_comment: repeatDecision.isRepeat,
+    repeat_count: repeatDecision.repeatCount,
+    first_repeat_comment_id: repeatDecision.firstCommentId,
     reason: 'n8n_style_post_toggle_flow'
   };
 
