@@ -26,7 +26,6 @@ import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
 
 type Platform = "messenger" | "instagram";
-type HideMode = "all" | "keyword_or_ai" | "keyword_only" | "ai_only";
 type Config = {
   enabled: boolean;
   system_prompt: string;
@@ -52,7 +51,7 @@ type Mapping = {
   hide_keywords?: string[];
   hide_ai_instruction?: string;
   hide_ai_enabled?: boolean;
-  hide_match_mode?: HideMode;
+  hide_match_mode?: string;
   post_created_at?: string;
 };
 type Decision = {
@@ -92,12 +91,6 @@ const defaultConfig: Config = {
 };
 
 const defaultPromptComment = "Customer comment er upor base kore short, helpful Bangla reply dao. Post context/product info thakle sudhu oi information use korbe. Unknown hole polite vabe inbox korte bolo.";
-const hideModes: { value: HideMode; label: string }[] = [
-  { value: "keyword_or_ai", label: "Keyword or AI" },
-  { value: "keyword_only", label: "Keyword only" },
-  { value: "ai_only", label: "AI only" },
-  { value: "all", label: "Hide all" },
-];
 
 function emptyMapping(): Mapping {
   return {
@@ -116,18 +109,14 @@ function emptyMapping(): Mapping {
     prompt_comment: defaultPromptComment,
     hide_keywords: [],
     hide_ai_instruction: "",
-    hide_ai_enabled: false,
-    hide_match_mode: "keyword_or_ai",
+    hide_ai_enabled: true,
+    hide_match_mode: "llm_prompt",
   };
 }
 
 function normalizeKeywords(value: unknown): string[] {
   const list = Array.isArray(value) ? value : String(value || "").split(/[\n,]/);
   return list.map((item) => String(item || "").trim()).filter(Boolean);
-}
-
-function normalizeHideMode(value: unknown): HideMode {
-  return hideModes.some((mode) => mode.value === value) ? value as HideMode : "keyword_or_ai";
 }
 
 function normalizeMapping(item: Mapping): Mapping {
@@ -137,8 +126,8 @@ function normalizeMapping(item: Mapping): Mapping {
     is_active: item.is_active !== false,
     hide_keywords: normalizeKeywords(item.hide_keywords),
     hide_ai_instruction: item.hide_ai_instruction || "",
-    hide_ai_enabled: Boolean(item.hide_ai_enabled),
-    hide_match_mode: normalizeHideMode(item.hide_match_mode),
+    hide_ai_enabled: true,
+    hide_match_mode: "llm_prompt",
   };
 }
 
@@ -165,33 +154,16 @@ function HideRulesCard({ mapping, onChange }: { mapping: Mapping; onChange: (pat
   return (
     <Card className="border-amber-500/20 bg-amber-500/5">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Hide Rules</CardTitle>
-        <CardDescription>Hide-er jonno alada keyword and AI instruction. Reply prompt-er sathe mixed hobe na.</CardDescription>
+        <CardTitle className="text-base">AI Hide Rules</CardTitle>
+        <CardDescription>Hide ON korle AI ei instruction bujhe comment hide korbe. Keyword match-er upor depend korbe na.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <ToggleRow label="Hide Comments" description="Turn on comment hiding for this post" checked={Boolean(mapping.auto_hidden)} onChange={(value) => onChange({ auto_hidden: value })} />
-        {disabled ? <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">Hide rules use korte hole first Hide Comments enable korun.</p> : null}
-        <div className={disabled ? "pointer-events-none opacity-50" : "space-y-4"}>
-          <div>
-            <Label>Hide Mode</Label>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {hideModes.map((mode) => <Button key={mode.value} type="button" variant={(mapping.hide_match_mode || "keyword_or_ai") === mode.value ? "default" : "outline"} size="sm" onClick={() => onChange({ hide_match_mode: mode.value })}>{mode.label}</Button>)}
-            </div>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <Label>Post Hide Keywords</Label>
-              <Textarea className="mt-1 min-h-24" value={(mapping.hide_keywords || []).join(", ")} onChange={(event) => onChange({ hide_keywords: normalizeKeywords(event.target.value) })} placeholder="price, দাম কত, inbox price, fake" />
-              <p className="mt-1 text-xs text-muted-foreground">Comma ba new line diye multiple keyword likhun.</p>
-            </div>
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <Label>Use AI for this post</Label>
-                <Switch checked={Boolean(mapping.hide_ai_enabled)} onCheckedChange={(value) => onChange({ hide_ai_enabled: value })} />
-              </div>
-              <Textarea className="min-h-24" value={mapping.hide_ai_instruction || ""} onChange={(event) => onChange({ hide_ai_instruction: event.target.value })} placeholder="Hide comments that ask for price, use abusive language, promote competitors, or look like spam." />
-            </div>
-          </div>
+        <ToggleRow label="Hide Comments" description="Ei post-er comment hide decision AI nibe" checked={Boolean(mapping.auto_hidden)} onChange={(value) => onChange({ auto_hidden: value, hide_ai_enabled: true, hide_match_mode: "llm_prompt" })} />
+        {disabled ? <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">AI hide use korte hole first Hide Comments enable korun.</p> : null}
+        <div className={disabled ? "pointer-events-none space-y-2 opacity-50" : "space-y-2"}>
+          <Label>Hide Instruction</Label>
+          <Textarea className="min-h-28" value={mapping.hide_ai_instruction || ""} onChange={(event) => onChange({ hide_ai_instruction: event.target.value, hide_ai_enabled: true, hide_match_mode: "llm_prompt" })} placeholder="Example: Hide abusive, vulgar, spam, scam, competitor promotion, or harmful comments. Obfuscated words like f u c k / f.u.c.k / slang also hide korbe. Normal customer question hide korbe na." />
+          <p className="text-xs text-muted-foreground">AI exact keyword charao meaning, slang, spelling variation, dotted/spaced profanity bujhe decision nibe.</p>
         </div>
       </CardContent>
     </Card>
@@ -282,7 +254,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
       const response = await fetch(`${base}/comment-automation/${resourceId}`, {
         method: "PUT",
         headers: headers(),
-        body: JSON.stringify(nextConfig),
+        body: JSON.stringify({ ...nextConfig, hide_ai_enabled: true }),
       });
       if (!response.ok) throw new Error("Comment automation settings save করা যায়নি");
       const savedConfig = await response.json();
@@ -446,24 +418,16 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
 
         <Card className="border-amber-500/20 bg-amber-500/5">
           <CardHeader>
-            <CardTitle>Global Hide Rules</CardTitle>
-            <CardDescription>Common hide keywords and AI moderation instruction for all posts where Hide Comments is enabled.</CardDescription>
+            <CardTitle>Global AI Hide Policy</CardTitle>
+            <CardDescription>Common instruction for all posts where Hide Comments is enabled. AI will judge meaning, slang, and obfuscated words.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <Label>Hide Keywords</Label>
-              <Textarea className="mt-1 min-h-24" value={config.hide_keywords.join(", ")} onChange={(event) => setConfig({ ...config, hide_keywords: normalizeKeywords(event.target.value) })} placeholder="price, দাম কত, inbox price, fake, বাজে" />
-              <p className="mt-1 text-xs text-muted-foreground">Comma ba new line diye common keywords likhun.</p>
-            </div>
-            <div className="flex items-center justify-between rounded-xl border bg-background/60 p-3">
-              <div><p className="text-sm font-medium">Use AI Hide Decision</p><p className="text-xs text-muted-foreground">Keyword charao instruction bujhe hide decision nibe.</p></div>
-              <Switch checked={config.hide_ai_enabled} onCheckedChange={(hide_ai_enabled) => setConfig({ ...config, hide_ai_enabled })} />
-            </div>
-            <div>
               <Label>Global Hide Instruction</Label>
-              <Textarea className="mt-1 min-h-24" value={config.hide_ai_instruction} onChange={(event) => setConfig({ ...config, hide_ai_instruction: event.target.value })} placeholder="Hide comments asking for price, abusive language, competitor promotion, or spam. Do not hide genuine product questions unless they match this policy." />
+              <Textarea className="mt-1 min-h-32" value={config.hide_ai_instruction} onChange={(event) => setConfig({ ...config, hide_ai_instruction: event.target.value, hide_ai_enabled: true })} placeholder="Example: Hide abusive, vulgar, spam, scam, competitor promotion, or harmful comments. Hide obfuscated profanity like f u c k, f.u.c.k, or Banglish slang. Do not hide normal customer questions." />
+              <p className="mt-1 text-xs text-muted-foreground">Post-er Hide Comments ON thakle ei policy apply hobe. Keyword list lage na.</p>
             </div>
-            <Button onClick={() => void saveConfig()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save hide rules</Button>
+            <Button onClick={() => void saveConfig({ ...config, hide_ai_enabled: true })} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save hide policy</Button>
           </CardContent>
         </Card>
       </div>
@@ -551,7 +515,6 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                               <p className="max-w-[190px] truncate text-sm font-semibold sm:max-w-md">{item.post_id}</p>
                               <Badge variant={item.is_active === false ? "secondary" : "default"}>{item.is_active === false ? "Paused" : "Active"}</Badge>
                               {ruleCount > 0 ? <Badge variant="outline">{ruleCount} rules</Badge> : null}
-                              {item.hide_keywords?.length ? <Badge variant="outline">{item.hide_keywords.length} hide keywords</Badge> : null}
                             </div>
                             {item.post_created_at ? <p className="mt-1 text-xs text-muted-foreground">{new Date(item.post_created_at).toLocaleString()}</p> : null}
                             {item.caption ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground sm:text-sm">{item.caption}</p> : null}

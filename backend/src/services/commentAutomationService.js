@@ -138,18 +138,43 @@ function parseHideDecision(value) {
   }
 }
 
-function buildHidePrompt({ commentText, postId, isReplyComment, caption, globalInstruction, postInstruction, matchedKeywords }) {
-  return `You are a strict but conservative Facebook comment moderation assistant. Decide if the comment should be hidden based only on the hide rules below. Return only valid JSON like {"hide":true,"reason":"short reason"}.
+function normalizeObfuscatedText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[._\-\s]+/g, '')
+    .replace(/[@]/g, 'a')
+    .replace(/[0]/g, 'o')
+    .replace(/[1!|]/g, 'i')
+    .replace(/[3]/g, 'e')
+    .replace(/[4]/g, 'a')
+    .replace(/[5$]/g, 's')
+    .replace(/[7]/g, 't');
+}
 
-Global hide instruction: ${globalInstruction || 'None'}
-Post hide instruction: ${postInstruction || 'None'}
-Matched keywords: ${(matchedKeywords || []).join(', ') || 'None'}
+function buildHidePrompt({ commentText, postId, isReplyComment, caption, globalInstruction, postInstruction }) {
+  const normalizedComment = normalizeObfuscatedText(commentText);
+  return `You are a strict Facebook comment moderation engine for a business page.
+
+Your only job: decide whether the customer comment should be hidden.
+Return ONLY valid JSON, no markdown, no explanation:
+{"hide":true,"reason":"short reason"}
+
+Hide policy from business owner:
+Global policy: ${globalInstruction || 'Hide abusive, vulgar, spam, scam, competitor promotion, or harmful comments.'}
+Post policy: ${postInstruction || 'No extra post-specific policy.'}
+
+Important intelligence rules:
+- Understand Bangla, Banglish, English, slang, misspellings, and obfuscated profanity.
+- Treat variants like "fuck", "f u c k", "f.u.c.k", "f-u-c-k", "fu ck", and similar bypass attempts as the same abusive intent.
+- Hide if the user intent matches the hide policy even when exact keywords do not match.
+- Do not hide normal product questions, price questions, or genuine customer interest unless the policy explicitly says to hide them.
 
 Context:
 Post ID: ${postId}
 Is child/reply comment: ${isReplyComment ? 'yes' : 'no'}
 Post caption: ${caption || ''}
-Customer comment: ${commentText}`;
+Original customer comment: ${commentText}
+Normalized comment for bypass detection: ${normalizedComment}`;
 }
 
 async function getConfig(platform, accountId) {
@@ -320,51 +345,40 @@ function cleanReply(value) {
 }
 
 async function evaluateHideRules({ config, mapping, commentText, postId, isReplyComment, accountConfig, platform, accountId, commenterId }) {
-  const mode = normalizeHideMode(mapping?.hide_match_mode);
-  if (!mapping?.auto_hidden) return { shouldHide: false, reason: 'hide_disabled', matchedKeywords: [], mode, aiHide: false, aiReason: '' };
-  if (mode === 'all') return { shouldHide: true, reason: 'all_comments', matchedKeywords: [], mode, aiHide: false, aiReason: '' };
+  if (!mapping?.auto_hidden) return { shouldHide: false, reason: 'hide_disabled', matchedKeywords: [], mode: 'llm_prompt', aiHide: false, aiReason: '' };
 
-  const keywords = normalizeKeywords([...(config?.hide_keywords || []), ...(mapping?.hide_keywords || [])]);
-  const matchedKeywords = keywordMatches(commentText, keywords);
-  const keywordHide = matchedKeywords.length > 0;
-  const aiEnabled = mode !== 'keyword_only' && (Boolean(config?.hide_ai_enabled) || Boolean(mapping?.hide_ai_enabled));
   let aiHide = false;
   let aiReason = '';
-
-  if (aiEnabled) {
-    try {
-      const result = await aiService.generateResponse({
-        pageId: accountId,
-        userId: commenterId || 'comment_moderation',
-        userMessage: buildHidePrompt({
-          commentText,
-          postId,
-          isReplyComment,
-          caption: mapping?.caption || '',
-          globalInstruction: config?.hide_ai_instruction || '',
-          postInstruction: mapping?.hide_ai_instruction || '',
-          matchedKeywords
-        }),
-        history: [],
-        imageUrls: [],
-        audioUrls: [],
-        config: { ...accountConfig, text_prompt: 'Return only moderation JSON.' },
-        platform
-      });
-      const parsed = parseHideDecision(result);
-      aiHide = parsed.hide;
-      aiReason = parsed.reason;
-    } catch (error) {
-      aiReason = `ai_error: ${error.message}`;
-    }
+  try {
+    const result = await aiService.generateResponse({
+      pageId: accountId,
+      userId: commenterId || 'comment_moderation',
+      userMessage: buildHidePrompt({
+        commentText,
+        postId,
+        isReplyComment,
+        caption: mapping?.caption || '',
+        globalInstruction: config?.hide_ai_instruction || '',
+        postInstruction: mapping?.hide_ai_instruction || ''
+      }),
+      history: [],
+      imageUrls: [],
+      audioUrls: [],
+      config: { ...accountConfig, text_prompt: 'You are a strict comment moderation engine. Return only valid JSON with hide boolean and reason.' },
+      platform
+    });
+    const parsed = parseHideDecision(result);
+    aiHide = parsed.hide;
+    aiReason = parsed.reason;
+  } catch (error) {
+    aiReason = `ai_error: ${error.message}`;
   }
 
-  const shouldHide = mode === 'keyword_only' ? keywordHide : mode === 'ai_only' ? aiHide : keywordHide || aiHide;
   return {
-    shouldHide,
-    reason: shouldHide ? (keywordHide ? 'keyword_match' : 'ai_hide') : 'no_rule_match',
-    matchedKeywords,
-    mode,
+    shouldHide: aiHide,
+    reason: aiHide ? 'llm_policy_match' : 'llm_policy_no_match',
+    matchedKeywords: [],
+    mode: 'llm_prompt',
     aiHide,
     aiReason
   };
