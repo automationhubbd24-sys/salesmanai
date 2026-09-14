@@ -6,6 +6,7 @@ const facebookService = require('./facebookService');
 const DEFAULT_SYSTEM_PROMPT = `You are a social media comment automation assistant. Use Bangla for customer-facing text. Never invent product price, stock, or features.`;
 const DEFAULT_PROMPT_COMMENT = `Customer comment er upor base kore short, helpful Bangla reply dao. Post context/product info thakle sudhu oi information use korbe. Unknown hole polite vabe inbox korte bolo.`;
 const MAX_PUBLIC_REPLY_LENGTH = 1000;
+const HIDE_MODES = new Set(['all', 'keyword_or_ai', 'keyword_only', 'ai_only']);
 
 async function ensureTables() {
   await pgClient.query(`
@@ -15,6 +16,9 @@ async function ensureTables() {
       account_id TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       system_prompt TEXT NOT NULL DEFAULT '${DEFAULT_SYSTEM_PROMPT.replace(/'/g, "''")}',
+      hide_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      hide_ai_instruction TEXT NOT NULL DEFAULT '',
+      hide_ai_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       UNIQUE(platform, account_id)
@@ -36,6 +40,10 @@ async function ensureTables() {
       auto_hidden BOOLEAN NOT NULL DEFAULT FALSE,
       auto_comment BOOLEAN NOT NULL DEFAULT FALSE,
       prompt_comment TEXT NOT NULL DEFAULT '${DEFAULT_PROMPT_COMMENT.replace(/'/g, "''")}',
+      hide_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      hide_ai_instruction TEXT NOT NULL DEFAULT '',
+      hide_ai_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      hide_match_mode TEXT NOT NULL DEFAULT 'keyword_or_ai',
       post_created_at TIMESTAMP WITH TIME ZONE,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -68,6 +76,9 @@ async function ensureTables() {
   await pgClient.query(`
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS system_prompt TEXT NOT NULL DEFAULT '${DEFAULT_SYSTEM_PROMPT.replace(/'/g, "''")}';
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS hide_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS hide_ai_instruction TEXT NOT NULL DEFAULT '';
+    ALTER TABLE comment_automation_configs ADD COLUMN IF NOT EXISTS hide_ai_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS caption TEXT;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS media_url TEXT;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS permalink_url TEXT;
@@ -80,6 +91,10 @@ async function ensureTables() {
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS auto_hidden BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS auto_comment BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS prompt_comment TEXT NOT NULL DEFAULT '${DEFAULT_PROMPT_COMMENT.replace(/'/g, "''")}';
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_ai_instruction TEXT NOT NULL DEFAULT '';
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_ai_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_match_mode TEXT NOT NULL DEFAULT 'keyword_or_ai';
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS post_created_at TIMESTAMP WITH TIME ZONE;
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS reaction_status TEXT DEFAULT 'pending';
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS reaction_type TEXT;
@@ -93,10 +108,50 @@ function bool(value) {
   return value === true || value === 'true' || value === 1 || value === '1';
 }
 
+function normalizeKeywords(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[\n,]/);
+  return [...new Set(list.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))];
+}
+
+function normalizeHideMode(value) {
+  const mode = String(value || 'keyword_or_ai').trim();
+  return HIDE_MODES.has(mode) ? mode : 'keyword_or_ai';
+}
+
+function keywordMatches(commentText, keywords) {
+  const normalizedText = String(commentText || '').toLowerCase();
+  return normalizeKeywords(keywords).filter((keyword) => normalizedText.includes(keyword));
+}
+
+function parseHideDecision(value) {
+  const raw = typeof value === 'string' ? value : (value?.text || value?.response || value?.message || '');
+  const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
+  try {
+    const parsed = JSON.parse(cleaned.match(/\{[\s\S]*\}/)?.[0] || cleaned);
+    return { hide: Boolean(parsed.hide), reason: String(parsed.reason || 'ai_decision').slice(0, 250) };
+  } catch (_) {
+    return { hide: false, reason: 'ai_parse_failed' };
+  }
+}
+
+function buildHidePrompt({ commentText, postId, isReplyComment, caption, globalInstruction, postInstruction, matchedKeywords }) {
+  return `You are a strict but conservative Facebook comment moderation assistant. Decide if the comment should be hidden based only on the hide rules below. Return only valid JSON like {"hide":true,"reason":"short reason"}.
+
+Global hide instruction: ${globalInstruction || 'None'}
+Post hide instruction: ${postInstruction || 'None'}
+Matched keywords: ${(matchedKeywords || []).join(', ') || 'None'}
+
+Context:
+Post ID: ${postId}
+Is child/reply comment: ${isReplyComment ? 'yes' : 'no'}
+Post caption: ${caption || ''}
+Customer comment: ${commentText}`;
+}
+
 async function getConfig(platform, accountId) {
   await ensureTables();
   await pgClient.query(`INSERT INTO comment_automation_configs (platform, account_id) VALUES ($1, $2) ON CONFLICT (platform, account_id) DO NOTHING`, [platform, String(accountId)]);
-  const { rows } = await pgClient.query(`SELECT platform, account_id, enabled, system_prompt, created_at, updated_at FROM comment_automation_configs WHERE platform = $1 AND account_id = $2 LIMIT 1`, [platform, String(accountId)]);
+  const { rows } = await pgClient.query(`SELECT platform, account_id, enabled, system_prompt, hide_keywords, hide_ai_instruction, hide_ai_enabled, created_at, updated_at FROM comment_automation_configs WHERE platform = $1 AND account_id = $2 LIMIT 1`, [platform, String(accountId)]);
   return rows[0] || null;
 }
 
@@ -105,12 +160,15 @@ async function updateConfig(platform, accountId, input) {
   const current = await getConfig(platform, accountId);
   const enabled = input?.enabled === undefined ? Boolean(current?.enabled) : Boolean(input.enabled);
   const systemPrompt = String(input?.system_prompt || current?.system_prompt || DEFAULT_SYSTEM_PROMPT).trim() || DEFAULT_SYSTEM_PROMPT;
+  const hideKeywords = input?.hide_keywords === undefined ? normalizeKeywords(current?.hide_keywords || []) : normalizeKeywords(input.hide_keywords);
+  const hideAiInstruction = input?.hide_ai_instruction === undefined ? String(current?.hide_ai_instruction || '') : String(input.hide_ai_instruction || '').trim();
+  const hideAiEnabled = input?.hide_ai_enabled === undefined ? Boolean(current?.hide_ai_enabled) : bool(input.hide_ai_enabled);
   const { rows } = await pgClient.query(
-    `INSERT INTO comment_automation_configs (platform, account_id, enabled, system_prompt)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (platform, account_id) DO UPDATE SET enabled = EXCLUDED.enabled, system_prompt = EXCLUDED.system_prompt, updated_at = NOW()
-     RETURNING platform, account_id, enabled, system_prompt, created_at, updated_at`,
-    [platform, String(accountId), enabled, systemPrompt]
+    `INSERT INTO comment_automation_configs (platform, account_id, enabled, system_prompt, hide_keywords, hide_ai_instruction, hide_ai_enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (platform, account_id) DO UPDATE SET enabled = EXCLUDED.enabled, system_prompt = EXCLUDED.system_prompt, hide_keywords = EXCLUDED.hide_keywords, hide_ai_instruction = EXCLUDED.hide_ai_instruction, hide_ai_enabled = EXCLUDED.hide_ai_enabled, updated_at = NOW()
+     RETURNING platform, account_id, enabled, system_prompt, hide_keywords, hide_ai_instruction, hide_ai_enabled, created_at, updated_at`,
+    [platform, String(accountId), enabled, systemPrompt, hideKeywords, hideAiInstruction, hideAiEnabled]
   );
   return rows[0];
 }
@@ -125,11 +183,15 @@ async function upsertMapping(platform, accountId, data) {
   await ensureTables();
   const productIds = Array.isArray(data.product_ids) ? data.product_ids.map(String) : [];
   const promptComment = String(data.prompt_comment || DEFAULT_PROMPT_COMMENT).trim() || DEFAULT_PROMPT_COMMENT;
+  const hideKeywords = normalizeKeywords(data.hide_keywords || []);
+  const hideAiInstruction = String(data.hide_ai_instruction || '').trim();
+  const hideMatchMode = normalizeHideMode(data.hide_match_mode);
   const { rows } = await pgClient.query(
     `INSERT INTO social_post_product_mappings (
        platform, account_id, post_id, caption, media_url, permalink_url, product_ids, is_active,
-       auto_like, auto_like_children_comment, auto_reply, auto_reply_children_comment, auto_hidden, auto_comment, prompt_comment, post_created_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       auto_like, auto_like_children_comment, auto_reply, auto_reply_children_comment, auto_hidden, auto_comment, prompt_comment,
+       hide_keywords, hide_ai_instruction, hide_ai_enabled, hide_match_mode, post_created_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      ON CONFLICT (platform, account_id, post_id) DO UPDATE SET
        caption = COALESCE(EXCLUDED.caption, social_post_product_mappings.caption),
        media_url = COALESCE(EXCLUDED.media_url, social_post_product_mappings.media_url),
@@ -143,6 +205,10 @@ async function upsertMapping(platform, accountId, data) {
        auto_hidden = EXCLUDED.auto_hidden,
        auto_comment = EXCLUDED.auto_comment,
        prompt_comment = EXCLUDED.prompt_comment,
+       hide_keywords = EXCLUDED.hide_keywords,
+       hide_ai_instruction = EXCLUDED.hide_ai_instruction,
+       hide_ai_enabled = EXCLUDED.hide_ai_enabled,
+       hide_match_mode = EXCLUDED.hide_match_mode,
        post_created_at = COALESCE(EXCLUDED.post_created_at, social_post_product_mappings.post_created_at),
        updated_at = NOW()
      RETURNING *`,
@@ -162,6 +228,10 @@ async function upsertMapping(platform, accountId, data) {
       bool(data.auto_hidden),
       bool(data.auto_comment),
       promptComment,
+      hideKeywords,
+      hideAiInstruction,
+      bool(data.hide_ai_enabled),
+      hideMatchMode,
       data.post_created_at || null
     ]
   );
@@ -205,6 +275,10 @@ async function syncFacebookPosts(platform, accountId, accessToken) {
       auto_hidden: Boolean(current.auto_hidden),
       auto_comment: Boolean(current.auto_comment),
       prompt_comment: current.prompt_comment || DEFAULT_PROMPT_COMMENT,
+      hide_keywords: current.hide_keywords || [],
+      hide_ai_instruction: current.hide_ai_instruction || '',
+      hide_ai_enabled: Boolean(current.hide_ai_enabled),
+      hide_match_mode: current.hide_match_mode || 'keyword_or_ai',
       post_created_at: post.created_time || current.post_created_at || null
     }));
   }
@@ -241,6 +315,57 @@ function cleanReply(value) {
   return String(text || '').replace(/```[\s\S]*?```/g, '').trim().slice(0, MAX_PUBLIC_REPLY_LENGTH);
 }
 
+async function evaluateHideRules({ config, mapping, commentText, postId, isReplyComment, accountConfig, platform, accountId, commenterId }) {
+  const mode = normalizeHideMode(mapping?.hide_match_mode);
+  if (!mapping?.auto_hidden) return { shouldHide: false, reason: 'hide_disabled', matchedKeywords: [], mode, aiHide: false, aiReason: '' };
+  if (mode === 'all') return { shouldHide: true, reason: 'all_comments', matchedKeywords: [], mode, aiHide: false, aiReason: '' };
+
+  const keywords = normalizeKeywords([...(config?.hide_keywords || []), ...(mapping?.hide_keywords || [])]);
+  const matchedKeywords = keywordMatches(commentText, keywords);
+  const keywordHide = matchedKeywords.length > 0;
+  const aiEnabled = mode !== 'keyword_only' && (Boolean(config?.hide_ai_enabled) || Boolean(mapping?.hide_ai_enabled));
+  let aiHide = false;
+  let aiReason = '';
+
+  if (aiEnabled) {
+    try {
+      const result = await aiService.generateResponse({
+        pageId: accountId,
+        userId: commenterId || 'comment_moderation',
+        userMessage: buildHidePrompt({
+          commentText,
+          postId,
+          isReplyComment,
+          caption: mapping?.caption || '',
+          globalInstruction: config?.hide_ai_instruction || '',
+          postInstruction: mapping?.hide_ai_instruction || '',
+          matchedKeywords
+        }),
+        history: [],
+        imageUrls: [],
+        audioUrls: [],
+        config: { ...accountConfig, text_prompt: 'Return only moderation JSON.' },
+        platform
+      });
+      const parsed = parseHideDecision(result);
+      aiHide = parsed.hide;
+      aiReason = parsed.reason;
+    } catch (error) {
+      aiReason = `ai_error: ${error.message}`;
+    }
+  }
+
+  const shouldHide = mode === 'keyword_only' ? keywordHide : mode === 'ai_only' ? aiHide : keywordHide || aiHide;
+  return {
+    shouldHide,
+    reason: shouldHide ? (keywordHide ? 'keyword_match' : 'ai_hide') : 'no_rule_match',
+    matchedKeywords,
+    mode,
+    aiHide,
+    aiReason
+  };
+}
+
 async function updateEvent(platform, commentId, values) {
   await pgClient.query(
     `UPDATE comment_automation_events SET public_reply_status = $1, dm_status = $2, reaction_status = $3, reaction_type = $4, moderation_status = $5, public_reply_text = $6, dm_text = $7, decision = $8, error_message = $9, updated_at = NOW() WHERE platform = $10 AND comment_id = $11`,
@@ -274,7 +399,8 @@ async function processCommentAutomationEvent(event) {
 
   const shouldLike = Boolean(mapping.auto_like) && (!isReplyComment || Boolean(mapping.auto_like_children_comment));
   const shouldReply = Boolean(mapping.auto_reply) && (!isReplyComment || Boolean(mapping.auto_reply_children_comment));
-  const shouldHide = Boolean(mapping.auto_hidden);
+  const hideDecision = await evaluateHideRules({ config, mapping, commentText, postId, isReplyComment, accountConfig: event.accountConfig, platform, accountId, commenterId });
+  const shouldHide = hideDecision.shouldHide;
   const errors = [];
   let publicStatus = 'skipped';
   let reactionStatus = 'skipped';
@@ -287,6 +413,11 @@ async function processCommentAutomationEvent(event) {
     auto_reply: shouldReply,
     auto_hidden: shouldHide,
     auto_comment: Boolean(mapping.auto_comment),
+    hide_mode: hideDecision.mode,
+    hide_reason: hideDecision.reason,
+    hide_matched_keywords: hideDecision.matchedKeywords,
+    hide_ai_enabled: Boolean(config.hide_ai_enabled) || Boolean(mapping.hide_ai_enabled),
+    hide_ai_reason: hideDecision.aiReason,
     reason: 'n8n_style_post_toggle_flow'
   };
 

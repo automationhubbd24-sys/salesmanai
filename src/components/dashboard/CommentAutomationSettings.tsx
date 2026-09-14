@@ -26,9 +26,13 @@ import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
 
 type Platform = "messenger" | "instagram";
+type HideMode = "all" | "keyword_or_ai" | "keyword_only" | "ai_only";
 type Config = {
   enabled: boolean;
   system_prompt: string;
+  hide_keywords: string[];
+  hide_ai_instruction: string;
+  hide_ai_enabled: boolean;
 };
 type Mapping = {
   id?: number;
@@ -45,6 +49,10 @@ type Mapping = {
   auto_hidden?: boolean;
   auto_comment?: boolean;
   prompt_comment?: string;
+  hide_keywords?: string[];
+  hide_ai_instruction?: string;
+  hide_ai_enabled?: boolean;
+  hide_match_mode?: HideMode;
   post_created_at?: string;
 };
 type Decision = {
@@ -54,6 +62,10 @@ type Decision = {
   auto_reply?: boolean;
   auto_hidden?: boolean;
   auto_comment?: boolean;
+  hide_reason?: string;
+  hide_matched_keywords?: string[];
+  hide_mode?: string;
+  hide_ai_reason?: string;
 };
 type AutomationEvent = {
   id: number | string;
@@ -74,9 +86,18 @@ type AutomationEvent = {
 const defaultConfig: Config = {
   enabled: false,
   system_prompt: "You are a social media comment automation assistant. Use Bangla for customer-facing text. Never invent product price, stock, or features.",
+  hide_keywords: [],
+  hide_ai_instruction: "",
+  hide_ai_enabled: false,
 };
 
 const defaultPromptComment = "Customer comment er upor base kore short, helpful Bangla reply dao. Post context/product info thakle sudhu oi information use korbe. Unknown hole polite vabe inbox korte bolo.";
+const hideModes: { value: HideMode; label: string }[] = [
+  { value: "keyword_or_ai", label: "Keyword or AI" },
+  { value: "keyword_only", label: "Keyword only" },
+  { value: "ai_only", label: "AI only" },
+  { value: "all", label: "Hide all" },
+];
 
 function emptyMapping(): Mapping {
   return {
@@ -93,6 +114,31 @@ function emptyMapping(): Mapping {
     auto_hidden: false,
     auto_comment: false,
     prompt_comment: defaultPromptComment,
+    hide_keywords: [],
+    hide_ai_instruction: "",
+    hide_ai_enabled: false,
+    hide_match_mode: "keyword_or_ai",
+  };
+}
+
+function normalizeKeywords(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : String(value || "").split(/[\n,]/);
+  return list.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function normalizeHideMode(value: unknown): HideMode {
+  return hideModes.some((mode) => mode.value === value) ? value as HideMode : "keyword_or_ai";
+}
+
+function normalizeMapping(item: Mapping): Mapping {
+  return {
+    ...item,
+    product_ids: Array.isArray(item.product_ids) ? item.product_ids : [],
+    is_active: item.is_active !== false,
+    hide_keywords: normalizeKeywords(item.hide_keywords),
+    hide_ai_instruction: item.hide_ai_instruction || "",
+    hide_ai_enabled: Boolean(item.hide_ai_enabled),
+    hide_match_mode: normalizeHideMode(item.hide_match_mode),
   };
 }
 
@@ -111,6 +157,44 @@ function ToggleRow({ label, description, checked, onChange }: { label: string; d
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
+  );
+}
+
+function HideRulesCard({ mapping, onChange }: { mapping: Mapping; onChange: (patch: Partial<Mapping>) => void }) {
+  const disabled = !mapping.auto_hidden;
+  return (
+    <Card className="border-amber-500/20 bg-amber-500/5">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Hide Rules</CardTitle>
+        <CardDescription>Hide-er jonno alada keyword and AI instruction. Reply prompt-er sathe mixed hobe na.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <ToggleRow label="Hide Comments" description="Turn on comment hiding for this post" checked={Boolean(mapping.auto_hidden)} onChange={(value) => onChange({ auto_hidden: value })} />
+        {disabled ? <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">Hide rules use korte hole first Hide Comments enable korun.</p> : null}
+        <div className={disabled ? "pointer-events-none opacity-50" : "space-y-4"}>
+          <div>
+            <Label>Hide Mode</Label>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {hideModes.map((mode) => <Button key={mode.value} type="button" variant={(mapping.hide_match_mode || "keyword_or_ai") === mode.value ? "default" : "outline"} size="sm" onClick={() => onChange({ hide_match_mode: mode.value })}>{mode.label}</Button>)}
+            </div>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <Label>Post Hide Keywords</Label>
+              <Textarea className="mt-1 min-h-24" value={(mapping.hide_keywords || []).join(", ")} onChange={(event) => onChange({ hide_keywords: normalizeKeywords(event.target.value) })} placeholder="price, দাম কত, inbox price, fake" />
+              <p className="mt-1 text-xs text-muted-foreground">Comma ba new line diye multiple keyword likhun.</p>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <Label>Use AI for this post</Label>
+                <Switch checked={Boolean(mapping.hide_ai_enabled)} onCheckedChange={(value) => onChange({ hide_ai_enabled: value })} />
+              </div>
+              <Textarea className="min-h-24" value={mapping.hide_ai_instruction || ""} onChange={(event) => onChange({ hide_ai_instruction: event.target.value })} placeholder="Hide comments that ask for price, use abusive language, promote competitors, or look like spam." />
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -151,9 +235,15 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
         setConfig({
           enabled: Boolean(responseConfig.enabled),
           system_prompt: responseConfig.system_prompt || defaultConfig.system_prompt,
+          hide_keywords: normalizeKeywords(responseConfig.hide_keywords),
+          hide_ai_instruction: responseConfig.hide_ai_instruction || "",
+          hide_ai_enabled: Boolean(responseConfig.hide_ai_enabled),
         });
       }
-      if (mappingsResponse.ok) setMappings(await mappingsResponse.json());
+      if (mappingsResponse.ok) {
+        const data = await mappingsResponse.json();
+        setMappings(Array.isArray(data) ? data.map(normalizeMapping) : []);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Comment automation load করা যায়নি");
     } finally {
@@ -192,11 +282,17 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
       const response = await fetch(`${base}/comment-automation/${resourceId}`, {
         method: "PUT",
         headers: headers(),
-        body: JSON.stringify({ enabled: nextConfig.enabled, system_prompt: nextConfig.system_prompt }),
+        body: JSON.stringify(nextConfig),
       });
       if (!response.ok) throw new Error("Comment automation settings save করা যায়নি");
       const savedConfig = await response.json();
-      setConfig({ enabled: Boolean(savedConfig.enabled), system_prompt: savedConfig.system_prompt || defaultConfig.system_prompt });
+      setConfig({
+        enabled: Boolean(savedConfig.enabled),
+        system_prompt: savedConfig.system_prompt || defaultConfig.system_prompt,
+        hide_keywords: normalizeKeywords(savedConfig.hide_keywords),
+        hide_ai_instruction: savedConfig.hide_ai_instruction || "",
+        hide_ai_enabled: Boolean(savedConfig.hide_ai_enabled),
+      });
       toast.success("Comment automation settings saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Comment automation settings save করা যায়নি");
@@ -238,10 +334,10 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
       const response = await fetch(`${base}/post-mappings/${resourceId}`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify(mapping),
+        body: JSON.stringify(normalizeMapping(mapping)),
       });
       if (!response.ok) throw new Error("Post settings save করা যায়নি");
-      const saved = await response.json();
+      const saved = normalizeMapping(await response.json());
       setMappings((current) => {
         const exists = current.some((item) => item.post_id === saved.post_id);
         return exists ? current.map((item) => item.post_id === saved.post_id ? saved : item) : [saved, ...current];
@@ -294,7 +390,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
   const filteredMappings = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return mappings.filter((item) => {
-      const matchesQuery = !query || [item.post_id, item.caption, item.product_ids?.join(",")].some((value) => String(value || "").toLowerCase().includes(query));
+      const matchesQuery = !query || [item.post_id, item.caption, item.product_ids?.join(","), item.hide_keywords?.join(",")].some((value) => String(value || "").toLowerCase().includes(query));
       const matchesFilter = postFilter === "all" || (postFilter === "active" ? item.is_active !== false : item.is_active === false);
       return matchesQuery && matchesFilter;
     });
@@ -333,19 +429,44 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
         </div>
       </div>
 
-      <Card className="border-primary/10 bg-card/95">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5 text-primary" />Global AI Prompt</CardTitle>
-          <CardDescription>Set the default instruction used by the AI before generating public comment replies.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="comment-automation-system-prompt">System prompt</Label>
-            <Textarea id="comment-automation-system-prompt" className="mt-1 min-h-32 text-sm leading-6" value={config.system_prompt} onChange={(event) => setConfig({ ...config, system_prompt: event.target.value })} />
-          </div>
-          <Button onClick={() => void saveConfig()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save global prompt</Button>
-        </CardContent>
-      </Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="border-primary/10 bg-card/95">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5 text-primary" />Global AI Prompt</CardTitle>
+            <CardDescription>Default instruction used before generating public comment replies.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label htmlFor="comment-automation-system-prompt">System prompt</Label>
+              <Textarea id="comment-automation-system-prompt" className="mt-1 min-h-32 text-sm leading-6" value={config.system_prompt} onChange={(event) => setConfig({ ...config, system_prompt: event.target.value })} />
+            </div>
+            <Button onClick={() => void saveConfig()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save global prompt</Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-amber-500/20 bg-amber-500/5">
+          <CardHeader>
+            <CardTitle>Global Hide Rules</CardTitle>
+            <CardDescription>Common hide keywords and AI moderation instruction for all posts where Hide Comments is enabled.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label>Hide Keywords</Label>
+              <Textarea className="mt-1 min-h-24" value={config.hide_keywords.join(", ")} onChange={(event) => setConfig({ ...config, hide_keywords: normalizeKeywords(event.target.value) })} placeholder="price, দাম কত, inbox price, fake, বাজে" />
+              <p className="mt-1 text-xs text-muted-foreground">Comma ba new line diye common keywords likhun.</p>
+            </div>
+            <div className="flex items-center justify-between rounded-xl border bg-background/60 p-3">
+              <div><p className="text-sm font-medium">Use AI Hide Decision</p><p className="text-xs text-muted-foreground">Keyword charao instruction bujhe hide decision nibe.</p></div>
+              <Switch checked={config.hide_ai_enabled} onCheckedChange={(hide_ai_enabled) => setConfig({ ...config, hide_ai_enabled })} />
+            </div>
+            <div>
+              <Label>Global Hide Instruction</Label>
+              <Textarea className="mt-1 min-h-24" value={config.hide_ai_instruction} onChange={(event) => setConfig({ ...config, hide_ai_instruction: event.target.value })} placeholder="Hide comments asking for price, abusive language, competitor promotion, or spam. Do not hide genuine product questions unless they match this policy." />
+            </div>
+            <Button onClick={() => void saveConfig()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save hide rules</Button>
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -361,7 +482,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="pl-9" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search posts, captions, or product IDs" />
+              <Input className="pl-9" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search posts, captions, keywords, or product IDs" />
             </div>
             <div className="grid grid-cols-3 gap-2 sm:flex">
               {(["all", "active", "paused"] as const).map((filter) => <Button key={filter} variant={postFilter === filter ? "default" : "outline"} size="sm" onClick={() => setPostFilter(filter)} className="capitalize">{filter}</Button>)}
@@ -388,9 +509,9 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
               <ToggleRow label="Like Child Comments" description="Like replies under existing comments" checked={Boolean(newMapping.auto_like_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_like_children_comment: value })} />
               <ToggleRow label="Auto Reply" description="Reply to top-level comments with AI" checked={Boolean(newMapping.auto_reply)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply: value })} />
               <ToggleRow label="Reply Child Comments" description="Reply to nested comment threads" checked={Boolean(newMapping.auto_reply_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply_children_comment: value })} />
-              <ToggleRow label="Hide Comments" description="Automatically hide matching comments" checked={Boolean(newMapping.auto_hidden)} onChange={(value) => setNewMapping({ ...newMapping, auto_hidden: value })} />
               <ToggleRow label="Auto Comment" description="Enable post-level comment actions" checked={Boolean(newMapping.auto_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_comment: value })} />
             </div>
+            <div className="mt-4"><HideRulesCard mapping={newMapping} onChange={(patch) => setNewMapping({ ...newMapping, ...patch })} /></div>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <Card className="border-white/10 bg-background/60">
                 <CardHeader className="pb-3"><CardTitle className="text-base">Post Context</CardTitle><CardDescription>Post caption or product context for AI replies.</CardDescription></CardHeader>
@@ -430,6 +551,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                               <p className="max-w-[190px] truncate text-sm font-semibold sm:max-w-md">{item.post_id}</p>
                               <Badge variant={item.is_active === false ? "secondary" : "default"}>{item.is_active === false ? "Paused" : "Active"}</Badge>
                               {ruleCount > 0 ? <Badge variant="outline">{ruleCount} rules</Badge> : null}
+                              {item.hide_keywords?.length ? <Badge variant="outline">{item.hide_keywords.length} hide keywords</Badge> : null}
                             </div>
                             {item.post_created_at ? <p className="mt-1 text-xs text-muted-foreground">{new Date(item.post_created_at).toLocaleString()}</p> : null}
                             {item.caption ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground sm:text-sm">{item.caption}</p> : null}
@@ -448,7 +570,6 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                       </div>
                     </div>
                     <CollapsibleContent className="mt-4 space-y-4">
-
                       <div className="rounded-2xl border border-primary/25 bg-primary/5 p-4">
                         <div className="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
                           <div>
@@ -464,10 +585,11 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                           <ToggleRow label="Like Child Comments" description="Like replies under existing comments" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_like_children_comment: value })} />
                           <ToggleRow label="Auto Reply" description="Reply to top-level comments with AI" checked={Boolean(item.auto_reply)} onChange={(value) => updateMapping(item.post_id, { auto_reply: value })} />
                           <ToggleRow label="Reply Child Comments" description="Reply to nested comment threads" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_reply_children_comment: value })} />
-                          <ToggleRow label="Hide Comments" description="Automatically hide matching comments" checked={Boolean(item.auto_hidden)} onChange={(value) => updateMapping(item.post_id, { auto_hidden: value })} />
                           <ToggleRow label="Auto Comment" description="Enable post-level comment actions" checked={Boolean(item.auto_comment)} onChange={(value) => updateMapping(item.post_id, { auto_comment: value })} />
                         </div>
                       </div>
+
+                      <HideRulesCard mapping={item} onChange={(patch) => updateMapping(item.post_id, patch)} />
 
                       <div className="grid gap-4 md:grid-cols-2">
                         <div><Label>Product IDs</Label><Input className="mt-1" value={item.product_ids?.join(", ") || ""} onChange={(event) => updateMapping(item.post_id, updateProducts(item, event.target.value))} /></div>
@@ -483,6 +605,10 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                           <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Custom reply instruction for this post.</CardDescription></CardHeader>
                           <CardContent><Textarea className="min-h-28" value={item.prompt_comment || defaultPromptComment} onChange={(event) => updateMapping(item.post_id, { prompt_comment: event.target.value })} /></CardContent>
                         </Card>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <Button variant="ghost" className="text-muted-foreground hover:text-destructive" onClick={() => void deleteMapping(item.post_id)} disabled={deletingPostId === item.post_id}>{deletingPostId === item.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}Delete</Button>
+                        <Button onClick={() => void saveMapping(item)} disabled={savingPostId === item.post_id} className="bg-primary text-black hover:bg-primary/90">{savingPostId === item.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save All</Button>
                       </div>
                     </CollapsibleContent>
                   </CardContent>
@@ -500,7 +626,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           <Button variant="outline" size="sm" onClick={() => void loadAuditEvents()} disabled={auditLoading}>{auditLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Refresh</Button>
         </CardHeader>
         <CardContent>
-          {auditEvents.length === 0 ? <div className="rounded-xl border border-dashed py-7 text-center text-sm text-muted-foreground">এখনও দেখানোর মতো কোনো automation event নেই।</div> : <div className="space-y-3">{auditEvents.slice(0, 10).map((event) => <div key={event.id} className="rounded-xl border bg-muted/30 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="truncate font-medium">{event.comment_text || "Comment text পাওয়া যায়নি"}</p><p className="mt-1 text-xs text-muted-foreground">Comment: {event.comment_id}{event.post_id ? ` · Post: ${event.post_id}` : ""}</p>{event.decision?.reason ? <p className="mt-1 text-xs text-muted-foreground">Reason: {event.decision.reason}</p> : null}</div><span className="shrink-0 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div><div className="mt-3 flex flex-wrap gap-2"><AuditStatus label="Action" value={event.decision?.action} /><AuditStatus label="Reply" value={event.public_reply_status} /><AuditStatus label={event.reaction_type ? `Like (${event.reaction_type})` : "Like"} value={event.reaction_status} /><AuditStatus label="Hide" value={event.moderation_status} />{event.error_message ? <Badge variant="destructive" className="font-normal">Error: {event.error_message}</Badge> : null}</div></div>)}</div>}
+          {auditEvents.length === 0 ? <div className="rounded-xl border border-dashed py-7 text-center text-sm text-muted-foreground">এখনও দেখানোর মতো কোনো automation event নেই।</div> : <div className="space-y-3">{auditEvents.slice(0, 10).map((event) => <div key={event.id} className="rounded-xl border bg-muted/30 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="truncate font-medium">{event.comment_text || "Comment text পাওয়া যায়নি"}</p><p className="mt-1 text-xs text-muted-foreground">Comment: {event.comment_id}{event.post_id ? ` · Post: ${event.post_id}` : ""}</p>{event.decision?.reason ? <p className="mt-1 text-xs text-muted-foreground">Reason: {event.decision.reason}</p> : null}{event.decision?.hide_reason ? <p className="mt-1 text-xs text-muted-foreground">Hide reason: {event.decision.hide_reason}{event.decision.hide_matched_keywords?.length ? ` · Matched: ${event.decision.hide_matched_keywords.join(", ")}` : ""}</p> : null}</div><span className="shrink-0 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div><div className="mt-3 flex flex-wrap gap-2"><AuditStatus label="Action" value={event.decision?.action} /><AuditStatus label="Reply" value={event.public_reply_status} /><AuditStatus label={event.reaction_type ? `Like (${event.reaction_type})` : "Like"} value={event.reaction_status} /><AuditStatus label="Hide" value={event.moderation_status} />{event.error_message ? <Badge variant="destructive" className="font-normal">Error: {event.error_message}</Badge> : null}</div></div>)}</div>}
         </CardContent>
       </Card>
     </div>
