@@ -186,21 +186,26 @@ async function syncFacebookPosts(platform, accountId, accessToken) {
   const posts = await facebookService.listPagePosts(accountId, accessToken, { limit: 10, maxPages: 5 });
   const saved = [];
   for (const post of posts) {
+    const existing = await pgClient.query(
+      `SELECT * FROM social_post_product_mappings WHERE platform = $1 AND account_id = $2 AND post_id = $3 LIMIT 1`,
+      [platform, String(accountId), String(post.id)]
+    );
+    const current = existing.rows[0] || {};
     saved.push(await upsertMapping(platform, accountId, {
       post_id: post.id,
-      caption: post.message || post.story || '',
-      media_url: post.full_picture || post.picture || '',
-      permalink_url: post.permalink_url || '',
-      product_ids: [],
-      is_active: true,
-      auto_like: false,
-      auto_like_children_comment: false,
-      auto_reply: false,
-      auto_reply_children_comment: false,
-      auto_hidden: false,
-      auto_comment: false,
-      prompt_comment: DEFAULT_PROMPT_COMMENT,
-      post_created_at: post.created_time || null
+      caption: post.message || post.story || current.caption || '',
+      media_url: post.full_picture || post.picture || current.media_url || '',
+      permalink_url: post.permalink_url || current.permalink_url || '',
+      product_ids: current.product_ids || [],
+      is_active: current.is_active !== undefined ? current.is_active : true,
+      auto_like: Boolean(current.auto_like),
+      auto_like_children_comment: Boolean(current.auto_like_children_comment),
+      auto_reply: Boolean(current.auto_reply),
+      auto_reply_children_comment: Boolean(current.auto_reply_children_comment),
+      auto_hidden: Boolean(current.auto_hidden),
+      auto_comment: Boolean(current.auto_comment),
+      prompt_comment: current.prompt_comment || DEFAULT_PROMPT_COMMENT,
+      post_created_at: post.created_time || current.post_created_at || null
     }));
   }
   return { synced: saved.length, posts: saved };

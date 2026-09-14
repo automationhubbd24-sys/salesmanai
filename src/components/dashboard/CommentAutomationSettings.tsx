@@ -177,14 +177,14 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
     void loadAuditEvents();
   }, [platform, resourceId]);
 
-  const saveConfig = async () => {
+  const saveConfig = async (nextConfig = config) => {
     if (!resourceId) return;
     setSaving(true);
     try {
       const response = await fetch(`${base}/comment-automation/${resourceId}`, {
         method: "PUT",
         headers: headers(),
-        body: JSON.stringify({ enabled: config.enabled, system_prompt: config.system_prompt }),
+        body: JSON.stringify({ enabled: nextConfig.enabled, system_prompt: nextConfig.system_prompt }),
       });
       if (!response.ok) throw new Error("Comment automation settings save করা যায়নি");
       const savedConfig = await response.json();
@@ -269,6 +269,12 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
     setMappings((current) => current.map((item) => item.post_id === postId ? { ...item, ...patch } : item));
   };
 
+  const updateAndSaveMapping = (mapping: Mapping, patch: Partial<Mapping>) => {
+    const nextMapping = { ...mapping, ...patch };
+    updateMapping(mapping.post_id, patch);
+    void saveMapping(nextMapping);
+  };
+
   const updateProducts = (mapping: Mapping, value: string): Mapping => ({
     ...mapping,
     product_ids: value.split(",").map((item) => item.trim()).filter(Boolean),
@@ -292,7 +298,11 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           </div>
           <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
             <div className="text-right"><p className="text-sm font-medium">Master enable</p><p className="text-xs text-muted-foreground">সব automation চালু বা বন্ধ</p></div>
-            <Switch checked={config.enabled} onCheckedChange={(enabled) => setConfig({ ...config, enabled })} aria-label="Enable comment automation" />
+            <Switch checked={config.enabled} onCheckedChange={(enabled) => {
+              const nextConfig = { ...config, enabled };
+              setConfig(nextConfig);
+              void saveConfig(nextConfig);
+            }} aria-label="Enable comment automation" />
             <Button onClick={() => void saveConfig()} disabled={saving} size="lg" className="shrink-0 bg-primary text-black hover:bg-primary/90">
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save
             </Button>
@@ -376,12 +386,12 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                       </div>
 
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        <ToggleRow label="Auto Like" description="Top-level comment like korbe" checked={Boolean(item.auto_like)} onChange={(value) => updateMapping(item.post_id, { auto_like: value })} />
-                        <ToggleRow label="Auto Like Children Comment" description="Reply/child comment-o like korbe" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_like_children_comment: value })} />
-                        <ToggleRow label="Auto Reply" description="Top-level comment e AI reply dibe" checked={Boolean(item.auto_reply)} onChange={(value) => updateMapping(item.post_id, { auto_reply: value })} />
-                        <ToggleRow label="Auto Reply Children Comment" description="Reply/child comment e AI reply dibe" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_reply_children_comment: value })} />
-                        <ToggleRow label="Auto Hidden" description="Comment hide kore dibe" checked={Boolean(item.auto_hidden)} onChange={(value) => updateMapping(item.post_id, { auto_hidden: value })} />
-                        <ToggleRow label="Auto Comment" description="n8n sheet-er Auto Comment flag" checked={Boolean(item.auto_comment)} onChange={(value) => updateMapping(item.post_id, { auto_comment: value })} />
+                        <ToggleRow label="Auto Like" description="Top-level comment like korbe" checked={Boolean(item.auto_like)} onChange={(value) => updateAndSaveMapping(item, { auto_like: value })} />
+                        <ToggleRow label="Auto Like Children Comment" description="Reply/child comment-o like korbe" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateAndSaveMapping(item, { auto_like_children_comment: value })} />
+                        <ToggleRow label="Auto Reply" description="Top-level comment e AI reply dibe" checked={Boolean(item.auto_reply)} onChange={(value) => updateAndSaveMapping(item, { auto_reply: value })} />
+                        <ToggleRow label="Auto Reply Children Comment" description="Reply/child comment e AI reply dibe" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateAndSaveMapping(item, { auto_reply_children_comment: value })} />
+                        <ToggleRow label="Auto Hidden" description="Comment hide kore dibe" checked={Boolean(item.auto_hidden)} onChange={(value) => updateAndSaveMapping(item, { auto_hidden: value })} />
+                        <ToggleRow label="Auto Comment" description="n8n sheet-er Auto Comment flag" checked={Boolean(item.auto_comment)} onChange={(value) => updateAndSaveMapping(item, { auto_comment: value })} />
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
