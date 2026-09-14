@@ -287,13 +287,13 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
               <Badge variant={config.enabled ? "default" : "secondary"}>{config.enabled ? "Active" : "Paused"}</Badge>
             </div>
             <h1 className="text-2xl font-bold tracking-tight">Comment Automation</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">n8n workflow-er moto post-wise true/false toggle diye auto like, reply, hide control korun.</p>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Manage automated likes, replies, hidden comments, and child comment responses for each Facebook post.</p>
           </div>
-          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="text-right"><p className="text-sm font-medium">Master enable</p><p className="text-xs text-muted-foreground">সব automation চালু বা বন্ধ</p></div>
+          <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-right"><p className="text-sm font-medium">Comment Automation</p><p className="text-xs text-muted-foreground">Enable or pause all comment actions</p></div>
             <Switch checked={config.enabled} onCheckedChange={(enabled) => setConfig({ ...config, enabled })} aria-label="Enable comment automation" />
             <Button onClick={() => void saveConfig()} disabled={saving} size="lg" className="shrink-0 bg-primary text-black hover:bg-primary/90">
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save Changes
             </Button>
           </div>
         </div>
@@ -302,7 +302,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
       <Card className="border-primary/10 bg-card/95">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5 text-primary" />Global AI Prompt</CardTitle>
-          <CardDescription>Eta global safety/system prompt. Proti post-er Prompt Comment alada set kora jabe.</CardDescription>
+          <CardDescription>Set the default instruction used by the AI before generating public comment replies.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
@@ -316,8 +316,8 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>
-            <CardTitle>Page posts & automation toggles</CardTitle>
-            <CardDescription>Post sync kore tarpor prottek post er jonno n8n Sheet-er true/false gula set korun.</CardDescription>
+            <CardTitle>Facebook Posts</CardTitle>
+            <CardDescription>Sync page posts and configure automation rules for each post.</CardDescription>
           </div>
           <Button variant="outline" onClick={() => void syncPosts()} disabled={syncing || platform !== "messenger"}>
             {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Sync posts
@@ -327,26 +327,32 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
             <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
               <div>
-                <h3 className="font-semibold">Manual post add + automation setup</h3>
-                <p className="text-sm text-muted-foreground">Backend-er sob true/false setting ekhanei select kore post save korun.</p>
+                <h3 className="font-semibold">Add Post Manually</h3>
+                <p className="text-sm text-muted-foreground">Add a Facebook post ID and define its automation settings.</p>
               </div>
-              <Badge variant="outline">n8n Sheet controls</Badge>
+              <Badge variant="outline">Post Rules</Badge>
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div><Label>Post / media ID</Label><Input className="mt-1" value={newMapping.post_id} onChange={(event) => setNewMapping({ ...newMapping, post_id: event.target.value })} placeholder={platform === "instagram" ? "Instagram media ID" : "Facebook post ID"} /></div>
               <div><Label>Product IDs</Label><Input className="mt-1" value={newMapping.product_ids.join(", ")} onChange={(event) => setNewMapping(updateProducts(newMapping, event.target.value))} placeholder="12, 15, 20" /></div>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <ToggleRow label="Auto Like" description="Top-level comment like korbe" checked={Boolean(newMapping.auto_like)} onChange={(value) => setNewMapping({ ...newMapping, auto_like: value })} />
-              <ToggleRow label="Auto Like Children Comment" description="Reply/child comment-o like korbe" checked={Boolean(newMapping.auto_like_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_like_children_comment: value })} />
-              <ToggleRow label="Auto Reply" description="Top-level comment e AI reply dibe" checked={Boolean(newMapping.auto_reply)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply: value })} />
-              <ToggleRow label="Auto Reply Children Comment" description="Reply/child comment e AI reply dibe" checked={Boolean(newMapping.auto_reply_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply_children_comment: value })} />
-              <ToggleRow label="Auto Hidden" description="Comment hide kore dibe" checked={Boolean(newMapping.auto_hidden)} onChange={(value) => setNewMapping({ ...newMapping, auto_hidden: value })} />
-              <ToggleRow label="Auto Comment" description="n8n sheet-er Auto Comment flag" checked={Boolean(newMapping.auto_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_comment: value })} />
+              <ToggleRow label="Auto Like" description="Like top-level comments automatically" checked={Boolean(newMapping.auto_like)} onChange={(value) => setNewMapping({ ...newMapping, auto_like: value })} />
+              <ToggleRow label="Like Child Comments" description="Like replies under existing comments" checked={Boolean(newMapping.auto_like_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_like_children_comment: value })} />
+              <ToggleRow label="Auto Reply" description="Reply to top-level comments with AI" checked={Boolean(newMapping.auto_reply)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply: value })} />
+              <ToggleRow label="Reply Child Comments" description="Reply to nested comment threads" checked={Boolean(newMapping.auto_reply_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply_children_comment: value })} />
+              <ToggleRow label="Hide Comments" description="Automatically hide matching comments" checked={Boolean(newMapping.auto_hidden)} onChange={(value) => setNewMapping({ ...newMapping, auto_hidden: value })} />
+              <ToggleRow label="Auto Comment" description="Enable post-level comment actions" checked={Boolean(newMapping.auto_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_comment: value })} />
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <div><Label>Post caption / context</Label><Textarea className="mt-1" value={newMapping.caption} onChange={(event) => setNewMapping({ ...newMapping, caption: event.target.value })} /></div>
-              <div><Label>Prompt Comment</Label><Textarea className="mt-1" value={newMapping.prompt_comment} onChange={(event) => setNewMapping({ ...newMapping, prompt_comment: event.target.value })} /></div>
+              <Card className="border-white/10 bg-background/60">
+                <CardHeader className="pb-3"><CardTitle className="text-base">Post Context</CardTitle><CardDescription>Post caption or product context for AI replies.</CardDescription></CardHeader>
+                <CardContent><Textarea className="min-h-28" value={newMapping.caption} onChange={(event) => setNewMapping({ ...newMapping, caption: event.target.value })} /></CardContent>
+              </Card>
+              <Card className="border-white/10 bg-background/60">
+                <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Instruction used when generating replies for this post.</CardDescription></CardHeader>
+                <CardContent><Textarea className="min-h-28" value={newMapping.prompt_comment} onChange={(event) => setNewMapping({ ...newMapping, prompt_comment: event.target.value })} /></CardContent>
+              </Card>
             </div>
             <Button className="mt-4 bg-primary text-black hover:bg-primary/90" onClick={() => void saveMapping(newMapping, true)} disabled={savingPostId === newMapping.post_id}>
               {savingPostId === newMapping.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save post + toggles
@@ -356,7 +362,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           <Separator />
 
           <div className="grid gap-4">
-            {mappings.length === 0 ? <div className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No post found. Sync posts অথবা manual post add করুন।</div> : mappings.map((item) => (
+            {mappings.length === 0 ? <div className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No posts found. Sync your Facebook posts or add one manually.</div> : mappings.map((item) => (
               <Card key={item.id || item.post_id} className="overflow-hidden">
                 <CardContent className="p-4">
                   <div className="flex flex-col gap-4 lg:flex-row">
@@ -377,33 +383,38 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                       <div className="rounded-2xl border border-primary/25 bg-primary/5 p-4">
                         <div className="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
                           <div>
-                            <h4 className="font-semibold">Enable/disable automation</h4>
-                            <p className="text-xs text-muted-foreground">Button ON/OFF kore niche Save this post চাপলে setting save হবে।</p>
+                            <h4 className="font-semibold">Automation Rules</h4>
+                            <p className="text-xs text-muted-foreground">Choose which actions should run for this post.</p>
                           </div>
                           <Button onClick={() => void saveMapping(item)} disabled={savingPostId === item.post_id} className="bg-primary text-black hover:bg-primary/90">
-                            {savingPostId === item.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save toggles
+                            {savingPostId === item.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save Rules
                           </Button>
                         </div>
                         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                          <ToggleRow label="Auto Like" description="Top-level comment like korbe" checked={Boolean(item.auto_like)} onChange={(value) => updateMapping(item.post_id, { auto_like: value })} />
-                          <ToggleRow label="Auto Like Children Comment" description="Reply/child comment-o like korbe" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_like_children_comment: value })} />
-                          <ToggleRow label="Auto Reply" description="Top-level comment e AI reply dibe" checked={Boolean(item.auto_reply)} onChange={(value) => updateMapping(item.post_id, { auto_reply: value })} />
-                          <ToggleRow label="Auto Reply Children Comment" description="Reply/child comment e AI reply dibe" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_reply_children_comment: value })} />
-                          <ToggleRow label="Auto Hidden" description="Comment hide kore dibe" checked={Boolean(item.auto_hidden)} onChange={(value) => updateMapping(item.post_id, { auto_hidden: value })} />
-                          <ToggleRow label="Auto Comment" description="n8n sheet-er Auto Comment flag" checked={Boolean(item.auto_comment)} onChange={(value) => updateMapping(item.post_id, { auto_comment: value })} />
+                          <ToggleRow label="Auto Like" description="Like top-level comments automatically" checked={Boolean(item.auto_like)} onChange={(value) => updateMapping(item.post_id, { auto_like: value })} />
+                          <ToggleRow label="Like Child Comments" description="Like replies under existing comments" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_like_children_comment: value })} />
+                          <ToggleRow label="Auto Reply" description="Reply to top-level comments with AI" checked={Boolean(item.auto_reply)} onChange={(value) => updateMapping(item.post_id, { auto_reply: value })} />
+                          <ToggleRow label="Reply Child Comments" description="Reply to nested comment threads" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_reply_children_comment: value })} />
+                          <ToggleRow label="Hide Comments" description="Automatically hide matching comments" checked={Boolean(item.auto_hidden)} onChange={(value) => updateMapping(item.post_id, { auto_hidden: value })} />
+                          <ToggleRow label="Auto Comment" description="Enable post-level comment actions" checked={Boolean(item.auto_comment)} onChange={(value) => updateMapping(item.post_id, { auto_comment: value })} />
                         </div>
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
                         <div><Label>Product IDs</Label><Input className="mt-1" value={item.product_ids?.join(", ") || ""} onChange={(event) => updateMapping(item.post_id, updateProducts(item, event.target.value))} /></div>
-                        <div><Label>Active</Label><div className="mt-3"><Switch checked={item.is_active !== false} onCheckedChange={(value) => updateMapping(item.post_id, { is_active: value })} /></div></div>
-                        <div><Label>Post context</Label><Textarea className="mt-1" value={item.caption || ""} onChange={(event) => updateMapping(item.post_id, { caption: event.target.value })} /></div>
-                        <div><Label>Prompt Comment</Label><Textarea className="mt-1" value={item.prompt_comment || defaultPromptComment} onChange={(event) => updateMapping(item.post_id, { prompt_comment: event.target.value })} /></div>
+                        <div><Label>Post Active</Label><div className="mt-3"><Switch checked={item.is_active !== false} onCheckedChange={(value) => updateMapping(item.post_id, { is_active: value })} /></div></div>
                       </div>
 
-                      <Button onClick={() => void saveMapping(item)} disabled={savingPostId === item.post_id}>
-                        {savingPostId === item.post_id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save this post
-                      </Button>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Card className="border-white/10 bg-background/60">
+                          <CardHeader className="pb-3"><CardTitle className="text-base">Post Context</CardTitle><CardDescription>Post caption or product details used by the AI.</CardDescription></CardHeader>
+                          <CardContent><Textarea className="min-h-28" value={item.caption || ""} onChange={(event) => updateMapping(item.post_id, { caption: event.target.value })} /></CardContent>
+                        </Card>
+                        <Card className="border-white/10 bg-background/60">
+                          <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Custom reply instruction for this post.</CardDescription></CardHeader>
+                          <CardContent><Textarea className="min-h-28" value={item.prompt_comment || defaultPromptComment} onChange={(event) => updateMapping(item.post_id, { prompt_comment: event.target.value })} /></CardContent>
+                        </Card>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
