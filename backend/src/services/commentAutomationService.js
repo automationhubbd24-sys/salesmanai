@@ -470,6 +470,19 @@ async function updateEvent(platform, commentId, values) {
   );
 }
 
+async function insertSkippedEvent({ platform, accountId, postId, commentId, commenterId, commentText, isReplyComment, reason, errorMessage }) {
+  if (!platform || !accountId || !commentId) return;
+  await ensureTables();
+  const decision = { action: 'SKIP', reason, received_post_id: postId || null };
+  await pgClient.query(
+    `INSERT INTO comment_automation_events
+      (platform, account_id, post_id, comment_id, commenter_id, comment_text, product_ids, public_reply_status, dm_status, reaction_status, moderation_status, is_reply_comment, decision, error_message)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'skipped','skipped','skipped','skipped',$8,$9,$10)
+     ON CONFLICT (platform, comment_id) DO NOTHING`,
+    [platform, accountId, postId || null, commentId, commenterId || null, commentText || null, [], Boolean(isReplyComment), JSON.stringify(decision), errorMessage || reason]
+  );
+}
+
 async function processCommentAutomationEvent(event) {
   const platform = String(event.platform || '');
   const accountId = String(event.accountId || '');
@@ -480,16 +493,25 @@ async function processCommentAutomationEvent(event) {
   const commentText = String(event.commentText || '').trim();
   const accessToken = event.accessToken;
   const isReplyComment = Boolean(event.isReplyComment ?? (parentId && postId && parentId !== postId));
-  if (!platform || !accountId || !commentId || !commenterId || !postId || !accessToken) return { skipped: true, reason: 'missing_required_fields' };
+  if (!platform || !accountId || !commentId || !commenterId || !postId || !accessToken) {
+    await insertSkippedEvent({ platform, accountId, postId, commentId, commenterId, commentText, isReplyComment, reason: 'missing_required_fields' });
+    return { skipped: true, reason: 'missing_required_fields' };
+  }
 
   const config = await getConfig(platform, accountId);
-  if (!config?.enabled) return { skipped: true, reason: 'disabled' };
+  if (!config?.enabled) {
+    await insertSkippedEvent({ platform, accountId, postId, commentId, commenterId, commentText, isReplyComment, reason: 'automation_disabled' });
+    return { skipped: true, reason: 'disabled' };
+  }
   const existing = await pgClient.query(`SELECT id FROM comment_automation_events WHERE platform = $1 AND comment_id = $2 LIMIT 1`, [platform, commentId]);
   if (existing.rows[0]) return { skipped: true, reason: 'duplicate_comment' };
 
   const context = await findPostContext(platform, accountId, postId);
   const mapping = context.mapping;
-  if (!mapping?.is_active) return { skipped: true, reason: 'post_not_configured' };
+  if (!mapping?.is_active) {
+    await insertSkippedEvent({ platform, accountId, postId, commentId, commenterId, commentText, isReplyComment, reason: 'post_not_configured', errorMessage: `No active post mapping found for ${postId}` });
+    return { skipped: true, reason: 'post_not_configured' };
+  }
 
   const productIds = context.products.map((product) => String(product.id));
   await pgClient.query(`INSERT INTO comment_automation_events (platform, account_id, post_id, comment_id, commenter_id, comment_text, product_ids, is_reply_comment) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (platform, comment_id) DO NOTHING`, [platform, accountId, postId, commentId, commenterId, commentText, productIds, isReplyComment]);
