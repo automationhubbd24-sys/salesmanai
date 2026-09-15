@@ -467,6 +467,24 @@ async function likeComment(commentId, accessToken) {
     }
 }
 
+async function sendPrivateReply(commentId, message, accessToken) {
+    try {
+        const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}/private_replies`;
+        console.log(`Sending private reply for comment ${commentId}`);
+        const response = await axios.post(url, null, {
+            params: {
+                message,
+                access_token: accessToken
+            }
+        });
+        return response.data;
+    } catch (error) {
+        const errData = attachFacebookError(error);
+        console.error(`Error sending private reply for comment ${commentId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        throw error;
+    }
+}
+
 async function hideComment(commentId, accessToken, hidden = true) {
     try {
         const url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${commentId}`;
@@ -593,6 +611,7 @@ module.exports = {
     replyToComment,
     reactToComment,
     likeComment,
+    sendPrivateReply,
     hideComment,
     deleteComment,
     getPostDetails,

@@ -5,7 +5,9 @@ const facebookService = require('./facebookService');
 
 const DEFAULT_SYSTEM_PROMPT = `You are a social media comment automation assistant. Use Bangla for customer-facing text. Never invent product price, stock, or features.`;
 const DEFAULT_PROMPT_COMMENT = `Customer comment er upor base kore short, helpful Bangla reply dao. Post context/product info thakle sudhu oi information use korbe. Unknown hole polite vabe inbox korte bolo.`;
+const DEFAULT_PROMPT_DM = `Customer comment er upor base kore private inbox message dao. Product context ba mapped product info thakle price/details/order instruction clear kore bolo. Unknown hole politely customer-er question ask koro.`;
 const MAX_PUBLIC_REPLY_LENGTH = 1000;
+const MAX_DM_REPLY_LENGTH = 2000;
 const HIDE_MODES = new Set(['all', 'keyword_or_ai', 'keyword_only', 'ai_only']);
 
 async function ensureTables() {
@@ -39,7 +41,9 @@ async function ensureTables() {
       auto_reply_children_comment BOOLEAN NOT NULL DEFAULT FALSE,
       auto_hidden BOOLEAN NOT NULL DEFAULT FALSE,
       auto_comment BOOLEAN NOT NULL DEFAULT FALSE,
+      auto_dm BOOLEAN NOT NULL DEFAULT FALSE,
       prompt_comment TEXT NOT NULL DEFAULT '${DEFAULT_PROMPT_COMMENT.replace(/'/g, "''")}',
+      prompt_dm TEXT NOT NULL DEFAULT '${DEFAULT_PROMPT_DM.replace(/'/g, "''")}',
       hide_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
       hide_ai_instruction TEXT NOT NULL DEFAULT '',
       hide_ai_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -90,17 +94,23 @@ async function ensureTables() {
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS auto_reply_children_comment BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS auto_hidden BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS auto_comment BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS auto_dm BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS prompt_comment TEXT NOT NULL DEFAULT '${DEFAULT_PROMPT_COMMENT.replace(/'/g, "''")}';
+    ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS prompt_dm TEXT NOT NULL DEFAULT '${DEFAULT_PROMPT_DM.replace(/'/g, "''")}';
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_ai_instruction TEXT NOT NULL DEFAULT '';
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_ai_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS hide_match_mode TEXT NOT NULL DEFAULT 'keyword_or_ai';
     ALTER TABLE social_post_product_mappings ADD COLUMN IF NOT EXISTS post_created_at TIMESTAMP WITH TIME ZONE;
+    ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS public_reply_status TEXT DEFAULT 'pending';
+    ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS dm_status TEXT DEFAULT 'skipped';
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS reaction_status TEXT DEFAULT 'pending';
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS reaction_type TEXT;
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS moderation_status TEXT DEFAULT 'pending';
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS is_reply_comment BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS decision JSONB;
+    ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS public_reply_text TEXT;
+    ALTER TABLE comment_automation_events ADD COLUMN IF NOT EXISTS dm_text TEXT;
   `);
 }
 
@@ -284,15 +294,16 @@ async function upsertMapping(platform, accountId, data, options = {}) {
   data = await hydrateMappingPostDetails(platform, data, options.accessToken);
   const productIds = Array.isArray(data.product_ids) ? data.product_ids.map(String) : [];
   const promptComment = String(data.prompt_comment || DEFAULT_PROMPT_COMMENT).trim() || DEFAULT_PROMPT_COMMENT;
+  const promptDm = String(data.prompt_dm || DEFAULT_PROMPT_DM).trim() || DEFAULT_PROMPT_DM;
   const hideKeywords = normalizeKeywords(data.hide_keywords || []);
   const hideAiInstruction = String(data.hide_ai_instruction || '').trim();
   const hideMatchMode = normalizeHideMode(data.hide_match_mode);
   const { rows } = await pgClient.query(
     `INSERT INTO social_post_product_mappings (
        platform, account_id, post_id, caption, media_url, permalink_url, product_ids, is_active,
-       auto_like, auto_like_children_comment, auto_reply, auto_reply_children_comment, auto_hidden, auto_comment, prompt_comment,
+       auto_like, auto_like_children_comment, auto_reply, auto_reply_children_comment, auto_hidden, auto_comment, auto_dm, prompt_comment, prompt_dm,
        hide_keywords, hide_ai_instruction, hide_ai_enabled, hide_match_mode, post_created_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
      ON CONFLICT (platform, account_id, post_id) DO UPDATE SET
        caption = COALESCE(EXCLUDED.caption, social_post_product_mappings.caption),
        media_url = COALESCE(EXCLUDED.media_url, social_post_product_mappings.media_url),
@@ -304,9 +315,11 @@ async function upsertMapping(platform, accountId, data, options = {}) {
        auto_reply = EXCLUDED.auto_reply,
        auto_reply_children_comment = EXCLUDED.auto_reply_children_comment,
        auto_hidden = EXCLUDED.auto_hidden,
-       auto_comment = EXCLUDED.auto_comment,
-       prompt_comment = EXCLUDED.prompt_comment,
-       hide_keywords = EXCLUDED.hide_keywords,
+      auto_comment = EXCLUDED.auto_comment,
+      auto_dm = EXCLUDED.auto_dm,
+      prompt_comment = EXCLUDED.prompt_comment,
+      prompt_dm = EXCLUDED.prompt_dm,
+      hide_keywords = EXCLUDED.hide_keywords,
        hide_ai_instruction = EXCLUDED.hide_ai_instruction,
        hide_ai_enabled = EXCLUDED.hide_ai_enabled,
        hide_match_mode = EXCLUDED.hide_match_mode,
@@ -328,7 +341,9 @@ async function upsertMapping(platform, accountId, data, options = {}) {
       bool(data.auto_reply_children_comment),
       bool(data.auto_hidden),
       bool(data.auto_comment),
+      bool(data.auto_dm),
       promptComment,
+      promptDm,
       hideKeywords,
       hideAiInstruction,
       bool(data.hide_ai_enabled),
@@ -375,7 +390,9 @@ async function syncFacebookPosts(platform, accountId, accessToken) {
       auto_reply_children_comment: Boolean(current.auto_reply_children_comment),
       auto_hidden: Boolean(current.auto_hidden),
       auto_comment: Boolean(current.auto_comment),
+      auto_dm: Boolean(current.auto_dm),
       prompt_comment: current.prompt_comment || DEFAULT_PROMPT_COMMENT,
+      prompt_dm: current.prompt_dm || DEFAULT_PROMPT_DM,
       hide_keywords: current.hide_keywords || [],
       hide_ai_instruction: current.hide_ai_instruction || '',
       hide_ai_enabled: Boolean(current.hide_ai_enabled),
@@ -411,9 +428,18 @@ function buildReplyPrompt({ platform, postId, commentText, context, products, sy
   return `${systemPrompt}\n\n${context.mapping?.prompt_comment || DEFAULT_PROMPT_COMMENT}\n\nReturn only the reply text.\n\n<context>\nPlatform: ${platform}\nPost ID: ${postId}\nIs reply/child comment: ${isReplyComment ? 'yes' : 'no'}\nPost caption: ${context.mapping?.caption || ''}\nCustomer comment: ${commentText}\nMapped products:\n${productSummary(products)}\n</context>`;
 }
 
+function buildDmPrompt({ platform, postId, commentText, context, products, systemPrompt, isReplyComment }) {
+  return `${systemPrompt}\n\n${context.mapping?.prompt_dm || DEFAULT_PROMPT_DM}\n\nThis message will be sent privately to the commenter via Meta Private Reply. Return only the private inbox message text.\n\n<context>\nPlatform: ${platform}\nPost ID: ${postId}\nIs reply/child comment: ${isReplyComment ? 'yes' : 'no'}\nPost caption: ${context.mapping?.caption || ''}\nCustomer comment: ${commentText}\nMapped products:\n${productSummary(products)}\n</context>`;
+}
+
 function cleanReply(value) {
   const text = typeof value === 'string' ? value : (value?.reply_text || value?.reply || value?.message || value?.response || '');
   return String(text || '').replace(/```[\s\S]*?```/g, '').trim().slice(0, MAX_PUBLIC_REPLY_LENGTH);
+}
+
+function cleanDmReply(value) {
+  const text = typeof value === 'string' ? value : (value?.dm_text || value?.reply_text || value?.reply || value?.message || value?.response || '');
+  return String(text || '').replace(/```[\s\S]*?```/g, '').trim().slice(0, MAX_DM_REPLY_LENGTH);
 }
 
 async function evaluateHideRules({ config, mapping, commentText, postId, isReplyComment, accountConfig, platform, accountId, commenterId }) {
@@ -466,7 +492,7 @@ async function evaluateHideRules({ config, mapping, commentText, postId, isReply
 async function updateEvent(platform, commentId, values) {
   await pgClient.query(
     `UPDATE comment_automation_events SET public_reply_status = $1, dm_status = $2, reaction_status = $3, reaction_type = $4, moderation_status = $5, public_reply_text = $6, dm_text = $7, decision = $8, error_message = $9, updated_at = NOW() WHERE platform = $10 AND comment_id = $11`,
-    [values.publicStatus, values.dmStatus || 'skipped', values.reactionStatus, values.reactionType || null, values.moderationStatus || 'skipped', values.publicReplyText || null, null, JSON.stringify(values.decision || {}), values.errors?.join(' | ') || null, platform, commentId]
+    [values.publicStatus, values.dmStatus || 'skipped', values.reactionStatus, values.reactionType || null, values.moderationStatus || 'skipped', values.publicReplyText || null, values.dmText || null, JSON.stringify(values.decision || {}), values.errors?.join(' | ') || null, platform, commentId]
   );
 }
 
@@ -525,16 +551,20 @@ async function processCommentAutomationEvent(event) {
   const shouldHide = hideDecision.shouldHide;
   const shouldLike = !shouldHide && Boolean(mapping.auto_like) && (!isReplyComment || Boolean(mapping.auto_like_children_comment));
   const shouldReply = !shouldHide && Boolean(mapping.auto_reply) && (!isReplyComment || Boolean(mapping.auto_reply_children_comment));
+  const shouldDm = !shouldHide && platform === 'messenger' && Boolean(mapping.auto_dm);
   const errors = [];
   let publicStatus = 'skipped';
+  let dmStatus = 'skipped';
   let reactionStatus = 'skipped';
   let moderationStatus = 'skipped';
   let publicReplyText = '';
+  let dmText = '';
 
   const decision = {
-    action: shouldHide ? 'MODERATE' : shouldReply || shouldLike ? 'ENGAGE' : 'SKIP',
+    action: shouldHide ? 'MODERATE' : shouldReply || shouldLike || shouldDm ? 'ENGAGE' : 'SKIP',
     auto_like: shouldLike,
     auto_reply: shouldReply,
+    auto_dm: shouldDm,
     auto_hidden: shouldHide,
     auto_comment: Boolean(mapping.auto_comment),
     hide_mode: hideDecision.mode,
@@ -556,8 +586,8 @@ async function processCommentAutomationEvent(event) {
       moderationStatus = 'failed';
       errors.push(`hide: ${error.message}`);
     }
-    await updateEvent(platform, commentId, { publicStatus, reactionStatus, reactionType: null, moderationStatus, publicReplyText, decision, errors });
-    return { success: errors.length === 0, publicStatus, reactionStatus, moderationStatus, decision, errors };
+    await updateEvent(platform, commentId, { publicStatus, dmStatus, reactionStatus, reactionType: null, moderationStatus, publicReplyText, dmText, decision, errors });
+    return { success: errors.length === 0, publicStatus, dmStatus, reactionStatus, moderationStatus, decision, errors };
   }
 
   if (shouldLike) {
@@ -596,8 +626,31 @@ async function processCommentAutomationEvent(event) {
     }
   }
 
-  await updateEvent(platform, commentId, { publicStatus, reactionStatus, reactionType: shouldLike ? 'LIKE' : null, moderationStatus, publicReplyText, decision, errors });
-  return { success: errors.length === 0, publicStatus, reactionStatus, moderationStatus, decision, errors };
+  if (shouldDm) {
+    try {
+      const result = await aiService.generateResponse({
+        pageId: accountId,
+        userId: commenterId,
+        userMessage: buildDmPrompt({ platform, postId, commentText, context, products: context.products, systemPrompt: config.system_prompt || DEFAULT_SYSTEM_PROMPT, isReplyComment }),
+        history: [],
+        imageUrls: [],
+        audioUrls: [],
+        config: { ...event.accountConfig, text_prompt: config.system_prompt || DEFAULT_SYSTEM_PROMPT },
+        platform
+      });
+      dmText = cleanDmReply(result);
+      if (dmText) {
+        await facebookService.sendPrivateReply(commentId, dmText, accessToken);
+        dmStatus = 'sent';
+      }
+    } catch (error) {
+      dmStatus = 'failed';
+      errors.push(`dm: ${error.message}`);
+    }
+  }
+
+  await updateEvent(platform, commentId, { publicStatus, dmStatus, reactionStatus, reactionType: shouldLike ? 'LIKE' : null, moderationStatus, publicReplyText, dmText, decision, errors });
+  return { success: errors.length === 0, publicStatus, dmStatus, reactionStatus, moderationStatus, decision, errors };
 }
 
 module.exports = { getConfig, updateConfig, listMappings, upsertMapping, deleteMapping, listEvents, syncFacebookPosts, processCommentAutomationEvent, ensureTables };

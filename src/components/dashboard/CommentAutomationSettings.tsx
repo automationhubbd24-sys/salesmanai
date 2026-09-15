@@ -47,7 +47,9 @@ type Mapping = {
   auto_reply_children_comment?: boolean;
   auto_hidden?: boolean;
   auto_comment?: boolean;
+  auto_dm?: boolean;
   prompt_comment?: string;
+  prompt_dm?: string;
   hide_keywords?: string[];
   hide_ai_instruction?: string;
   hide_ai_enabled?: boolean;
@@ -59,6 +61,7 @@ type Decision = {
   reason?: string;
   auto_like?: boolean;
   auto_reply?: boolean;
+  auto_dm?: boolean;
   auto_hidden?: boolean;
   auto_comment?: boolean;
   hide_reason?: string;
@@ -94,6 +97,7 @@ const defaultConfig: Config = {
 };
 
 const defaultPromptComment = "Customer comment er upor base kore short, helpful Bangla reply dao. Post context/product info thakle sudhu oi information use korbe. Unknown hole polite vabe inbox korte bolo.";
+const defaultPromptDm = "Customer comment er upor base kore private inbox message dao. Product context ba mapped product info thakle price/details/order instruction clear kore bolo. Unknown hole politely customer-er question ask koro.";
 
 function emptyMapping(): Mapping {
   return {
@@ -109,7 +113,9 @@ function emptyMapping(): Mapping {
     auto_reply_children_comment: false,
     auto_hidden: false,
     auto_comment: false,
+    auto_dm: false,
     prompt_comment: defaultPromptComment,
+    prompt_dm: defaultPromptDm,
     hide_keywords: [],
     hide_ai_instruction: "",
     hide_ai_enabled: true,
@@ -128,6 +134,7 @@ function normalizeMapping(item: Mapping): Mapping {
     product_ids: Array.isArray(item.product_ids) ? item.product_ids : [],
     is_active: item.is_active !== false,
     hide_keywords: normalizeKeywords(item.hide_keywords),
+    prompt_dm: item.prompt_dm || defaultPromptDm,
     hide_ai_instruction: item.hide_ai_instruction || "",
     hide_ai_enabled: true,
     hide_match_mode: "llm_prompt",
@@ -359,6 +366,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
     mapping.auto_like_children_comment,
     mapping.auto_reply,
     mapping.auto_reply_children_comment,
+    mapping.auto_dm,
     mapping.auto_hidden,
     mapping.auto_comment,
   ].filter(Boolean).length;
@@ -476,6 +484,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
               <ToggleRow label="Like Child Comments" description="Like replies under existing comments" checked={Boolean(newMapping.auto_like_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_like_children_comment: value })} />
               <ToggleRow label="Auto Reply" description="Reply to top-level comments with AI" checked={Boolean(newMapping.auto_reply)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply: value })} />
               <ToggleRow label="Reply Child Comments" description="Reply to nested comment threads" checked={Boolean(newMapping.auto_reply_children_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_reply_children_comment: value })} />
+              <ToggleRow label="Auto Inbox" description="Send private reply/DM after comment" checked={Boolean(newMapping.auto_dm)} onChange={(value) => setNewMapping({ ...newMapping, auto_dm: value })} />
               <ToggleRow label="Auto Comment" description="Enable post-level comment actions" checked={Boolean(newMapping.auto_comment)} onChange={(value) => setNewMapping({ ...newMapping, auto_comment: value })} />
             </div>
             <div className="mt-4"><HideRulesCard mapping={newMapping} onChange={(patch) => setNewMapping({ ...newMapping, ...patch })} /></div>
@@ -485,8 +494,12 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                 <CardContent><Textarea className="min-h-28" value={newMapping.caption} onChange={(event) => setNewMapping({ ...newMapping, caption: event.target.value })} /></CardContent>
               </Card>
               <Card className="border-white/10 bg-background/60">
-                <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Instruction used when generating replies for this post.</CardDescription></CardHeader>
+                <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Public comment reply instruction.</CardDescription></CardHeader>
                 <CardContent><Textarea className="min-h-28" value={newMapping.prompt_comment} onChange={(event) => setNewMapping({ ...newMapping, prompt_comment: event.target.value })} /></CardContent>
+              </Card>
+              <Card className="border-white/10 bg-background/60 md:col-span-2">
+                <CardHeader className="pb-3"><CardTitle className="text-base">Inbox Message Prompt</CardTitle><CardDescription>Private reply/DM instruction. Use this for price, offer, delivery, or order details.</CardDescription></CardHeader>
+                <CardContent><Textarea className="min-h-28" value={newMapping.prompt_dm || defaultPromptDm} onChange={(event) => setNewMapping({ ...newMapping, prompt_dm: event.target.value })} /></CardContent>
               </Card>
             </div>
             <Button className="mt-4 bg-primary text-black hover:bg-primary/90" onClick={() => void saveMapping(newMapping, true)} disabled={savingPostId === newMapping.post_id}>
@@ -551,6 +564,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                           <ToggleRow label="Like Child Comments" description="Like replies under existing comments" checked={Boolean(item.auto_like_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_like_children_comment: value })} />
                           <ToggleRow label="Auto Reply" description="Reply to top-level comments with AI" checked={Boolean(item.auto_reply)} onChange={(value) => updateMapping(item.post_id, { auto_reply: value })} />
                           <ToggleRow label="Reply Child Comments" description="Reply to nested comment threads" checked={Boolean(item.auto_reply_children_comment)} onChange={(value) => updateMapping(item.post_id, { auto_reply_children_comment: value })} />
+                          <ToggleRow label="Auto Inbox" description="Send private reply/DM after comment" checked={Boolean(item.auto_dm)} onChange={(value) => updateMapping(item.post_id, { auto_dm: value })} />
                           <ToggleRow label="Auto Comment" description="Enable post-level comment actions" checked={Boolean(item.auto_comment)} onChange={(value) => updateMapping(item.post_id, { auto_comment: value })} />
                         </div>
                       </div>
@@ -568,8 +582,12 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
                           <CardContent><Textarea className="min-h-28" value={item.caption || ""} onChange={(event) => updateMapping(item.post_id, { caption: event.target.value })} /></CardContent>
                         </Card>
                         <Card className="border-white/10 bg-background/60">
-                          <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Custom reply instruction for this post.</CardDescription></CardHeader>
+                          <CardHeader className="pb-3"><CardTitle className="text-base">Comment Reply Prompt</CardTitle><CardDescription>Public comment reply instruction for this post.</CardDescription></CardHeader>
                           <CardContent><Textarea className="min-h-28" value={item.prompt_comment || defaultPromptComment} onChange={(event) => updateMapping(item.post_id, { prompt_comment: event.target.value })} /></CardContent>
+                        </Card>
+                        <Card className="border-white/10 bg-background/60 md:col-span-2">
+                          <CardHeader className="pb-3"><CardTitle className="text-base">Inbox Message Prompt</CardTitle><CardDescription>Private reply/DM instruction. Use this for price, offer, delivery, or order details.</CardDescription></CardHeader>
+                          <CardContent><Textarea className="min-h-28" value={item.prompt_dm || defaultPromptDm} onChange={(event) => updateMapping(item.post_id, { prompt_dm: event.target.value })} /></CardContent>
                         </Card>
                       </div>
                       <div className="flex justify-between gap-3">
@@ -592,7 +610,7 @@ export function CommentAutomationSettings({ platform, resourceId }: { platform: 
           <Button variant="outline" size="sm" onClick={() => void loadAuditEvents()} disabled={auditLoading}>{auditLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Refresh</Button>
         </CardHeader>
         <CardContent>
-          {auditEvents.length === 0 ? <div className="rounded-xl border border-dashed py-7 text-center text-sm text-muted-foreground">এখনও দেখানোর মতো কোনো automation event নেই।</div> : <div className="space-y-3">{auditEvents.slice(0, 10).map((event) => <div key={event.id} className="rounded-xl border bg-muted/30 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="truncate font-medium">{event.comment_text || "Comment text পাওয়া যায়নি"}</p><p className="mt-1 text-xs text-muted-foreground">Comment: {event.comment_id}{event.post_id ? ` · Post: ${event.post_id}` : ""}</p>{event.decision?.reason ? <p className="mt-1 text-xs text-muted-foreground">Reason: {event.decision.reason}</p> : null}{event.decision?.hide_reason ? <p className="mt-1 text-xs text-muted-foreground">Hide reason: {event.decision.hide_reason}{event.decision.repeat_comment ? ` · Repeat: ${event.decision.repeat_count || 2} times` : ""}{event.decision.hide_matched_keywords?.length ? ` · Matched: ${event.decision.hide_matched_keywords.join(", ")}` : ""}</p> : null}</div><span className="shrink-0 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div><div className="mt-3 flex flex-wrap gap-2"><AuditStatus label="Action" value={event.decision?.action} /><AuditStatus label="Reply" value={event.public_reply_status} /><AuditStatus label={event.reaction_type ? `Like (${event.reaction_type})` : "Like"} value={event.reaction_status} /><AuditStatus label="Hide" value={event.moderation_status} />{event.error_message ? <Badge variant="destructive" className="font-normal">Error: {event.error_message}</Badge> : null}</div></div>)}</div>}
+          {auditEvents.length === 0 ? <div className="rounded-xl border border-dashed py-7 text-center text-sm text-muted-foreground">এখনও দেখানোর মতো কোনো automation event নেই।</div> : <div className="space-y-3">{auditEvents.slice(0, 10).map((event) => <div key={event.id} className="rounded-xl border bg-muted/30 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="truncate font-medium">{event.comment_text || "Comment text পাওয়া যায়নি"}</p><p className="mt-1 text-xs text-muted-foreground">Comment: {event.comment_id}{event.post_id ? ` · Post: ${event.post_id}` : ""}</p>{event.decision?.reason ? <p className="mt-1 text-xs text-muted-foreground">Reason: {event.decision.reason}</p> : null}{event.decision?.hide_reason ? <p className="mt-1 text-xs text-muted-foreground">Hide reason: {event.decision.hide_reason}{event.decision.repeat_comment ? ` · Repeat: ${event.decision.repeat_count || 2} times` : ""}{event.decision.hide_matched_keywords?.length ? ` · Matched: ${event.decision.hide_matched_keywords.join(", ")}` : ""}</p> : null}</div><span className="shrink-0 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</span></div><div className="mt-3 flex flex-wrap gap-2"><AuditStatus label="Action" value={event.decision?.action} /><AuditStatus label="Reply" value={event.public_reply_status} /><AuditStatus label="Inbox" value={event.dm_status} /><AuditStatus label={event.reaction_type ? `Like (${event.reaction_type})` : "Like"} value={event.reaction_status} /><AuditStatus label="Hide" value={event.moderation_status} />{event.error_message ? <Badge variant="destructive" className="font-normal">Error: {event.error_message}</Badge> : null}</div></div>)}</div>}
         </CardContent>
       </Card>
     </div>
