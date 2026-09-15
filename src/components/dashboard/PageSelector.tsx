@@ -1,0 +1,104 @@
+import { useMessenger } from "@/context/MessengerContext";
+import { useEffect } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Facebook, Instagram, PlusCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+
+interface PageSelectorProps {
+  platform?: 'messenger' | 'instagram';
+}
+
+export function PageSelector({ platform = 'messenger' }: PageSelectorProps) {
+  const context = useMessenger();
+  const navigate = useNavigate();
+  const pages = context?.pages ?? [];
+  const currentPage = context?.currentPage ?? null;
+  const setCurrentPage = context?.setCurrentPage;
+  const platformLabel = platform === 'instagram' ? 'Instagram' : 'Facebook';
+  const iconClass = platform === 'instagram' ? 'text-pink-500' : 'text-blue-500';
+
+  const handleValueChange = (value: string) => {
+    if (!setCurrentPage) return;
+    if (value === "add_new") {
+      navigate(`/dashboard/${platform}/integration`);
+      return;
+    }
+    const selected = pages.find((p) => p.page_id === value);
+    if (selected) {
+      setCurrentPage(selected);
+      
+      // Auto-connect DB logic
+      if (selected.db_id) {
+          localStorage.setItem("active_fb_db_id", selected.db_id.toString());
+          localStorage.setItem("active_fb_page_id", selected.page_id);
+          window.dispatchEvent(new Event("db-connection-changed"));
+      } else {
+          localStorage.setItem("active_fb_page_id", selected.page_id);
+      }
+    }
+  };
+
+  // Sync LocalStorage when currentPage changes
+  useEffect(() => {
+    if (!currentPage || !context) return;
+    if (currentPage) {
+        localStorage.setItem("active_fb_page_id", currentPage.page_id);
+        if (currentPage.db_id) {
+            localStorage.setItem("active_fb_db_id", currentPage.db_id.toString());
+            window.dispatchEvent(new Event("db-connection-changed"));
+        }
+    }
+  }, [currentPage, context]);
+
+  if (!context) return null;
+
+  if (pages.length === 0) {
+    return (
+       <div 
+         className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+         onClick={() => navigate(`/dashboard/${platform}/integration`)}
+       >
+         <PlusCircle size={16} />
+         <span>Connect {platformLabel}</span>
+       </div>
+    );
+  }
+
+  return (
+    <div className="px-2 mb-4">
+      <label className="text-xs font-medium text-muted-foreground mb-1.5 block px-1">
+        Active {platformLabel} Page
+      </label>
+      <Select
+        value={currentPage?.page_id || ""}
+        onValueChange={handleValueChange}
+      >
+        <SelectTrigger className="w-full bg-sidebar-accent border-sidebar-border text-sidebar-foreground h-9">
+          <div className="flex items-center gap-2 overflow-hidden">
+            {platform === 'instagram' ? <Instagram size={14} className={`shrink-0 ${iconClass}`} /> : <Facebook size={14} className={`shrink-0 ${iconClass}`} />}
+            <SelectValue placeholder={`Select ${platformLabel.toLowerCase()} page`} />
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          {pages.map((page) => (
+            <SelectItem key={page.page_id} value={page.page_id}>
+              {page.name}
+            </SelectItem>
+          ))}
+          <SelectItem value="add_new" className="text-primary font-medium">
+            <div className="flex items-center gap-2">
+              <PlusCircle size={14} />
+              <span>Connect New</span>
+            </div>
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}

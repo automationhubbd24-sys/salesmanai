@@ -1,0 +1,283 @@
+
+-- ==========================================
+--  1. Create user_configs table if it doesn't exist
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.user_configs (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL, -- Storing as text to match potential varied auth sources
+  balance numeric DEFAULT 0,
+  ai_provider text,
+  api_key text,
+  service_api_key text UNIQUE,
+  model_name text,
+  system_prompt text,
+  auto_reply boolean DEFAULT true,
+  ai_enabled boolean DEFAULT true,
+  media_enabled boolean DEFAULT true,
+  response_language text,
+  response_tone text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now()
+);
+
+-- ==========================================
+--  2. Add balance column if table existed but column didn't
+-- ==========================================
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_configs' 
+        AND column_name = 'balance'
+    ) THEN
+        ALTER TABLE public.user_configs ADD COLUMN balance NUMERIC DEFAULT 0;
+    END IF;
+END $$;
+
+
+-- ==========================================
+--  2.5 Add service_api_key column if missing
+-- ==========================================
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_configs' 
+        AND column_name = 'service_api_key'
+    ) THEN
+        ALTER TABLE public.user_configs ADD COLUMN service_api_key text UNIQUE;
+        CREATE INDEX IF NOT EXISTS idx_user_configs_service_api_key ON public.user_configs(service_api_key);
+    END IF;
+END $$;
+
+
+-- ==========================================
+--  3. Create payment transactions table (New Schema)
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.payment_transactions (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_email text NOT NULL,
+  amount numeric NOT NULL,
+  method text NOT NULL, -- 'bkash', 'nagad', 'manual', 'system' (for debits)
+  trx_id text NOT NULL, -- For debits, use generated ID
+  sender_number text NOT NULL, -- For debits, use 'System'
+  status text NULL DEFAULT 'pending'::text,
+  created_at timestamp with time zone NULL DEFAULT now()
+);
+
+-- RLS Policies (Optional but good practice)
+ALTER TABLE public.payment_transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own transactions" ON public.payment_transactions;
+CREATE POLICY "Users can view own transactions" 
+ON public.payment_transactions FOR SELECT 
+USING (auth.email() = user_email);
+
+DROP POLICY IF EXISTS "Users can insert deposit requests" ON public.payment_transactions;
+CREATE POLICY "Users can insert deposit requests" 
+ON public.payment_transactions FOR INSERT 
+WITH CHECK (true); 
+
+DROP POLICY IF EXISTS "Allow public read for admin panel" ON public.payment_transactions;
+CREATE POLICY "Allow public read for admin panel"
+ON public.payment_transactions FOR SELECT
+USING (true);
+
+DROP POLICY IF EXISTS "Allow public update for admin panel" ON public.payment_transactions;
+CREATE POLICY "Allow public update for admin panel"
+ON public.payment_transactions FOR UPDATE
+USING (true);
+
+
+-- ==========================================
+--  4. RPC Function to Approve Deposit (Fixes Balance Issue)
+-- ==========================================
+CREATE OR REPLACE FUNCTION approve_deposit(txn_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER -- This allows the function to bypass RLS and update user_configs
+AS $$
+DECLARE
+    v_amount numeric;
+    v_user_email text;
+    v_user_id uuid;
+    v_current_balance numeric;
+    v_txn_status text;
+BEGIN
+    -- 1. Get transaction details
+    SELECT amount, user_email, status INTO v_amount, v_user_email, v_txn_status
+    FROM public.payment_transactions
+    WHERE id = txn_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Transaction not found';
+    END IF;
+
+    IF v_txn_status = 'completed' THEN
+        RAISE EXCEPTION 'Transaction already completed';
+    END IF;
+
+    -- 2. Find user_id from auth.users (Reliable)
+    SELECT id INTO v_user_id
+    FROM auth.users
+    WHERE email = v_user_email;
+
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'User ID not found for email: %. User must be registered.', v_user_email;
+    END IF;
+
+    -- 3. Update Balance (user_configs)
+    -- Check if config exists
+    SELECT balance INTO v_current_balance
+    FROM public.user_configs
+    WHERE user_id = v_user_id::text;
+
+    IF v_current_balance IS NULL THEN
+        -- Create config if missing
+        INSERT INTO public.user_configs (user_id, balance)
+        VALUES (v_user_id::text, v_amount);
+    ELSE
+        -- Update existing balance
+        UPDATE public.user_configs
+        SET balance = v_current_balance + v_amount
+        WHERE user_id = v_user_id::text;
+    END IF;
+
+    -- 4. Mark transaction as completed
+    UPDATE public.payment_transactions
+    SET status = 'completed'
+    WHERE id = txn_id;
+
+END;
+$$;
+
+-- ==========================================
+--  5. User Configs RLS (Ensure users can see their balance)
+-- ==========================================
+ALTER TABLE public.user_configs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own config" ON public.user_configs;
+CREATE POLICY "Users can view own config" 
+ON public.user_configs FOR SELECT 
+USING (auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "Users can update own config" ON public.user_configs;
+CREATE POLICY "Users can update own config" 
+ON public.user_configs FOR UPDATE
+USING (auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own config" ON public.user_configs;
+CREATE POLICY "Users can insert own config" 
+ON public.user_configs FOR INSERT
+WITH CHECK (auth.uid()::text = user_id);
+
+
+-- ==========================================
+--  6. WhatsApp Message Database Updates (Expiry)
+-- ==========================================
+ALTER TABLE public.whatsapp_message_database 
+ADD COLUMN IF NOT EXISTS expires_at timestamp with time zone,
+ADD COLUMN IF NOT EXISTS plan_days integer DEFAULT 30;
+
+-- ==========================================
+--  7. Memory Context Metadata for Social Bots
+-- ==========================================
+-- Optional human-friendly label for current memory / history behaviour
+ALTER TABLE public.fb_message_database 
+ADD COLUMN IF NOT EXISTS memory_context_name text;
+
+ALTER TABLE public.whatsapp_message_database 
+ADD COLUMN IF NOT EXISTS memory_context_name text;
+
+-- ==========================================
+--  8. Order Tracking Enhancements
+-- ==========================================
+ALTER TABLE public.fb_order_tracking 
+ADD COLUMN IF NOT EXISTS sender_id text;
+
+ALTER TABLE public.fb_message_database 
+ADD COLUMN IF NOT EXISTS order_lock_minutes integer;
+
+ALTER TABLE public.whatsapp_message_database 
+ADD COLUMN IF NOT EXISTS order_lock_minutes integer;
+
+-- Ensure RLS allows insert/update/delete for backend (or users if needed)
+ALTER TABLE public.whatsapp_message_database ENABLE ROW LEVEL SECURITY;
+
+-- Allow users to view their own sessions
+DROP POLICY IF EXISTS "Users can view own sessions" ON public.whatsapp_message_database;
+CREATE POLICY "Users can view own sessions" 
+ON public.whatsapp_message_database FOR SELECT 
+USING (auth.uid()::text = user_id OR auth.email() = (select email from auth.users where id = auth.uid())); -- Simplified RLS
+
+-- Allow users/backend to insert/update their own sessions
+DROP POLICY IF EXISTS "Users can insert own sessions" ON public.whatsapp_message_database;
+CREATE POLICY "Users can insert own sessions" 
+ON public.whatsapp_message_database FOR INSERT 
+WITH CHECK (auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "Users can update own sessions" ON public.whatsapp_message_database;
+CREATE POLICY "Users can update own sessions" 
+ON public.whatsapp_message_database FOR UPDATE
+USING (auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own sessions" ON public.whatsapp_message_database;
+CREATE POLICY "Users can delete own sessions" 
+ON public.whatsapp_message_database FOR DELETE
+USING (auth.uid()::text = user_id);
+
+-- ==========================================
+--  9. Team Management Order Allocation
+-- ==========================================
+-- Additive storage. Existing orders are not altered or reassigned.
+CREATE TABLE IF NOT EXISTS public.team_order_settings (
+  owner_email TEXT PRIMARY KEY,
+  mode TEXT NOT NULL DEFAULT 'manual' CHECK (mode IN ('manual', 'equal_share')),
+  batch_size INTEGER NOT NULL DEFAULT 1 CHECK (batch_size > 0),
+  overflow BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.team_order_assignments (
+  owner_email TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('fb', 'whatsapp')),
+  resource_id TEXT NOT NULL,
+  order_identity TEXT NOT NULL,
+  member_email TEXT,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (owner_email, source, resource_id, order_identity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_order_assignments_owner_member
+  ON public.team_order_assignments (owner_email, member_email, assigned_at DESC);
+
+-- ==========================================
+--  10. Team Management Human Reply Attribution
+-- ==========================================
+ALTER TABLE public.fb_chats
+  ADD COLUMN IF NOT EXISTS admin_user_id UUID,
+  ADD COLUMN IF NOT EXISTS admin_email TEXT;
+
+ALTER TABLE public.whatsapp_chats
+  ADD COLUMN IF NOT EXISTS admin_user_id UUID,
+  ADD COLUMN IF NOT EXISTS admin_email TEXT;
+
+-- Supports per-admin human-reply analytics within a Facebook page.
+CREATE INDEX IF NOT EXISTS idx_fb_chats_human_admin_analytics
+  ON public.fb_chats (page_id, admin_user_id, created_at DESC)
+  WHERE admin_user_id IS NOT NULL;
+
+-- Supports per-admin human-reply analytics within a WhatsApp session.
+CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_human_admin_analytics
+  ON public.whatsapp_chats (session_name, admin_user_id, created_at DESC)
+  WHERE admin_user_id IS NOT NULL;
+
+-- Supports efficient workload counts for allocated team members.
+CREATE INDEX IF NOT EXISTS idx_team_order_assignments_workload
+  ON public.team_order_assignments (owner_email, member_email)
+  WHERE member_email IS NOT NULL;

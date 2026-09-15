@@ -1,0 +1,52 @@
+// METHOD: extractJsonFromAiResponse
+// LOCATION: backend/src/services/aiService.js
+// DESCRIPTION: This method normalizes AI responses. It ensures a 'reply' key exists.
+// If the AI returns { "message": "..." } or { "text": "..." }, this function maps it to { "reply": "..." }.
+// It acts as a safety net to prevent errors when the AI fails to follow the strict "reply" key instruction.
+
+function extractJsonFromAiResponse(rawContent) {
+    let parsed = {};
+    try {
+        // 1. Remove <think>...<[PLHD21_never_used_51bce0c785ca2f68081bfa7d91973934]> blocks (DeepSeek/Gemini reasoning)
+        let cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+        // 2. Remove markdown code blocks (```json ... ```)
+        cleanContent = cleanContent.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+        // 3. Find the first '{' and last '}' to isolate JSON object
+        const firstOpen = cleanContent.indexOf('{');
+        const lastClose = cleanContent.lastIndexOf('}');
+
+        if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+            cleanContent = cleanContent.substring(firstOpen, lastClose + 1);
+        }
+
+        parsed = JSON.parse(cleanContent);
+    } catch (e) {
+        console.warn("[AI] JSON Extraction Failed, attempting raw parse...");
+        try {
+            parsed = JSON.parse(rawContent); // Fallback to original
+        } catch (e2) {
+            console.warn("[AI] Raw JSON Parse Failed. Returning as reply text.");
+            parsed = { reply: rawContent };
+        }
+    }
+
+    // NORMALIZE REPLY FIELD
+    // Map common keys to 'reply' if it's missing or empty
+    if (!parsed.reply) {
+        parsed.reply = parsed.response || parsed.text || parsed.message || parsed.answer || parsed.content || parsed.result;
+    }
+    
+    return parsed;
+}
+
+// SYSTEM PROMPT REFERENCE (Control Mechanism)
+// The system prompt explicitly enforces the "reply" key to minimize reliance on the normalization above.
+/*
+Response Format:
+You MUST ALWAYS return a valid JSON object. Do not add any markdown formatting (like ```json).
+- If searching: { "tool": "search_products", "query": "..." }
+- If replying: { "reply": "Your Bengali response here" }
+- DO NOT return plain text. ALWAYS wrap in JSON.
+*/

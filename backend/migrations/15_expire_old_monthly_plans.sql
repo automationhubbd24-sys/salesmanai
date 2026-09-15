@@ -1,0 +1,1 @@
+UPDATE public.user_configs SET subscription_plan = 'none', daily_limit = 0, bonus_credit = 0 WHERE subscription_plan IN ('m1000', 'm3000', 'm7500') AND (monthly_expires_at IS NULL OR monthly_expires_at < NOW());

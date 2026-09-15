@@ -1,0 +1,114 @@
+const openrouterEngineService = require('../services/openrouterEngineService');
+const dbService = require('../services/dbService');
+const aiService = require('../services/aiService');
+const crypto = require('crypto');
+
+// Cost per Token
+const COST_PER_TOKEN = 0.00025;
+
+exports.handleChatCompletion = async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: { message: 'Missing or invalid Authorization header', type: 'invalid_request_error', code: 'unauthorized' } });
+        }
+
+        const apiKey = authHeader.replace('Bearer ', '').trim();
+
+        const pgClient = require('../services/pgClient');
+        const result = await pgClient.query(
+            'SELECT user_id, balance, service_api_key FROM user_configs WHERE service_api_key = $1 LIMIT 1',
+            [apiKey]
+        );
+
+        const userConfig = result.rows[0];
+
+        if (!userConfig) {
+            return res.status(401).json({ error: { message: 'Invalid API Key', type: 'invalid_request_error', code: 'invalid_api_key' } });
+        }
+
+        // 2. Check Balance
+        if (userConfig.balance < 0.01) {
+            return res.status(402).json({ error: { message: `Insufficient balance. Minimum 0.01 BDT required.`, type: 'insufficient_quota', code: 'insufficient_balance' } });
+        }
+
+        const { messages, stream } = req.body;
+        
+        // 3. Parse Input
+        const lastMessageObj = messages[messages.length - 1];
+        const history = messages.slice(0, messages.length - 1);
+        
+        let userMessage = "";
+        let images = [];
+
+        if (Array.isArray(lastMessageObj.content)) {
+            lastMessageObj.content.forEach(part => {
+                if (part.type === 'text') userMessage += part.text + " ";
+                else if (part.type === 'image_url') images.push(part.image_url.url);
+            });
+        } else {
+            userMessage = lastMessageObj.content;
+        }
+
+        const systemMsg = messages.find(m => m.role === 'system');
+        const systemPrompt = systemMsg ? systemMsg.content : "You are a helpful assistant.";
+
+        // 4. Process Request
+        const replyText = await openrouterEngineService.processRequest({
+            message: userMessage,
+            history: history,
+            images: images,
+            systemPrompt: systemPrompt
+        });
+
+        // 5. Calculate Usage (Approximation)
+        const promptTokens = Math.ceil((userMessage.length + systemPrompt.length) / 3.5);
+        const completionTokens = Math.ceil(replyText.length / 3.5);
+        const totalTokens = promptTokens + completionTokens;
+
+        // 6. Deduct Balance
+        const cost = totalTokens * COST_PER_TOKEN;
+        const finalCost = Math.max(cost, 0.00001);
+        await dbService.deductUserBalance(userConfig.user_id, finalCost, `Pro Engine API Call (${totalTokens} tokens)`);
+
+        // 7. Format Response
+        const response = {
+            id: `chatcmpl-${crypto.randomUUID()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: 'salesmanchatbot-lite', 
+            choices: [{
+                index: 0,
+                message: { role: 'assistant', content: replyText },
+                finish_reason: 'stop'
+            }],
+            usage: {
+                prompt_tokens: promptTokens,
+                completion_tokens: completionTokens,
+                total_tokens: totalTokens
+            }
+        };
+
+        res.json(response);
+
+    } catch (error) {
+        console.error('[OpenRouter API] Error:', error);
+        const branded = aiService.formatBrandedError(error);
+        res.status(branded.code).json({
+            error: {
+                message: branded.message,
+                type: branded.type,
+                code: branded.code
+            }
+        });
+    }
+};
+
+exports.forceUpdate = async (req, res) => {
+    try {
+        await openrouterEngineService.performUpdateCycle();
+        res.json({ status: 'success', message: 'Engine updated successfully.' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
