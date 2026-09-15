@@ -263,8 +263,25 @@ async function listMappings(platform, accountId) {
   return rows;
 }
 
-async function upsertMapping(platform, accountId, data) {
+async function hydrateMappingPostDetails(platform, data, accessToken) {
+  if (platform !== 'messenger' || !accessToken || !data?.post_id) return data;
+  if (data.caption && data.media_url && data.permalink_url && data.post_created_at) return data;
+
+  const post = await facebookService.getPostDetails(String(data.post_id), accessToken);
+  if (!post) return data;
+
+  return {
+    ...data,
+    caption: data.caption || post.message || post.story || '',
+    media_url: data.media_url || post.full_picture || post.picture || '',
+    permalink_url: data.permalink_url || post.permalink_url || '',
+    post_created_at: data.post_created_at || post.created_time || null
+  };
+}
+
+async function upsertMapping(platform, accountId, data, options = {}) {
   await ensureTables();
+  data = await hydrateMappingPostDetails(platform, data, options.accessToken);
   const productIds = Array.isArray(data.product_ids) ? data.product_ids.map(String) : [];
   const promptComment = String(data.prompt_comment || DEFAULT_PROMPT_COMMENT).trim() || DEFAULT_PROMPT_COMMENT;
   const hideKeywords = normalizeKeywords(data.hide_keywords || []);

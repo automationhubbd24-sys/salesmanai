@@ -1413,7 +1413,7 @@ router.post('/post-mappings/:pageId', authMiddleware, async (req, res) => {
     try {
         const page = await getPageByPageId(req.params.pageId, req.user.id, req.user.email);
         if (!page) return res.status(404).json({ error: 'Page not found' });
-        res.json(await commentAutomationService.upsertMapping('messenger', page.page_id, req.body));
+        res.json(await commentAutomationService.upsertMapping('messenger', page.page_id, req.body, { accessToken: page.page_access_token }));
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

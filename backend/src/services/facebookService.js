@@ -498,6 +498,23 @@ async function deleteComment(commentId, accessToken) {
     }
 }
 
+async function getPostDetails(postId, accessToken) {
+    try {
+        const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${postId}`, {
+            params: {
+                fields: 'id,message,story,created_time,full_picture,picture,permalink_url',
+                access_token: accessToken
+            },
+            timeout: 15000
+        });
+        return response.data || null;
+    } catch (error) {
+        const errData = error.response ? (error.response.data || 'No data') : error.message;
+        console.warn(`Unable to fetch Facebook post details ${postId}:`, typeof errData === 'object' ? JSON.stringify(errData) : errData);
+        return null;
+    }
+}
+
 async function listPagePosts(pageId, accessToken, { limit = 10, maxPages = 5 } = {}) {
     const posts = [];
     let url = `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}/feed`;
@@ -578,6 +595,7 @@ module.exports = {
     likeComment,
     hideComment,
     deleteComment,
+    getPostDetails,
     listPagePosts,
     getCommentReplies,
     getUserProfile,
