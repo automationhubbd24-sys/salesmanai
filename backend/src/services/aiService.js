@@ -290,15 +290,40 @@ function getProPlusEndpoints() {
     }];
 }
 
+function getProPlusFallbackEndpoint() {
+    const baseURL = normalizeProPlusBaseUrl(getFirstEnvValue([
+        'PRO_PLUS_FALLBACK_OPENAI_BASE_URL',
+        'FALLBACK_AISTUDIO_OPENAI_BASE_URL',
+        'PRO_PLUS_FALLBACK_BASE_URL'
+    ]));
+    const apiKey = getFirstEnvValue([
+        'PRO_PLUS_FALLBACK_INTERNAL_KEY',
+        'PRO_PLUS_FALLBACK_API_KEY',
+        'FALLBACK_AISTUDIO_INTERNAL_KEY'
+    ]);
+    if (!baseURL || !apiKey) return null;
+
+    return {
+        index: 'fallback',
+        baseURL,
+        apiKey,
+        model: normalizeProPlusPinnedModel(
+            getFirstEnvValue(['PRO_PLUS_FALLBACK_PINNED_MODEL', 'PRO_PLUS_FALLBACK_MODEL', 'FALLBACK_PRO_PLUS_PINNED_MODEL'])
+        ) || DEFAULT_PRO_PLUS_PRIMARY_MODEL,
+        isFallback: true
+    };
+}
+
 function getNextProPlusEndpoint() {
     const endpoints = getProPlusEndpoints();
     if (endpoints.length === 0) {
         throw new Error('AISTUDIO_INTERNAL_KEY env is missing for Pro Plus mode. Use AISTUDIO_INTERNAL_KEY or indexed AISTUDIO_INTERNAL_KEY_1, AISTUDIO_INTERNAL_KEY_2, etc.');
     }
 
-    const signature = endpoints.map(endpoint => `${endpoint.index}:${endpoint.baseURL}:${endpoint.model}`).join('|');
+    const fallbackEndpoint = getProPlusFallbackEndpoint();
+    const signature = endpoints.map(endpoint => `${endpoint.index}:${endpoint.baseURL}:${endpoint.model}`).join('|') + (fallbackEndpoint ? `|fallback:${fallbackEndpoint.baseURL}:${fallbackEndpoint.model}` : '');
     if (loggedProPlusEndpointSignature !== signature) {
-        console.log(`[Pro Plus] Loaded ${endpoints.length} AIStudio endpoint(s): ${endpoints.map(endpoint => `#${endpoint.index || 1}:${endpoint.model}`).join(', ')}`);
+        console.log(`[Pro Plus] Loaded ${endpoints.length} AIStudio endpoint(s): ${endpoints.map(endpoint => `#${endpoint.index || 1}:${endpoint.model}`).join(', ')}${fallbackEndpoint ? ` + fallback:${fallbackEndpoint.model}` : ''}`);
         loggedProPlusEndpointSignature = signature;
     }
 
@@ -2373,7 +2398,46 @@ async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, user
         };
     } catch (err) {
         await handleAiError(err, endpoint.apiKey, endpoint.model, 'text');
-        throw err;
+
+        const fallbackEndpoint = getProPlusFallbackEndpoint();
+        if (!fallbackEndpoint) throw err;
+
+        console.warn(`[Pro Plus] Primary AIStudio endpoint failed, trying fallback engine (${fallbackEndpoint.model}): ${err?.message || 'Unknown error'}`);
+        recordAiRuntimeStage(pageConfig, 'pro_plus_fallback_endpoint_selected', aiTraceStartedAt, { model: fallbackEndpoint.model });
+
+        try {
+            const fallbackResult = await runAgentLoop({
+                apiKey: fallbackEndpoint.apiKey,
+                baseURL: fallbackEndpoint.baseURL,
+                model: fallbackEndpoint.model,
+                messages: [...messages],
+                tools: [],
+                pageConfig,
+                proxyAgent: null,
+                totalTokenUsage,
+                foundProducts: [],
+                userId,
+                temperature,
+                top_p: topP,
+                pageId,
+                requestDeadlineAt,
+                aiTraceStartedAt
+            });
+
+            let fallbackTokensToRecord = fallbackResult.token_usage || 0;
+            if (fallbackTokensToRecord === 0 && fallbackResult.reply) {
+                fallbackTokensToRecord = estimateTokenUsage(messages, fallbackResult.reply, 0);
+            }
+
+            return {
+                ...fallbackResult,
+                token_usage: fallbackTokensToRecord,
+                model: fallbackEndpoint.model
+            };
+        } catch (fallbackErr) {
+            await handleAiError(fallbackErr, fallbackEndpoint.apiKey, fallbackEndpoint.model, 'text');
+            throw fallbackErr;
+        }
     }
 }
 
@@ -3698,8 +3762,42 @@ Example format: T-shirt, navy blue, horizontal stripes, short sleeves, crew neck
 
             return { text: resultText, usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
         } catch (error) {
-            console.error(`[Vision][Pro Plus] Unexpected Error:`, error.message);
-            return { text: `[Vision Analysis Failed] Error: ${error.message}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+            console.error(`[Vision][Pro Plus] Primary endpoint failed:`, error.message);
+            const fallbackEndpoint = getProPlusFallbackEndpoint();
+            if (!fallbackEndpoint) {
+                return { text: `[Vision Analysis Failed] Error: ${error.message}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+            }
+
+            try {
+                const payload = {
+                    model: fallbackEndpoint.model,
+                    messages: [
+                        {
+                            role: "user",
+                            content: [
+                                { type: "text", text: systemPrompt },
+                                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                            ]
+                        }
+                    ]
+                };
+
+                console.warn(`[Vision][Pro Plus] Trying fallback engine (${fallbackEndpoint.model})`);
+                const res = await axios.post(`${fallbackEndpoint.baseURL}/chat/completions`, payload, {
+                    headers: getStealthHeaders(fallbackEndpoint.apiKey, 'openai'),
+                    proxy: false,
+                    timeout: 120000
+                });
+
+                const resultText = res.data?.choices?.[0]?.message?.content;
+                const usageTokens = res.data?.usage?.total_tokens || 0;
+                if (!resultText) throw new Error(`Empty response from Pro Plus fallback model ${fallbackEndpoint.model}`);
+
+                return { text: resultText, usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
+            } catch (fallbackError) {
+                console.error(`[Vision][Pro Plus] Fallback engine failed:`, fallbackError.message);
+                return { text: `[Vision Analysis Failed] Error: ${fallbackError.message}`, usage: 0, model: PRO_PLUS_BRANDED_MODEL };
+            }
         }
     }
 
@@ -4121,7 +4219,46 @@ async function transcribeAudio(audioUrl, config) {
             return { text: transcribedText.trim(), usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
         } catch (err) {
             await handleAiError(err, endpoint.apiKey, endpoint.model, 'voice');
-            console.warn(`[Audio] Pro Plus audio failed, falling back to regular voice chain: ${err?.message || 'Unknown'}`);
+            const fallbackEndpoint = getProPlusFallbackEndpoint();
+
+            if (fallbackEndpoint) {
+                try {
+                    console.warn(`[Audio] Pro Plus audio failed, trying fallback engine (${fallbackEndpoint.model}): ${err?.message || 'Unknown'}`);
+                    const chatPayload = {
+                        model: fallbackEndpoint.model,
+                        messages: [{
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: "Transcribe the attached audio exactly. The speaker is most likely using Bangla/Bengali, including Bangladeshi colloquial speech and regional dialects such as Sylheti, Dhakaiya, Chattogrami, Barishali, Rangpuri, Noakhali, or mixed Bangla-English. Do not translate or summarize. Keep Bangla words in Bangla script when possible. Output ONLY the transcription text." },
+                                {
+                                    type: 'input_audio',
+                                    input_audio: {
+                                        data: audioBuffer.toString('base64'),
+                                        format: mimeType === 'audio/mpeg' ? 'mp3' : (mimeType.split('/')[1] || 'mp3')
+                                    }
+                                }
+                            ]
+                        }]
+                    };
+
+                    const res = await axios.post(`${fallbackEndpoint.baseURL}/chat/completions`, chatPayload, {
+                        headers: getStealthHeaders(fallbackEndpoint.apiKey, 'openai'),
+                        proxy: false,
+                        timeout: 120000
+                    });
+
+                    const transcribedText = res.data?.choices?.[0]?.message?.content;
+                    const usageTokens = res.data?.usage?.total_tokens || 0;
+                    if (!transcribedText || isUnusableAudioTranscription(transcribedText)) throw new Error(`Unusable response from Pro Plus fallback audio model ${fallbackEndpoint.model}`);
+
+                    return { text: transcribedText.trim(), usage: usageTokens, model: PRO_PLUS_BRANDED_MODEL };
+                } catch (fallbackErr) {
+                    await handleAiError(fallbackErr, fallbackEndpoint.apiKey, fallbackEndpoint.model, 'voice');
+                    console.warn(`[Audio] Pro Plus fallback engine failed, falling back to regular voice chain: ${fallbackErr?.message || 'Unknown'}`);
+                }
+            } else {
+                console.warn(`[Audio] Pro Plus audio failed, falling back to regular voice chain: ${err?.message || 'Unknown'}`);
+            }
         }
     }
 
