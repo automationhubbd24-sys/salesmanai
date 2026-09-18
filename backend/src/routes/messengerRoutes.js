@@ -26,7 +26,9 @@ const smartInboxUpload = multer({
 async function ensureMessengerPageColumns() {
     await pgClient.query(`
         ALTER TABLE page_access_token_message
-        ADD COLUMN IF NOT EXISTS user_access_token text
+        ADD COLUMN IF NOT EXISTS user_access_token text,
+        ADD COLUMN IF NOT EXISTS page_tasks jsonb,
+        ADD COLUMN IF NOT EXISTS token_diagnostics jsonb
     `);
 }
 
@@ -78,6 +80,28 @@ function reqSafeEmail(authorization) {
     return authorization.membership?.member_email || '';
 }
 
+function normalizePageTasks(tasks) {
+    if (!Array.isArray(tasks)) return [];
+    return [...new Set(tasks.map((task) => String(task || '').trim()).filter(Boolean))];
+}
+
+function hasMessengerCapableTask(tasks) {
+    const normalized = normalizePageTasks(tasks).map((task) => task.toUpperCase());
+    return normalized.some((task) => ['MESSAGING', 'MANAGE', 'MODERATE'].includes(task));
+}
+
+function getFacebookErrorDetails(error) {
+    const fbError = error.response?.data?.error;
+    return {
+        message: fbError?.message || error.message || 'Facebook API request failed.',
+        type: fbError?.type,
+        code: fbError?.code,
+        subcode: fbError?.error_subcode,
+        fbtrace_id: fbError?.fbtrace_id,
+        status: error.response?.status
+    };
+}
+
 async function subscribeMessengerPage(pageId, pageAccessToken) {
     const fields = ['messages', 'messaging_postbacks', 'message_deliveries', 'message_reads', 'message_echoes', 'feed'];
     try {
@@ -94,48 +118,50 @@ async function subscribeMessengerPage(pageId, pageAccessToken) {
         return {
             success: false,
             code: facebookError?.code ? `FACEBOOK_SUBSCRIPTION_${facebookError.code}` : 'MESSENGER_SUBSCRIPTION_FAILED',
-            message
+            message,
+            facebook: getFacebookErrorDetails(error)
         };
     }
 }
 
 async function verifyFacebookPageAccessToken(pageId, pageAccessToken) {
-    console.log('🔍 [DEBUG] verifyFacebookPageAccessToken called for page ID:', pageId);
     try {
-        console.log('🔍 [DEBUG] Calling Facebook Graph API to verify token...');
         const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}`, {
             params: {
-                fields: 'id,name',
+                fields: 'id,name,tasks',
                 access_token: pageAccessToken
             },
             timeout: 15000
         });
 
-        console.log('✅ [DEBUG] Facebook Graph API verify response:', response.data);
-
         if (!response.data?.id || String(response.data.id) !== String(pageId)) {
-            console.error('❌ [DEBUG] Page ID mismatch! Expected:', pageId, 'Got:', response.data?.id);
-            throw new Error('Facebook returned a different page ID for this token.');
+            const mappedError = new Error('Facebook returned a different page ID for this token.');
+            mappedError.statusCode = 400;
+            mappedError.details = { expectedPageId: String(pageId), returnedPageId: response.data?.id };
+            throw mappedError;
         }
 
-        console.log('✅ [DEBUG] Token verified successfully for page:', response.data.name);
-        return response.data;
+        return {
+            ...response.data,
+            tasks: normalizePageTasks(response.data?.tasks)
+        };
     } catch (error) {
-        console.error('❌ [DEBUG] Facebook token verification failed!', {
-            message: error.message,
-            responseData: error.response?.data,
-            statusCode: error.response?.status
+        console.error('[Messenger] Facebook token verification failed:', {
+            pageId,
+            facebook: getFacebookErrorDetails(error)
         });
         const fbError = error.response?.data?.error;
         if (fbError?.code === 190 || fbError?.code === 102) {
             const mappedError = new Error('Invalid or expired Facebook page token. Please reconnect the page and approve all permissions again.');
             mappedError.statusCode = 400;
+            mappedError.details = getFacebookErrorDetails(error);
             throw mappedError;
         }
 
         if (fbError?.message) {
             const mappedError = new Error(fbError.message);
             mappedError.statusCode = error.response?.status || 400;
+            mappedError.details = getFacebookErrorDetails(error);
             throw mappedError;
         }
 
@@ -302,6 +328,7 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
     });
     try {
         const { page_id, name, page_access_token, user_access_token, email } = req.body;
+        const pageTasks = normalizePageTasks(req.body.tasks);
         const userId = req.user.id;
 
         if (!page_id || !name || !page_access_token || !email) {
@@ -314,7 +341,17 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         console.log('✅ [DEBUG] Step 2: Starting Facebook token verification...');
         const verifiedPage = await verifyFacebookPageAccessToken(page_id, page_access_token);
-        console.log('✅ [DEBUG] Step 2: Token verified successfully!', verifiedPage);
+        const verifiedTasks = normalizePageTasks(verifiedPage?.tasks?.length ? verifiedPage.tasks : pageTasks);
+        const taskDiagnostics = {
+            tasks: verifiedTasks,
+            has_messenger_capable_task: hasMessengerCapableTask(verifiedTasks),
+            note: verifiedTasks.length === 0 ? 'Meta did not return Page task details for this token.' : null
+        };
+        console.log('✅ [DEBUG] Step 2: Token verified successfully!', {
+            id: verifiedPage.id,
+            name: verifiedPage.name,
+            ...taskDiagnostics
+        });
 
         const pageExists = await pgClient.query(
             'SELECT page_id FROM page_access_token_message WHERE page_id = $1',
@@ -343,16 +380,22 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         const ownerEmail = email.toLowerCase();
 
+        const initialSubscriptionStatus = hasMessengerCapableTask(verifiedTasks) || verifiedTasks.length === 0
+            ? 'active'
+            : 'saved_permission_review_needed';
+
         await pgClient.query(
-            `INSERT INTO page_access_token_message (page_id, name, page_access_token, user_access_token, email, user_id, ai, chat_model, cheap_engine, subscription_status)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            `INSERT INTO page_access_token_message (page_id, name, page_access_token, user_access_token, email, user_id, ai, chat_model, cheap_engine, subscription_status, page_tasks, token_diagnostics)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb)
              ON CONFLICT (page_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 page_access_token = EXCLUDED.page_access_token,
                 user_access_token = COALESCE(EXCLUDED.user_access_token, page_access_token_message.user_access_token),
                 email = EXCLUDED.email,
                 user_id = EXCLUDED.user_id,
-                subscription_status = EXCLUDED.subscription_status`,
+                subscription_status = EXCLUDED.subscription_status,
+                page_tasks = EXCLUDED.page_tasks,
+                token_diagnostics = EXCLUDED.token_diagnostics`,
             [
                 String(page_id),
                 verifiedPage?.name || name,
@@ -363,13 +406,30 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
                 'gemini',
                 'salesmanchatbot-pro-plus',
                 true,
-                'active'
+                initialSubscriptionStatus,
+                JSON.stringify(verifiedTasks),
+                JSON.stringify(taskDiagnostics)
             ]
         );
 
         const subscription = await subscribeMessengerPage(String(page_id), page_access_token);
+        const finalSubscriptionStatus = subscription.success
+            ? initialSubscriptionStatus
+            : 'saved_subscription_failed';
+
         if (!subscription.success) {
             console.warn(`[Messenger] Page saved, but automatic webhook field subscription failed for ${page_id}: ${subscription.message}`);
+            await pgClient.query(
+                `UPDATE page_access_token_message
+                 SET subscription_status = $2,
+                     token_diagnostics = COALESCE(token_diagnostics, '{}'::jsonb) || $3::jsonb
+                 WHERE page_id = $1`,
+                [
+                    String(page_id),
+                    finalSubscriptionStatus,
+                    JSON.stringify({ subscription_error: subscription })
+                ]
+            );
         }
 
         // SYNC ALL PRODUCTS TO THIS NEW PAGE ID (Automatic)
@@ -453,12 +513,18 @@ router.post('/pages/manual', authMiddleware, async (req, res) => {
 
         res.json({
             id: dbId,
-            subscription_status: subscription.success ? 'active' : 'saved_subscription_failed',
-            subscription_error: subscription.success ? null : subscription.message
+            subscription_status: finalSubscriptionStatus,
+            subscription_error: subscription.success ? null : subscription.message,
+            subscription_details: subscription.success ? null : subscription,
+            page_tasks: verifiedTasks,
+            has_messenger_capable_task: taskDiagnostics.has_messenger_capable_task
         });
     } catch (error) {
         console.error('Error saving Messenger page (manual):', error);
-        res.status(error.statusCode || 500).json({ error: error.message });
+        res.status(error.statusCode || 500).json({
+            error: error.message,
+            details: error.details || null
+        });
     }
 });
 

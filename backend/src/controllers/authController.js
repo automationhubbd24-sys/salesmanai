@@ -122,6 +122,18 @@ async function exchangeFacebookCodeForToken(code, redirectUri, appId, appSecret)
     return response.data;
 }
 
+function getFacebookErrorDetails(error) {
+    const fbError = error.response?.data?.error;
+    return {
+        message: fbError?.message || error.message || 'Facebook API request failed.',
+        type: fbError?.type,
+        code: fbError?.code,
+        subcode: fbError?.error_subcode,
+        fbtrace_id: fbError?.fbtrace_id,
+        status: error.response?.status
+    };
+}
+
 function normalizeMessengerPages(pages) {
     const byId = new Map();
 
@@ -130,10 +142,13 @@ function normalizeMessengerPages(pages) {
 
         const id = String(page.id);
         const existing = byId.get(id) || {};
+        const sources = new Set([...(existing.sources || []), ...(page.source ? [page.source] : [])]);
         byId.set(id, {
             ...existing,
             id,
             name: page.name || existing.name || id,
+            sources: Array.from(sources),
+            has_access_token: Boolean(page.access_token || existing.access_token),
             ...(page.access_token ? { access_token: page.access_token } : {}),
             ...(Array.isArray(page.tasks) ? { tasks: page.tasks } : {})
         });
@@ -160,8 +175,9 @@ async function getGraphCollection(path, accessToken, fields) {
     return items;
 }
 
-async function getGraphPageCollection(path, accessToken) {
-    return getGraphCollection(path, accessToken, 'id,name,access_token,tasks');
+async function getGraphPageCollection(path, accessToken, source) {
+    const pages = await getGraphCollection(path, accessToken, 'id,name,access_token,tasks');
+    return pages.map((page) => ({ ...page, source }));
 }
 
 async function resolveMessengerPages(accessToken) {
@@ -169,11 +185,12 @@ async function resolveMessengerPages(accessToken) {
     let pages = [];
 
     try {
-        pages.push(...await getGraphPageCollection('/me/accounts', accessToken));
+        pages.push(...await getGraphPageCollection('/me/accounts', accessToken, 'me/accounts'));
     } catch (error) {
         diagnostics.push({
             code: 'MESSENGER_ACCOUNTS_UNAVAILABLE',
-            message: 'Unable to retrieve pages from the Facebook accounts endpoint.'
+            message: 'Unable to retrieve pages from the Facebook accounts endpoint.',
+            facebook: getFacebookErrorDetails(error)
         });
     }
 
@@ -183,32 +200,60 @@ async function resolveMessengerPages(accessToken) {
     } catch (error) {
         diagnostics.push({
             code: 'MESSENGER_BUSINESS_DISCOVERY_UNAVAILABLE',
-            message: 'Business Portfolio discovery is unavailable for this Facebook account.'
+            message: 'Business Portfolio discovery is unavailable for this Facebook account.',
+            facebook: getFacebookErrorDetails(error)
         });
     }
 
     for (const business of businesses) {
         for (const relationship of ['owned_pages', 'client_pages', 'assigned_pages']) {
             try {
-                const businessPages = await getGraphPageCollection(`/${business.id}/${relationship}`, accessToken);
+                const source = `business:${business.id}:${relationship}`;
+                const businessPages = await getGraphPageCollection(`/${business.id}/${relationship}`, accessToken, source);
                 pages.push(...businessPages);
             } catch (error) {
                 diagnostics.push({
                     code: `MESSENGER_BUSINESS_${relationship.toUpperCase()}_UNAVAILABLE`,
                     business_id: business.id,
-                    message: `Unable to retrieve ${relationship.replace('_', ' ')} for this Business Portfolio.`
+                    business_name: business.name,
+                    message: `Unable to retrieve ${relationship.replace('_', ' ')} for this Business Portfolio.`,
+                    facebook: getFacebookErrorDetails(error)
                 });
             }
         }
     }
 
     const normalizedPages = normalizeMessengerPages(pages);
+    const tokenlessPages = normalizedPages
+        .filter((page) => !page.access_token)
+        .map((page) => ({
+            id: page.id,
+            name: page.name,
+            tasks: page.tasks || [],
+            sources: page.sources || []
+        }));
+
     if (normalizedPages.length === 0) {
         diagnostics.push({
             code: 'MESSENGER_NO_PAGES_FOUND',
             message: 'No Facebook Pages are available for this account.'
         });
     }
+
+    if (tokenlessPages.length > 0) {
+        diagnostics.push({
+            code: 'MESSENGER_PAGE_TOKENS_MISSING',
+            message: 'Some Pages were returned by Meta without Page access tokens. Assign Full Control or Messages access for those Pages, then reconnect.',
+            pages: tokenlessPages
+        });
+    }
+
+    console.log('[Messenger Page Resolution]', {
+        totalPages: normalizedPages.length,
+        pagesWithToken: normalizedPages.filter((page) => page.access_token).length,
+        pagesWithoutToken: tokenlessPages.length,
+        diagnostics
+    });
 
     return { pages: normalizedPages, diagnostics };
 }

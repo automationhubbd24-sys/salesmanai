@@ -51,6 +51,8 @@ interface FacebookPage {
     name: string;
     access_token?: string;
     tasks?: string[];
+    sources?: string[];
+    has_access_token?: boolean;
 }
 
 interface PageData {
@@ -332,11 +334,20 @@ export default function MessengerIntegrationPage() {
 
         let successCount = 0;
         let skippedTokenlessCount = 0;
+        let subscriptionWarningCount = 0;
+        const skippedPages: FacebookPage[] = [];
+        const failedPages: Array<{ page: FacebookPage; reason: string; details?: any }> = [];
         for (const [index, page] of facebookPages.entries()) {
             console.log(`🔄 [DEBUG] Processing page ${index + 1}/${facebookPages.length}:`, page.name, page.id);
             if (!page.access_token) {
                 skippedTokenlessCount++;
-                addLog('warning', 'Page Token', `Skipping ${page.name || page.id} because Meta did not return a Page access token`, { pageId: page.id, tasks: page.tasks });
+                skippedPages.push(page);
+                addLog('warning', 'Page Token Missing', `${page.name || page.id} connect হয়নি: Meta এই Page-এর access token দেয়নি`, {
+                    pageId: page.id,
+                    tasks: page.tasks || [],
+                    sources: page.sources || [],
+                    fix: 'Meta Business Settings থেকে এই Facebook account-কে Page Full Control বা Messages access দিন, তারপর reconnect করুন।'
+                });
                 continue;
             }
 
@@ -357,6 +368,7 @@ export default function MessengerIntegrationPage() {
                         user_access_token: userAccessToken,
                         email: userEmail,
                         user_id: userId,
+                        tasks: page.tasks || [],
                     }),
                 });
 
@@ -364,9 +376,11 @@ export default function MessengerIntegrationPage() {
                 const body = await res.json().catch(() => ({}));
                 console.log(`✅ [DEBUG] Backend response body:`, body);
                 if (!res.ok) {
-                    const msg = body.error || "Failed to save page";
+                    const msg = body.error || body.details?.message || "Failed to save page";
+                    failedPages.push({ page, reason: msg, details: body });
                     console.error(`❌ [DEBUG] Error saving page ${page.name}:`, msg);
-                    toast.error(`DB Error (${page.name}): ${msg}`);
+                    toast.error(`${page.name} connect হয়নি: ${msg}`);
+                    addLog('error', 'Backend Save', `${page.name} connect হয়নি: ${msg}`, body);
                     logFrontendError({
                         message: `Backend Save Error: ${msg}`,
                         context: 'MessengerIntegrationPage:savePagesToBackend:Upsert',
@@ -381,9 +395,23 @@ export default function MessengerIntegrationPage() {
                     dbId = body.id;
                 }
 
+                if (body.subscription_status === 'saved_subscription_failed') {
+                    subscriptionWarningCount++;
+                    addLog('warning', 'Webhook Subscription', `${page.name} save হয়েছে, কিন্তু webhook subscription failed`, {
+                        error: body.subscription_error,
+                        details: body.subscription_details
+                    });
+                } else if (body.subscription_status === 'saved_permission_review_needed') {
+                    subscriptionWarningCount++;
+                    addLog('warning', 'Page Tasks', `${page.name} save হয়েছে, কিন্তু Meta task list-এ MESSAGING/MANAGE/MODERATE পাওয়া যায়নি`, {
+                        tasks: body.page_tasks || page.tasks || []
+                    });
+                }
+
                 successCount++;
                 console.log(`✅ [DEBUG] Page ${page.name} successfully processed! Total success so far: ${successCount}`);
             } catch (err: any) {
+                failedPages.push({ page, reason: err.message || 'Unexpected error', details: err });
                 console.error(`❌ [DEBUG] Critical exception processing page ${page.name}`, err);
                 logFrontendError({
                     message: `Process Page Exception: ${err.message}`,
@@ -395,11 +423,22 @@ export default function MessengerIntegrationPage() {
             }
         }
 
+        if (skippedPages.length > 0) {
+            const pageNames = skippedPages.slice(0, 3).map((page) => page.name || page.id).join(', ');
+            const moreText = skippedPages.length > 3 ? ` সহ আরও ${skippedPages.length - 3}টি` : '';
+            toast.warning(`${pageNames}${moreText} connect হয়নি: এই Facebook account-এ Page Full Control/Messages access নেই।`);
+        }
+
+        if (failedPages.length > 0) {
+            addLog('error', 'Failed Pages Summary', `${failedPages.length}টি Page connect failed`, failedPages);
+        }
+
         if (successCount > 0) {
-            toast.success(`Successfully connected ${successCount} pages!`);
+            const warningText = subscriptionWarningCount > 0 ? ` (${subscriptionWarningCount}টি warning আছে)` : '';
+            toast.success(`${successCount}টি Page connected${warningText}`);
             fetchPages();
         } else if (skippedTokenlessCount > 0) {
-            toast.error("Meta returned pages without Page access tokens. Assign yourself Page access/tasks in Business Settings, then reconnect.");
+            toast.error("কোনো Page connect হয়নি। Meta Business Settings থেকে এই account-কে Page Full Control বা Messages access দিন, তারপর reconnect করুন।");
         } else {
             toast.error("Failed to connect pages.");
         }
@@ -580,7 +619,11 @@ export default function MessengerIntegrationPage() {
                     } else {
                         reject(new Error('User cancelled login or did not fully authorize.'));
                     }
-                }, {scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_read_user_engagement,pages_manage_engagement,pages_manage_metadata,business_management'});
+                }, {
+                    scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_read_user_engagement,pages_manage_engagement,pages_manage_metadata,pages_read_user_content,business_management',
+                    auth_type: 'rerequest',
+                    return_scopes: true
+                });
             });
 
             console.log('Successfully logged in, exchanging token...');
@@ -651,8 +694,21 @@ export default function MessengerIntegrationPage() {
                 throw new Error("No Facebook pages found. If you are a Business Manager Owner, please assign yourself to the page under Business Settings > Add People.");
             }
 
+            const tokenlessPages = facebookPages.filter((page) => !page.access_token);
+            if (tokenlessPages.length > 0) {
+                addLog('warning', 'Page Access Review', `${tokenlessPages.length}টি Page পাওয়া গেছে কিন্তু token আসেনি`, {
+                    pages: tokenlessPages.map((page) => ({
+                        id: page.id,
+                        name: page.name,
+                        tasks: page.tasks || [],
+                        sources: page.sources || []
+                    })),
+                    fix: 'ওই Page গুলোতে এই Facebook account-কে Full Control বা Messages access দিতে হবে।'
+                });
+            }
+
             addLog('success', 'Backend API', `Found ${facebookPages.length} pages`, {
-                pages: facebookPages.map((page) => page.name),
+                pages: facebookPages.map((page) => ({ name: page.name, hasToken: Boolean(page.access_token), tasks: page.tasks || [] })),
                 diagnostics: pageResolution.diagnostics
             });
 
