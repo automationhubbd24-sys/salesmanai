@@ -598,10 +598,70 @@ export default function MessengerIntegrationPage() {
             return;
         }
 
+        if (!window.FB) {
+            toast.error("Facebook SDK is not loaded yet. Please try again.");
+            return;
+        }
+
+        const messengerConfigId = import.meta.env.VITE_FACEBOOK_MESSENGER_CONFIG_ID || "1431073388901771";
+
         setConnecting(true);
         setIsLogsOpen(true);
-        addLog('info', 'FB Login', 'Redirecting to Facebook Login for Business...');
-        beginMessengerMobileOAuth();
+        addLog('info', 'FB Login', 'Opening Facebook Login for Business popup...');
+
+        window.FB.login((response: any) => {
+            if (!response.authResponse?.accessToken) {
+                setConnecting(false);
+                toast.error("Facebook login was cancelled.");
+                addLog('error', 'FB Login', 'Facebook login cancelled or access token missing', response);
+                return;
+            }
+
+            const accessToken = response.authResponse.accessToken;
+            addLog('success', 'FB Login', 'User authorized app successfully', {
+                config_id: messengerConfigId,
+                scopes: response.authResponse.grantedScopes,
+            });
+
+            window.FB.api(
+                '/me/accounts',
+                'get',
+                {
+                    fields: 'id,name,access_token,tasks',
+                    access_token: accessToken,
+                },
+                async (accountsResponse: any) => {
+                    try {
+                        if (!accountsResponse || accountsResponse.error) {
+                            throw new Error(accountsResponse?.error?.message || "Failed to fetch Facebook pages.");
+                        }
+
+                        const facebookPages = Array.isArray(accountsResponse.data) ? accountsResponse.data : [];
+                        addLog('info', 'Backend API', `Found ${facebookPages.length} pages`, {
+                            pages: facebookPages.map((page: FacebookPage) => ({
+                                name: page.name,
+                                hasToken: !!page.access_token,
+                                tasks: page.tasks || [],
+                            })),
+                        });
+
+                        if (facebookPages.length === 0) {
+                            throw new Error("No Facebook pages found for this account.");
+                        }
+
+                        await savePagesToBackend(facebookPages, accessToken);
+                    } catch (error: any) {
+                        addLog('error', 'Backend API', error.message || 'Failed to connect pages', error);
+                        toast.error(error.message || "Failed to connect Facebook pages");
+                    } finally {
+                        setConnecting(false);
+                    }
+                }
+            );
+        }, {
+            config_id: messengerConfigId,
+            auth_type: 'reauthorize',
+        });
     };
 
     const handleDirectConnect = async () => {
