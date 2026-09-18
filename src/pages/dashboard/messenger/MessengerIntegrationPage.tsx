@@ -620,7 +620,7 @@ export default function MessengerIntegrationPage() {
                         reject(new Error('User cancelled login or did not fully authorize.'));
                     }
                 }, {
-                    scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_read_user_engagement,pages_manage_engagement,pages_manage_metadata,pages_read_user_content,business_management',
+                    scope: 'email,public_profile,pages_show_list,pages_messaging,pages_read_engagement,pages_manage_engagement,pages_manage_metadata,pages_read_user_content,business_management',
                     auth_type: 'rerequest',
                     return_scopes: true
                 });
