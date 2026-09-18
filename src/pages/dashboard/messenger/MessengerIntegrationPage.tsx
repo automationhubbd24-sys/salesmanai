@@ -117,6 +117,8 @@ export default function MessengerIntegrationPage() {
     const [directLoading, setDirectLoading] = useState(false);
     const [isManualSetupOpen, setIsManualSetupOpen] = useState(false);
     const [isMobileConnectDialogOpen, setIsMobileConnectDialogOpen] = useState(false);
+    const [pagePendingRemoval, setPagePendingRemoval] = useState<PageData | null>(null);
+    const [removingPageId, setRemovingPageId] = useState<string | null>(null);
 
     // Logs State
     const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([]);
@@ -697,10 +699,8 @@ export default function MessengerIntegrationPage() {
     };
 
     const handleRemovePage = async (page: PageData) => {
-        console.log("handleRemovePage page object:", page); // Debug log
-        if (!confirm(`Are you sure you want to disconnect ${page.name}? This will stop the bot from replying.`)) {
-            return;
-        }
+        console.log("handleRemovePage page object:", page);
+        setRemovingPageId(page.page_id);
 
         try {
             // 1. Try to unsubscribe from Facebook (best effort)
@@ -742,6 +742,7 @@ export default function MessengerIntegrationPage() {
             }
             
             toast.success(`Disconnected ${page.name}`);
+            setPagePendingRemoval(null);
             fetchPages();
 
         } catch (error: any) {
@@ -754,6 +755,8 @@ export default function MessengerIntegrationPage() {
                 pageId: page.page_id
             });
             toast.error(`Failed to disconnect: ${error.message}`);
+        } finally {
+            setRemovingPageId(null);
         }
     };
 
@@ -1003,8 +1006,8 @@ export default function MessengerIntegrationPage() {
                                                         <Database className="mr-2 h-4 w-4" />
                                                         Manage
                                                     </Button>
-                                                    <Button variant="destructive" size="sm" onClick={() => handleRemovePage(page)}>
-                                                        <Trash2 className="h-4 w-4" />
+                                                    <Button variant="destructive" size="sm" onClick={() => setPagePendingRemoval(page)} disabled={removingPageId === page.page_id}>
+                                                        {removingPageId === page.page_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                                     </Button>
                                                 </div>
                                             </TableCell>
@@ -1016,6 +1019,34 @@ export default function MessengerIntegrationPage() {
                     )}
                 </CardContent>
             </Card>
+
+            <AlertDialog open={!!pagePendingRemoval} onOpenChange={(open) => !open && setPagePendingRemoval(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Disconnect {pagePendingRemoval?.name}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will remove the connected Page from your workspace and stop the bot from replying to this Page.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={!!removingPageId}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            disabled={!!removingPageId || !pagePendingRemoval}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                if (pagePendingRemoval) {
+                                    void handleRemovePage(pagePendingRemoval);
+                                }
+                            }}
+                        >
+                            {removingPageId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Disconnect Page
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
             {/* Logs Dialog */}
             <AlertDialog open={isLogsOpen} onOpenChange={setIsLogsOpen}>
                 <AlertDialogContent className="max-w-3xl h-[80vh] flex flex-col p-0 overflow-hidden bg-gray-50/50 backdrop-blur-xl border border-gray-200 shadow-2xl">
