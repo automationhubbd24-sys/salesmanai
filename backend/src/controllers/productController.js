@@ -1548,7 +1548,7 @@ function collectDirectEmbeddingImageUrls(product = {}) {
     parseArrayField(product.additional_images).forEach(pushUrl);
     parseArrayField(product.variants).forEach((variant) => pushUrl(variant?.image_url));
     parseArrayField(product.sku_matrix).forEach((sku) => pushUrl(sku?.image_url));
-    return urls.slice(0, Number(process.env.IMAGE_EMBEDDING_MAX_PRODUCT_IMAGES || 8));
+    return urls;
 }
 
 function queueDirectProductImageEmbeddings(product, userId, pageIds = []) {

@@ -6,6 +6,7 @@ const facebookService = require('../services/facebookService');
 const commentAutomationService = require('../services/commentAutomationService');
 const incomingImageAnalysisService = require('../services/incomingImageAnalysisService');
 const runtimeMonitor = require('../services/runtimeMonitor');
+const diagnosticService = require('../services/diagnosticService');
 const datasetCollectorService = require('../services/datasetCollectorService');
 const { runMessengerWorkflow } = require('../services/messenger_workflow');
 const { runWhatsAppWorkflow } = require('../services/whatsapp_workflow');
@@ -1440,6 +1441,9 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     };
     // Get trigger timestamp (use first message's time or current time)
     const triggerTimestamp = Date.now();
+    let diagnosticTrace = null;
+    let diagnosticOrderData = null;
+    let diagnosticOrderError = null;
     let totalVisionTokens = 0;
     let totalAudioTokens = 0;
 
@@ -1501,6 +1505,13 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             reply_by: 'user'
         });
     }
+
+    diagnosticTrace = await diagnosticService.startTrace({
+        pageId: effectiveSessionName,
+        platform: 'whatsapp',
+        senderId: conversationId,
+        userMessageId: bufferedMessages[0]?.id
+    });
 
     // --- FEATURE FLAGS CHECK (WhatsApp Cloud API) ---
     // Read/typing is intentionally delayed until the bot is ready to reply.
@@ -2197,6 +2208,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     try {
         const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
+        diagnosticOrderData = orderDataFromAI || {};
         await orderService.orchestrateOrder({
             pageId: effectiveSessionName,
             senderId: conversationId,
@@ -2221,6 +2233,7 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
             finalReplyText = finalReplyText.replace(orderMatch[0], '').trim();
         }
     } catch (orderErr) {
+        diagnosticOrderError = orderErr.message;
         console.warn(`[WhatsApp Webhook] Order orchestration failed: ${orderErr.message}`);
     }
 
@@ -2428,6 +2441,39 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         } else {
              console.log(`[WhatsApp Webhook] Credit deducted successfully for ${effectiveSessionName}.`);
         }
+    }
+
+    if (diagnosticTrace) {
+        await diagnosticService.saveTrace(diagnosticTrace, {
+            bot_message_id: `reply_${bufferedMessages[0].id}_0`,
+            ai_data: {
+                provider: aiResponse?.provider || null,
+                model: aiResponse?.model || aiResponse?.ai_model || null,
+                action: aiResponse?.action || null,
+                product_id: aiResponse?.product_id || effectiveProductId || null,
+                reply_raw: aiResponse?.reply || null,
+                reply_final: finalReplyText || null,
+                order_details: aiResponse?.order_details || null,
+                fallback_used: Boolean(aiResponse?.error)
+            },
+            product_data: {
+                selected_product_id: effectiveProductId || aiResponse?.product_id || null,
+                product_ids: structuredDeliveryItems.map(item => item.product_id).filter(Boolean),
+                send_queue_items: sendQueue.length
+            },
+            vision_data: {
+                has_image: allImages.length > 0,
+                image_count: allImages.length,
+                audio_count: allAudios.length
+            },
+            order_data: {
+                order_save_attempted: Boolean(diagnosticOrderData && Object.keys(diagnosticOrderData).length),
+                order_saved: !diagnosticOrderError && Boolean(diagnosticOrderData && Object.keys(diagnosticOrderData).length),
+                order_payload: diagnosticOrderData,
+                order_error: diagnosticOrderError
+            },
+            error_data: aiResponse?.error ? { message: aiResponse.error } : {}
+        });
     }
 
     const sentImageCount = sendQueue.reduce((total, entry) => total + entry.images.length, 0);
@@ -3132,6 +3178,52 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
     let hasPostback = false;
     let adContext = "";
     let adId = null;
+    let diagnosticTrace = null;
+    let diagnosticTraceSaved = false;
+    let diagnosticOrderData = null;
+    let diagnosticOrderError = null;
+    let diagnosticAiResponse = null;
+    let diagnosticFinalUserMessage = '';
+    let diagnosticFinalReply = '';
+    let diagnosticEffectiveProductId = null;
+    let diagnosticBotMessageId = null;
+
+    const saveMessengerDiagnosticTrace = async (extra = {}) => {
+        if (!diagnosticTrace || diagnosticTraceSaved) return;
+        diagnosticTraceSaved = true;
+        await diagnosticService.saveTrace(diagnosticTrace, {
+            bot_message_id: diagnosticBotMessageId,
+            ai_data: {
+                provider: diagnosticAiResponse?.provider || null,
+                model: diagnosticAiResponse?.model || diagnosticAiResponse?.ai_model || null,
+                action: diagnosticAiResponse?.action || null,
+                product_id: diagnosticAiResponse?.product_id || diagnosticEffectiveProductId || null,
+                reply_raw: diagnosticAiResponse?.reply || null,
+                reply_final: diagnosticFinalReply || null,
+                order_details: diagnosticAiResponse?.order_details || null,
+                fallback_used: Boolean(diagnosticAiResponse?.error),
+                final_user_message_preview: diagnosticFinalUserMessage ? diagnosticFinalUserMessage.slice(0, 3000) : null
+            },
+            product_data: {
+                selected_product_id: diagnosticEffectiveProductId || diagnosticAiResponse?.product_id || null,
+                found_products: Array.isArray(diagnosticAiResponse?.foundProducts) ? diagnosticAiResponse.foundProducts.slice(0, 10).map(p => ({ id: p.id || p.product_id, name: p.name, price: p.price, currency: p.currency })) : [],
+                image_count: Array.isArray(diagnosticAiResponse?.images) ? diagnosticAiResponse.images.length : 0,
+                video_count: Array.isArray(diagnosticAiResponse?.videos) ? diagnosticAiResponse.videos.length : 0
+            },
+            vision_data: {
+                has_image: allImages.length > 0,
+                image_count: allImages.length,
+                audio_count: allAudios.length
+            },
+            order_data: {
+                order_save_attempted: Boolean(diagnosticOrderData && Object.keys(diagnosticOrderData).length),
+                order_saved: !diagnosticOrderError && Boolean(diagnosticOrderData && Object.keys(diagnosticOrderData).length),
+                order_payload: diagnosticOrderData,
+                order_error: diagnosticOrderError
+            },
+            error_data: extra.error ? { message: extra.error } : (diagnosticAiResponse?.error ? { message: diagnosticAiResponse.error } : {})
+        });
+    };
 
     try {
         // Reconstruct Combined Message & Extract Metadata
@@ -3283,6 +3375,12 @@ async function processBufferedMessages(sessionId, pageId, senderId, messages) {
                 dbService.saveChatMessage(sessionId, 'user', msgText, msg.id).catch(() => {});
             }
         }
+        diagnosticTrace = await diagnosticService.startTrace({
+            pageId,
+            platform: 'messenger',
+            senderId,
+            userMessageId: messages[0]?.id
+        });
         // -------------------------------------------
 
     const normalizedForEmojiCheck = combinedText.replace(/\s/g, '');
@@ -3883,6 +3981,7 @@ STRICT RULES:
         }
         
         const finalUserMessage = `${smartAdContext}${replyContext}${combinedText}${promptProductContext}`;
+        diagnosticFinalUserMessage = finalUserMessage;
         // #region debug-point ads-product-routing:messenger-final-ai-context
         reportAdsProductRoutingDebug('H5', 'webhookController.js:messenger.finalUserMessage', 'messenger final AI context before generation', {
             pageId,
@@ -3948,6 +4047,7 @@ STRICT RULES:
                 extraTokenUsage: totalVisionTokens + totalAudioTokens,
                 senderName: senderName
             });
+            diagnosticAiResponse = aiResponse;
         } catch (genErr) {
             console.error(`[Webhook] AI Generation CRITICAL Error:`, genErr.message);
             
@@ -3963,6 +4063,7 @@ STRICT RULES:
                     status: 'api_failure',
                     reply_by: 'system'
                 });
+                await saveMessengerDiagnosticTrace({ error: genErr.message });
                 // STOP THE PROCESS: No message to user
                 return;
             }
@@ -3972,6 +4073,7 @@ STRICT RULES:
                 reply: aiConfig.fallback_message || "দুঃখিত, সার্ভার বর্তমানে ব্যস্ত আছে। একটু পরে আবার চেষ্টা করুন।",
                 error: genErr.message
             };
+            diagnosticAiResponse = aiResponse;
         }
         
         // #region debug-point messenger-latency
@@ -3984,10 +4086,12 @@ STRICT RULES:
                 error: 'empty_ai_response'
             };
         }
+        diagnosticAiResponse = aiResponse;
 
         let replyText = aiResponse.reply || "";
         const structuredDeliveryItems = normalizeAiDeliveryItems(aiResponse, replyText);
         let effectiveProductId = aiResponse?.product_id || null;
+        diagnosticEffectiveProductId = effectiveProductId;
 
         // #region debug-point whatsapp-product-image-messenger-A
         reportWhatsAppProductImageDebug('A', 'webhookController.js:3993', 'Messenger AI structured delivery decision', {
@@ -4169,15 +4273,21 @@ STRICT RULES:
         // Handles AI intent + Deterministic fallback in one place.
         const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
+        diagnosticOrderData = orderDataFromAI || {};
 
-        await orderService.orchestrateOrder({
-            pageId: pageId,
-            senderId: senderId,
-            platform: 'messenger',
-            intent: orderIntent,
-            data: orderDataFromAI || {},
-            rawText: combinedText
-        });
+        try {
+            await orderService.orchestrateOrder({
+                pageId: pageId,
+                senderId: senderId,
+                platform: 'messenger',
+                intent: orderIntent,
+                data: orderDataFromAI || {},
+                rawText: combinedText
+            });
+        } catch (orderErr) {
+            diagnosticOrderError = orderErr.message;
+            console.warn(`[Messenger Webhook] Order orchestration failed: ${orderErr.message}`);
+        }
         // --------------------------------------
 
         // 6. Send Reply (Text + Images)
@@ -4270,6 +4380,7 @@ STRICT RULES:
             effectiveProductId = targetProductId || effectiveProductId;
             
             if (targetProductId) {
+                diagnosticEffectiveProductId = targetProductId;
                 const product = await dbService.getProductById(targetProductId);
                 if (product) {
                     const resolvedContext = buildResolvedProductContext(product, effectiveHistory || '', state?.last_variant_key || null);
@@ -4813,6 +4924,7 @@ STRICT RULES:
         } catch (e) {}
 
         let botMessageId = `bot_${Date.now()}`;
+        diagnosticBotMessageId = botMessageId;
 
         // Final Scrub of any remaining "IMAGE:" tags (to prevent leaking to user)
         if (replyText) {
@@ -4838,6 +4950,7 @@ STRICT RULES:
             
             if (hasAdminReplied) {
                 console.log(`[FB] Bot skipped: Admin replied before send to ${senderId}`);
+                diagnosticFinalReply = '[Bot skipped: Admin replied before send]';
                 await saveFbOutgoingLog({
                     pageId,
                     recipientId: senderId,
@@ -4856,6 +4969,7 @@ STRICT RULES:
                         console.log(`[Persistence] Saved last_resolved_product_id: ${lastProductId} for ${sessionId}`);
                     }
                 }
+                await saveMessengerDiagnosticTrace();
                 return;
             }
 
@@ -5196,6 +5310,9 @@ STRICT RULES:
             }
         }
 
+        diagnosticFinalReply = replyText || '';
+        await saveMessengerDiagnosticTrace();
+
         // 7. Save History & Lead
         // Save User Message (Combined with Context)
         if (!hasAudioTurn) {
@@ -5261,6 +5378,7 @@ STRICT RULES:
             sessionId,
             text: combinedText.substring(0, 500)
         });
+        await saveMessengerDiagnosticTrace({ error: error.message });
     } finally {
         await facebookService.sendTypingAction(senderId, pageConfig.page_access_token, 'typing_off');
     }

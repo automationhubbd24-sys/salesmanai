@@ -150,6 +150,30 @@ interface CacheConfig {
   created_at?: string;
 }
 
+type DiagnosticConfig = {
+  page_id: string;
+  platform: string;
+  trace_enabled: boolean;
+  trace_level: string;
+  trace_reason?: string | null;
+  trace_expires_at?: string | null;
+  updated_at?: string;
+};
+
+type DiagnosticReport = {
+  id: number;
+  page_id: string;
+  platform: string;
+  message_id: string;
+  trace_id?: string | null;
+  report_type?: string;
+  report_note?: string | null;
+  status: string;
+  root_cause?: string | null;
+  created_at: string;
+  trace_summary?: any;
+};
+
 type EngineTestResult = {
   model: string;
   success: boolean;
@@ -525,6 +549,18 @@ export default function AdminPage() {
     base_url: "",
     api_key: ""
   });
+  const [diagnosticConfigs, setDiagnosticConfigs] = useState<DiagnosticConfig[]>([]);
+  const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReport[]>([]);
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
+  const [diagnosticPageId, setDiagnosticPageId] = useState("");
+  const [diagnosticPlatform, setDiagnosticPlatform] = useState("all");
+  const [diagnosticLevel, setDiagnosticLevel] = useState("full");
+  const [diagnosticHours, setDiagnosticHours] = useState("48");
+  const [diagnosticReason, setDiagnosticReason] = useState("");
+  const [selectedDiagnosticDetail, setSelectedDiagnosticDetail] = useState<any | null>(null);
+  const [diagnosticStatus, setDiagnosticStatus] = useState("pending");
+  const [diagnosticRootCause, setDiagnosticRootCause] = useState("");
+  const [diagnosticResolutionNote, setDiagnosticResolutionNote] = useState("");
 
   const getAdminToken = () => {
     return localStorage.getItem("admin_token") || localStorage.getItem("auth_token") || "";
@@ -544,8 +580,111 @@ export default function AdminPage() {
       fetchEngineData();
       fetchCacheConfigs();
       fetchEmbeddingConfig();
+      fetchDiagnosticData();
     }
   }, [isAuthenticated]);
+
+  const diagnosticRequest = async (endpoint: string, options: RequestInit = {}) => {
+    const token = getAdminToken();
+    const res = await fetch(`${BACKEND_URL}/api/diagnostic${endpoint}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Diagnostic request failed");
+    return data;
+  };
+
+  const fetchDiagnosticData = async () => {
+    try {
+      setDiagnosticLoading(true);
+      const [configsData, reportsData] = await Promise.all([
+        diagnosticRequest('/admin/configs'),
+        diagnosticRequest('/admin/reports')
+      ]);
+      setDiagnosticConfigs(configsData.configs || []);
+      setDiagnosticReports(reportsData.reports || []);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to load diagnostic data");
+    } finally {
+      setDiagnosticLoading(false);
+    }
+  };
+
+  const enableDiagnosticTrace = async () => {
+    if (!diagnosticPageId.trim()) {
+      toast.error("Page ID / Session name required");
+      return;
+    }
+    try {
+      await diagnosticRequest('/admin/enable', {
+        method: 'POST',
+        body: JSON.stringify({
+          page_id: diagnosticPageId.trim(),
+          platform: diagnosticPlatform,
+          trace_level: diagnosticLevel,
+          expires_in_hours: Number(diagnosticHours) || 48,
+          reason: diagnosticReason || null
+        })
+      });
+      toast.success("Diagnostic trace enabled");
+      fetchDiagnosticData();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to enable trace");
+    }
+  };
+
+  const disableDiagnosticTrace = async (pageId = diagnosticPageId, platform = diagnosticPlatform) => {
+    if (!pageId.trim()) {
+      toast.error("Page ID / Session name required");
+      return;
+    }
+    try {
+      await diagnosticRequest('/admin/disable', {
+        method: 'POST',
+        body: JSON.stringify({ page_id: pageId.trim(), platform })
+      });
+      toast.success("Diagnostic trace disabled");
+      fetchDiagnosticData();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to disable trace");
+    }
+  };
+
+  const openDiagnosticReport = async (report: DiagnosticReport) => {
+    try {
+      const data = await diagnosticRequest(`/admin/reports/${report.id}`);
+      setSelectedDiagnosticDetail(data.report);
+      setDiagnosticStatus(data.report?.status || "pending");
+      setDiagnosticRootCause(data.report?.root_cause || "");
+      setDiagnosticResolutionNote(data.report?.resolution_note || "");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to open report");
+    }
+  };
+
+  const updateDiagnosticReport = async () => {
+    if (!selectedDiagnosticDetail?.id) return;
+    try {
+      const data = await diagnosticRequest(`/admin/reports/${selectedDiagnosticDetail.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: diagnosticStatus,
+          root_cause: diagnosticRootCause || null,
+          resolution_note: diagnosticResolutionNote || null
+        })
+      });
+      setSelectedDiagnosticDetail({ ...selectedDiagnosticDetail, ...data.report });
+      toast.success("Diagnostic report updated");
+      fetchDiagnosticData();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update report");
+    }
+  };
 
   const fetchCacheConfigs = async () => {
     try {
@@ -2130,6 +2269,7 @@ export default function AdminPage() {
           <TabsTrigger value="gemini" className="text-red-400 font-bold data-[state=active]:bg-red-500 data-[state=active]:text-white transition-all">INVALID API TEST</TabsTrigger>
           <TabsTrigger value="cache" className="text-blue-400 font-bold data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all">Semantic Cache</TabsTrigger>
           <TabsTrigger value="db" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Database Admin</TabsTrigger>
+          <TabsTrigger value="diagnostic" className="data-[state=active]:bg-orange-500 data-[state=active]:text-black transition-all font-bold">Diagnostic</TabsTrigger>
           <TabsTrigger value="openrouter" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">OpenRouter Config</TabsTrigger>
           <TabsTrigger value="developers" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Developers</TabsTrigger>
         </TabsList>
@@ -4740,6 +4880,114 @@ export default function AdminPage() {
           </Dialog>
         </TabsContent>
 
+        <TabsContent value="diagnostic" className="space-y-6">
+          <Card className="bg-card/40 backdrop-blur-md border-white/5">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-orange-400">
+                    <Activity className="h-5 w-5" /> Diagnostic Mode
+                  </CardTitle>
+                  <CardDescription>Enable temporary AI tracing for one page/session when an owner reports a problem.</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={fetchDiagnosticData} disabled={diagnosticLoading}>
+                  <RefreshCw className={`mr-2 h-4 w-4 ${diagnosticLoading ? 'animate-spin' : ''}`} /> Refresh
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-5">
+                <div className="md:col-span-2 space-y-2">
+                  <Label>Page ID / WhatsApp Session</Label>
+                  <Input value={diagnosticPageId} onChange={(e) => setDiagnosticPageId(e.target.value)} placeholder="page id or session name" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Platform</Label>
+                  <Select value={diagnosticPlatform} onValueChange={setDiagnosticPlatform}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="messenger">Messenger</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Level</Label>
+                  <Select value={diagnosticLevel} onValueChange={setDiagnosticLevel}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="full">Full</SelectItem>
+                      <SelectItem value="light">Light</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Hours</Label>
+                  <Input value={diagnosticHours} onChange={(e) => setDiagnosticHours(e.target.value)} />
+                </div>
+              </div>
+              <Textarea value={diagnosticReason} onChange={(e) => setDiagnosticReason(e.target.value)} placeholder="Reason: pricing wrong, unavailable color picked, order issue..." />
+              <div className="flex gap-2">
+                <Button onClick={enableDiagnosticTrace} className="bg-orange-500 hover:bg-orange-600 text-black font-bold">Enable Trace</Button>
+                <Button variant="destructive" onClick={() => disableDiagnosticTrace()}>Disable Trace</Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Active / Recent Trace Configs</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Page</TableHead><TableHead>Platform</TableHead><TableHead>Status</TableHead><TableHead>Expires</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {diagnosticConfigs.map((cfg) => (
+                        <TableRow key={`${cfg.page_id}_${cfg.platform}`}>
+                          <TableCell className="font-mono text-xs">{cfg.page_id}</TableCell>
+                          <TableCell>{cfg.platform}</TableCell>
+                          <TableCell><Badge variant={cfg.trace_enabled ? "default" : "secondary"}>{cfg.trace_enabled ? cfg.trace_level : 'off'}</Badge></TableCell>
+                          <TableCell className="text-xs">{cfg.trace_expires_at ? new Date(cfg.trace_expires_at).toLocaleString() : 'manual'}</TableCell>
+                          <TableCell className="text-right"><Button size="sm" variant="destructive" onClick={() => disableDiagnosticTrace(cfg.page_id, cfg.platform)}>Off</Button></TableCell>
+                        </TableRow>
+                      ))}
+                      {diagnosticConfigs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No diagnostic configs</TableCell></TableRow>}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Owner Reports</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>ID</TableHead><TableHead>Page</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Trace</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {diagnosticReports.map((report) => (
+                        <TableRow key={report.id}>
+                          <TableCell>#{report.id}</TableCell>
+                          <TableCell className="font-mono text-xs">{report.page_id}</TableCell>
+                          <TableCell>{report.report_type || 'other'}</TableCell>
+                          <TableCell><Badge variant={report.status === 'pending' ? 'destructive' : 'secondary'}>{report.status}</Badge></TableCell>
+                          <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => openDiagnosticReport(report)} disabled={!report.trace_id}>View</Button></TableCell>
+                        </TableRow>
+                      ))}
+                      {diagnosticReports.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No reports yet</TableCell></TableRow>}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         {/* OpenRouter Config Tab (Embedded) */}
         <TabsContent value="openrouter">
           <OpenRouterConfigPage />
@@ -4874,6 +5122,46 @@ export default function AdminPage() {
         </TabsContent>
 
       </Tabs>
+
+      <Dialog open={!!selectedDiagnosticDetail} onOpenChange={(open) => !open && setSelectedDiagnosticDetail(null)}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto bg-[#0f0f0f] border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle>Diagnostic Report Detail</DialogTitle>
+            <DialogDescription>Trace, AI data, product/order context and VPS snapshot.</DialogDescription>
+          </DialogHeader>
+          {selectedDiagnosticDetail && (
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={diagnosticStatus} onValueChange={setDiagnosticStatus}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="investigating">Investigating</SelectItem>
+                    <SelectItem value="fixed">Fixed</SelectItem>
+                    <SelectItem value="ignored">Ignored</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Root Cause</Label>
+                <Input value={diagnosticRootCause} onChange={(e) => setDiagnosticRootCause(e.target.value)} placeholder="pricing | sku_unavailable | prompt | image | order" />
+              </div>
+              <div className="space-y-2 md:col-span-3">
+                <Label>Resolution Note</Label>
+                <Textarea value={diagnosticResolutionNote} onChange={(e) => setDiagnosticResolutionNote(e.target.value)} placeholder="What was fixed / next action" />
+              </div>
+              <div className="md:col-span-3">
+                <Button onClick={updateDiagnosticReport} className="bg-orange-500 hover:bg-orange-600 text-black font-bold">Update Report</Button>
+              </div>
+            </div>
+          )}
+          <pre className="text-xs whitespace-pre-wrap bg-black/60 border border-white/10 rounded-lg p-4 overflow-x-auto">
+            {selectedDiagnosticDetail ? JSON.stringify(selectedDiagnosticDetail, null, 2) : ''}
+          </pre>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isCacheDialogOpen} onOpenChange={setIsCacheDialogOpen}>
         <DialogContent className="max-w-md bg-[#0f0f0f] border-white/10 text-white">

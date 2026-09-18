@@ -15,6 +15,7 @@ import {
   Instagram,
   Tag,
   User as UserIcon,
+  Flag,
   X
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
@@ -319,6 +320,8 @@ const SmartInbox = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [labelUpdating, setLabelUpdating] = useState<Record<string, boolean>>({});
+  const [diagnosticEnabled, setDiagnosticEnabled] = useState(false);
+  const [reportingMessageId, setReportingMessageId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -558,6 +561,30 @@ const SmartInbox = () => {
   }, [syncActiveResourceId]);
 
   useEffect(() => {
+    if (!activeResourceId || !platform) {
+      setDiagnosticEnabled(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadDiagnosticStatus = async () => {
+      try {
+        const params = new URLSearchParams({ page_id: activeResourceId, platform });
+        const response = await fetch(`${BACKEND_URL}/api/diagnostic/status?${params.toString()}`);
+        const data = await response.json().catch(() => null);
+        if (!cancelled) setDiagnosticEnabled(Boolean(data?.success && data?.enabled));
+      } catch (_) {
+        if (!cancelled) setDiagnosticEnabled(false);
+      }
+    };
+
+    loadDiagnosticStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeResourceId, platform]);
+
+  useEffect(() => {
     selectedSenderIdRef.current = null;
   }, [senderId]);
 
@@ -785,6 +812,39 @@ const SmartInbox = () => {
     });
     setSelectedImage(file);
   }, []);
+
+  const handleReportMessage = useCallback(async (message: MessageItem) => {
+    if (!selectedChat || !activeResourceId || !platform || !diagnosticEnabled) return;
+
+    const messageId = getMessageUniqueId(message);
+    if (!messageId) {
+      toast.error("Ei message er report ID paoa jacche na");
+      return;
+    }
+
+    setReportingMessageId(messageId);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/diagnostic/messages/${encodeURIComponent(messageId)}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          page_id: activeResourceId,
+          platform,
+          sender_id: selectedChat.id,
+          report_type: "wrong_reply",
+          note: "Owner reported this AI message from Smart Inbox",
+          reported_by: "owner"
+        })
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) throw new Error(data?.error || "Report failed");
+      toast.success("Report submit hoyeche. Admin audit korte parbe.");
+    } catch (error: any) {
+      toast.error(error.message || "Report submit korte parini");
+    } finally {
+      setReportingMessageId(null);
+    }
+  }, [activeResourceId, diagnosticEnabled, platform, selectedChat]);
 
   const handleSendMessage = useCallback(async () => {
     if (!selectedChat || !activeResourceId || !platform || sending) {
@@ -1271,6 +1331,8 @@ const SmartInbox = () => {
                     const isTranscriptMessage = /^\[Transcript\]:/i.test(body.trim());
                     const isOutgoing = message.from === "me" || message.reply_by === "admin" || isBotImage;
                     const isBot = message.reply_by === "bot" || isBotImage;
+                    const messageId = getMessageUniqueId(message);
+                    const canReport = diagnosticEnabled && isBot && Boolean(messageId) && !message.optimistic;
 
                     return (
                       <div
@@ -1362,6 +1424,21 @@ const SmartInbox = () => {
                             <span className="font-bold">
                               {isBot ? "Agent" : message.reply_by === "admin" ? "Admin" : "Customer"}
                             </span>
+                            {canReport && (
+                              <button
+                                type="button"
+                                onClick={() => handleReportMessage(message)}
+                                disabled={reportingMessageId === messageId}
+                                className={cn(
+                                  "ml-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors",
+                                  isBot ? "bg-black/10 text-black/65 hover:bg-black/15" : "bg-white/10 text-white/65 hover:bg-white/15"
+                                )}
+                                title="Report this AI reply"
+                              >
+                                <Flag size={10} />
+                                {reportingMessageId === messageId ? "Reporting" : "Report"}
+                              </button>
+                            )}
                           </div>
                         </div>
 
