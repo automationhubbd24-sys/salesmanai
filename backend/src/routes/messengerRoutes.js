@@ -128,7 +128,7 @@ async function verifyFacebookPageAccessToken(pageId, pageAccessToken) {
     try {
         const response = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/${pageId}`, {
             params: {
-                fields: 'id,name,tasks',
+                fields: 'id,name',
                 access_token: pageAccessToken
             },
             timeout: 15000
@@ -141,10 +141,7 @@ async function verifyFacebookPageAccessToken(pageId, pageAccessToken) {
             throw mappedError;
         }
 
-        return {
-            ...response.data,
-            tasks: normalizePageTasks(response.data?.tasks)
-        };
+        return response.data;
     } catch (error) {
         console.error('[Messenger] Facebook token verification failed:', {
             pageId,
