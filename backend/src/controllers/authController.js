@@ -640,7 +640,8 @@ exports.startFacebookAuth = async (req, res) => {
     try {
         const { type, state, origin } = req.query;
         const appId = String(process.env.FACEBOOK_APP_ID || '').trim();
-        const configId = process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '2197274487770639';
+        const whatsappConfigId = process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '2197274487770639';
+        const messengerConfigId = String(process.env.FACEBOOK_MESSENGER_CONFIG_ID || '1431073388901771').trim();
         
         if (!appId) {
             return res.status(500).send('FACEBOOK_APP_ID not configured on server.');
@@ -707,13 +708,16 @@ exports.startFacebookAuth = async (req, res) => {
         
         if (type === 'whatsapp') {
             oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
-            oauthUrl.searchParams.set('config_id', configId);
+            oauthUrl.searchParams.set('config_id', whatsappConfigId);
             oauthUrl.searchParams.set('override_default_response_type', 'true');
             oauthUrl.searchParams.set('extras', extras);
             oauthUrl.searchParams.set('display', 'page');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
         } else {
             oauthUrl = new URL(`https://${baseHost}/${FACEBOOK_GRAPH_VERSION}/dialog/oauth`);
+            if (type === 'messenger' && /^\d+$/.test(messengerConfigId)) {
+                oauthUrl.searchParams.set('config_id', messengerConfigId);
+            }
             oauthUrl.searchParams.set('scope', scope);
             oauthUrl.searchParams.set('display', 'touch');
             oauthUrl.searchParams.set('auth_type', 'rerequest');
@@ -726,7 +730,7 @@ exports.startFacebookAuth = async (req, res) => {
 
         if (type === 'whatsapp') {
             // #region debug-point A:whatsapp-oauth-start
-            void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'A', location: 'authController.js:startFacebookAuth', msg: '[DEBUG] Starting WhatsApp Facebook OAuth', data: { origin, frontendOrigin, redirectUri, host: oauthUrl.host, path: oauthUrl.pathname, hasConfigId: Boolean(configId), state }, ts: Date.now() }).catch(() => {});
+            void axios.post(DEBUG_SERVER_URL, { sessionId: DEBUG_SESSION_ID, runId: 'pre-fix', hypothesisId: 'A', location: 'authController.js:startFacebookAuth', msg: '[DEBUG] Starting WhatsApp Facebook OAuth', data: { origin, frontendOrigin, redirectUri, host: oauthUrl.host, path: oauthUrl.pathname, hasConfigId: Boolean(whatsappConfigId), state }, ts: Date.now() }).catch(() => {});
             // #endregion
         }
 
