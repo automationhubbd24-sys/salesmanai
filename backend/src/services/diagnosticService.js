@@ -286,18 +286,60 @@ async function disableTrace({ pageId, platform = 'all', admin }) {
     return result.rows[0] || null;
 }
 
+async function deleteTraceConfig({ pageId, platform = 'all' }) {
+    if (!pageId) {
+        const error = new Error('page_id is required');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    await ensureTables();
+    const page = String(pageId);
+    const configPlatform = String(platform || 'all');
+    const reportPlatformFilter = configPlatform === 'all' ? '' : 'AND platform = $2';
+    const reportParams = configPlatform === 'all' ? [page] : [page, configPlatform];
+
+    const reportsResult = await query(
+        `DELETE FROM ai_message_reports WHERE page_id = $1 ${reportPlatformFilter} RETURNING id, trace_id`,
+        reportParams
+    );
+    const traceIds = reportsResult.rows.map(row => row.trace_id).filter(Boolean);
+
+    if (traceIds.length) {
+        await query('DELETE FROM ai_message_traces WHERE trace_id = ANY($1)', [traceIds]);
+    }
+
+    await query(
+        `DELETE FROM ai_message_traces WHERE page_id = $1 ${reportPlatformFilter}`,
+        reportParams
+    );
+
+    const configResult = await query(
+        'DELETE FROM ai_trace_configs WHERE page_id = $1 AND platform = $2 RETURNING *',
+        [page, configPlatform]
+    );
+
+    configCache.clear();
+    return {
+        config: configResult.rows[0] || null,
+        deleted_reports: reportsResult.rowCount || 0,
+        deleted_trace_ids: traceIds.length
+    };
+}
+
 async function listTraceConfigs() {
     await ensureTables();
     const result = await query('SELECT * FROM ai_trace_configs ORDER BY trace_enabled DESC, updated_at DESC LIMIT 200');
     return result.rows;
 }
 
-async function listReports({ status, pageId, limit = 100 } = {}) {
+async function listReports({ status, pageId, platform, limit = 100 } = {}) {
     await ensureTables();
     const params = [];
     const where = [];
     if (status) { params.push(status); where.push(`r.status = $${params.length}`); }
     if (pageId) { params.push(String(pageId)); where.push(`r.page_id = $${params.length}`); }
+    if (platform && platform !== 'all') { params.push(String(platform)); where.push(`r.platform = $${params.length}`); }
     params.push(Math.min(Number(limit) || 100, 300));
     const result = await query(
         `SELECT r.*, t.trace_summary, t.created_at AS trace_created_at
@@ -383,6 +425,7 @@ module.exports = {
     captureVpsSnapshot,
     enableTrace,
     disableTrace,
+    deleteTraceConfig,
     listTraceConfigs,
     listReports,
     getReport,

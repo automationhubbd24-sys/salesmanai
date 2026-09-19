@@ -42,11 +42,24 @@ exports.disableTrace = async (req, res) => {
     }
 };
 
+exports.deleteTraceConfig = async (req, res) => {
+    try {
+        const result = await diagnosticService.deleteTraceConfig({
+            pageId: req.body.page_id || req.params.pageId,
+            platform: req.body.platform || req.query.platform || 'all'
+        });
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ success: false, error: error.message });
+    }
+};
+
 exports.listReports = async (req, res) => {
     try {
         const reports = await diagnosticService.listReports({
             status: req.query.status,
             pageId: req.query.page_id,
+            platform: req.query.platform,
             limit: req.query.limit
         });
         res.json({ success: true, reports });

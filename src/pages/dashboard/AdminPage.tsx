@@ -557,6 +557,7 @@ export default function AdminPage() {
   const [diagnosticLevel, setDiagnosticLevel] = useState("full");
   const [diagnosticHours, setDiagnosticHours] = useState("48");
   const [diagnosticReason, setDiagnosticReason] = useState("");
+  const [selectedDiagnosticConfig, setSelectedDiagnosticConfig] = useState<DiagnosticConfig | null>(null);
   const [selectedDiagnosticDetail, setSelectedDiagnosticDetail] = useState<any | null>(null);
   const [diagnosticStatus, setDiagnosticStatus] = useState("pending");
   const [diagnosticRootCause, setDiagnosticRootCause] = useState("");
@@ -599,13 +600,15 @@ export default function AdminPage() {
     return data;
   };
 
-  const fetchDiagnosticData = async () => {
+  const fetchDiagnosticData = async (config = selectedDiagnosticConfig) => {
     try {
       setDiagnosticLoading(true);
-      const [configsData, reportsData] = await Promise.all([
-        diagnosticRequest('/admin/configs'),
-        diagnosticRequest('/admin/reports')
-      ]);
+      const configsData = await diagnosticRequest('/admin/configs');
+      let reportsData = { reports: [] };
+      if (config) {
+        const reportsQuery = `?page_id=${encodeURIComponent(config.page_id)}&platform=${encodeURIComponent(config.platform)}`;
+        reportsData = await diagnosticRequest(`/admin/reports${reportsQuery}`);
+      }
       setDiagnosticConfigs(configsData.configs || []);
       setDiagnosticReports(reportsData.reports || []);
     } catch (error: any) {
@@ -621,7 +624,7 @@ export default function AdminPage() {
       return;
     }
     try {
-      await diagnosticRequest('/admin/enable', {
+      const data = await diagnosticRequest('/admin/enable', {
         method: 'POST',
         body: JSON.stringify({
           page_id: diagnosticPageId.trim(),
@@ -632,7 +635,8 @@ export default function AdminPage() {
         })
       });
       toast.success("Diagnostic trace enabled");
-      fetchDiagnosticData();
+      setSelectedDiagnosticConfig(data.config || null);
+      fetchDiagnosticData(data.config || null);
     } catch (error: any) {
       toast.error(error.message || "Failed to enable trace");
     }
@@ -652,6 +656,54 @@ export default function AdminPage() {
       fetchDiagnosticData();
     } catch (error: any) {
       toast.error(error.message || "Failed to disable trace");
+    }
+  };
+
+  const selectDiagnosticConfig = (config: DiagnosticConfig) => {
+    setSelectedDiagnosticConfig(config);
+    setDiagnosticPageId(config.page_id);
+    setDiagnosticPlatform(config.platform);
+    setDiagnosticLevel(config.trace_level || "full");
+    fetchDiagnosticData(config);
+  };
+
+  const toggleDiagnosticConfig = async (config: DiagnosticConfig) => {
+    if (config.trace_enabled) {
+      await disableDiagnosticTrace(config.page_id, config.platform);
+      return;
+    }
+    try {
+      await diagnosticRequest('/admin/enable', {
+        method: 'POST',
+        body: JSON.stringify({
+          page_id: config.page_id,
+          platform: config.platform,
+          trace_level: config.trace_level || 'full',
+          expires_in_hours: Number(diagnosticHours) || 48,
+          reason: config.trace_reason || diagnosticReason || null
+        })
+      });
+      toast.success("Diagnostic trace enabled");
+      fetchDiagnosticData(config);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to enable trace");
+    }
+  };
+
+  const deleteDiagnosticConfig = async (config: DiagnosticConfig) => {
+    if (!confirm(`Delete diagnostic config and reports for ${config.page_id} (${config.platform})?`)) return;
+    try {
+      await diagnosticRequest(`/admin/configs/${encodeURIComponent(config.page_id)}?platform=${encodeURIComponent(config.platform)}`, {
+        method: 'DELETE'
+      });
+      toast.success("Diagnostic config and reports deleted");
+      if (selectedDiagnosticConfig?.page_id === config.page_id && selectedDiagnosticConfig?.platform === config.platform) {
+        setSelectedDiagnosticConfig(null);
+        setDiagnosticReports([]);
+      }
+      fetchDiagnosticData(null);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete diagnostic config");
     }
   };
 
@@ -4929,8 +4981,8 @@ export default function AdminPage() {
               </div>
               <Textarea value={diagnosticReason} onChange={(e) => setDiagnosticReason(e.target.value)} placeholder="Reason: pricing wrong, unavailable color picked, order issue..." />
               <div className="flex gap-2">
-                <Button onClick={enableDiagnosticTrace} className="bg-orange-500 hover:bg-orange-600 text-black font-bold">Enable Trace</Button>
-                <Button variant="destructive" onClick={() => disableDiagnosticTrace()}>Disable Trace</Button>
+                <Button onClick={enableDiagnosticTrace} className="bg-orange-500 hover:bg-orange-600 text-black font-bold">Enable / Update Trace</Button>
+                <Button variant="destructive" onClick={() => disableDiagnosticTrace()}>Turn Off</Button>
               </div>
             </CardContent>
           </Card>
@@ -4945,15 +4997,23 @@ export default function AdminPage() {
                   <Table>
                     <TableHeader><TableRow><TableHead>Page</TableHead><TableHead>Platform</TableHead><TableHead>Status</TableHead><TableHead>Expires</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {diagnosticConfigs.map((cfg) => (
-                        <TableRow key={`${cfg.page_id}_${cfg.platform}`}>
-                          <TableCell className="font-mono text-xs">{cfg.page_id}</TableCell>
-                          <TableCell>{cfg.platform}</TableCell>
-                          <TableCell><Badge variant={cfg.trace_enabled ? "default" : "secondary"}>{cfg.trace_enabled ? cfg.trace_level : 'off'}</Badge></TableCell>
-                          <TableCell className="text-xs">{cfg.trace_expires_at ? new Date(cfg.trace_expires_at).toLocaleString() : 'manual'}</TableCell>
-                          <TableCell className="text-right"><Button size="sm" variant="destructive" onClick={() => disableDiagnosticTrace(cfg.page_id, cfg.platform)}>Off</Button></TableCell>
-                        </TableRow>
-                      ))}
+                      {diagnosticConfigs.map((cfg) => {
+                        const selected = selectedDiagnosticConfig?.page_id === cfg.page_id && selectedDiagnosticConfig?.platform === cfg.platform;
+                        return (
+                          <TableRow key={`${cfg.page_id}_${cfg.platform}`} className={selected ? "bg-orange-500/10" : ""}>
+                            <TableCell className="font-mono text-xs cursor-pointer" onClick={() => selectDiagnosticConfig(cfg)}>{cfg.page_id}</TableCell>
+                            <TableCell className="cursor-pointer" onClick={() => selectDiagnosticConfig(cfg)}>{cfg.platform}</TableCell>
+                            <TableCell><Badge variant={cfg.trace_enabled ? "default" : "secondary"}>{cfg.trace_enabled ? cfg.trace_level : 'off'}</Badge></TableCell>
+                            <TableCell className="text-xs">{cfg.trace_expires_at ? new Date(cfg.trace_expires_at).toLocaleString() : 'manual'}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button size="sm" variant={cfg.trace_enabled ? "destructive" : "outline"} onClick={() => toggleDiagnosticConfig(cfg)}>{cfg.trace_enabled ? 'Off' : 'On'}</Button>
+                                <Button size="sm" variant="outline" onClick={() => deleteDiagnosticConfig(cfg)}><Trash2 className="h-4 w-4" /></Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                       {diagnosticConfigs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No diagnostic configs</TableCell></TableRow>}
                     </TableBody>
                   </Table>
@@ -4964,6 +5024,7 @@ export default function AdminPage() {
             <Card className="bg-card/40 backdrop-blur-md border-white/5">
               <CardHeader>
                 <CardTitle>Owner Reports</CardTitle>
+                <CardDescription>{selectedDiagnosticConfig ? `${selectedDiagnosticConfig.page_id} (${selectedDiagnosticConfig.platform}) reports` : 'Select a trace config page to filter reports.'}</CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
