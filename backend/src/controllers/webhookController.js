@@ -16,6 +16,34 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+function isInfoOnlyCustomerQuery(text) {
+    const source = String(text || '').toLowerCase();
+    const cleaned = source
+        .replace(/\[internal visual evidence - untrusted\][\s\S]*?\[end internal visual evidence\]/gi, ' ')
+        .replace(/https?:\/\/\S+/g, ' ')
+        .replace(/[^\p{L}\p{N}\s?]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!cleaned) return false;
+
+    const hasOrderIntent = /\b(order|confirm|book|booking|checkout|delivery|cod|cash on delivery|nibo|nimu|nichi|nite chai|kinbo|kinte chai|lagbe|pathan|pathao|send|parcel|address|ঠিকানা|অর্ডার|নিবো|নিতে চাই|লাগবে|পাঠান)\b/i.test(cleaned);
+    if (hasOrderIntent) return false;
+
+    return /\b(price|dam|daam|details?|detail|pic|photo|image|video|available|stock|koto|koto taka|কত|দাম|প্রাইস|ছবি|ডিটেইল|স্টক)\b/i.test(cleaned);
+}
+
+function hasMeaningfulOrderFields(orderData) {
+    if (!orderData || typeof orderData !== 'object') return false;
+    return ['phone', 'address', 'customer_name'].some((key) => String(orderData[key] || '').trim())
+        || /\b(order|confirm|book|booking|delivery|cod|cash on delivery)\b/i.test(String(orderData.intent || ''));
+}
+
+function shouldSkipOrderOrchestration(userText, orderData) {
+    if (!orderData || Object.keys(orderData || {}).length === 0) return true;
+    if (isInfoOnlyCustomerQuery(userText) && !hasMeaningfulOrderFields(orderData)) return true;
+    return false;
+}
+
 // --- GATEKEEPER CACHE (In-Memory) ---
 // Purpose: Block unauthorized pages instantly to protect backend resources.
 let allowedPagesCache = new Set();
@@ -2208,8 +2236,12 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     try {
         const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
-        diagnosticOrderData = orderDataFromAI || {};
-        await orderService.orchestrateOrder({
+        const orderGuardText = combinedText || finalUserMessage;
+        const skipOrder = shouldSkipOrderOrchestration(orderGuardText, orderDataFromAI);
+        diagnosticOrderData = skipOrder
+            ? { order_guard_skipped: isInfoOnlyCustomerQuery(orderGuardText) ? 'info_only_query' : 'empty_order_details', ai_order_details: orderDataFromAI || null }
+            : (orderDataFromAI || {});
+        if (!skipOrder) await orderService.orchestrateOrder({
             pageId: effectiveSessionName,
             senderId: conversationId,
             platform: 'whatsapp',
@@ -4273,10 +4305,14 @@ STRICT RULES:
         // Handles AI intent + Deterministic fallback in one place.
         const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
         const orderIntent = aiResponse.order_details?.intent || 'upsert';
-        diagnosticOrderData = orderDataFromAI || {};
+        const orderGuardText = combinedText || finalUserMessage;
+        const skipOrder = shouldSkipOrderOrchestration(orderGuardText, orderDataFromAI);
+        diagnosticOrderData = skipOrder
+            ? { order_guard_skipped: isInfoOnlyCustomerQuery(orderGuardText) ? 'info_only_query' : 'empty_order_details', ai_order_details: orderDataFromAI || null }
+            : (orderDataFromAI || {});
 
         try {
-            await orderService.orchestrateOrder({
+            if (!skipOrder) await orderService.orchestrateOrder({
                 pageId: pageId,
                 senderId: senderId,
                 platform: 'messenger',

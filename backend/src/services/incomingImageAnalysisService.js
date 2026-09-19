@@ -96,7 +96,9 @@ function buildVisualMatchDecision(matches) {
         name: match.name,
         match_score: match.match_score,
         base_match_score: match.base_match_score ?? match.match_score,
-        fingerprint_bonus: match.fingerprint_bonus || 0
+        fingerprint_bonus: match.fingerprint_bonus || 0,
+        matched_image_url: match.matched_image_url,
+        image_role: match.image_role || null
     }));
 
     if (topScore < 50) return { status: 'NO_PRODUCT_MATCH', confidence: 'low', reason: 'top_score_below_50_threshold', score_gap: gap, options: [] };
@@ -510,8 +512,7 @@ function formatVisionDecisionSummary(reasoningText) {
     const parsed = extractJsonObject(reasoningText);
     if (!parsed) return null;
 
-    // Support both old JSON schema (matched_products) and new JSON schema (best_product_id/per_image_match)
-    if (parsed.matched_products === undefined && parsed.non_product_analysis === undefined && parsed.status === undefined) {
+    if (parsed.matched_products === undefined && parsed.scene_products === undefined && parsed.primary_requested_product_id === undefined && parsed.non_product_analysis === undefined && parsed.status === undefined) {
         return null;
     }
 
@@ -519,28 +520,38 @@ function formatVisionDecisionSummary(reasoningText) {
     lines.push(`status=${parsed.status || 'unknown'}`);
     if (parsed.visual_text) lines.push(`visual_text=${String(parsed.visual_text).trim()}`);
     if (parsed.ocr_text) lines.push(`ocr_text=${String(parsed.ocr_text).trim()}`);
+    if (parsed.primary_requested_product_id) {
+        lines.push(`primary_requested_product_id=${parsed.primary_requested_product_id} | primary_requested_product_name=${parsed.primary_requested_product_name || 'Unknown'}${parsed.primary_reason ? ` | primary_reason=${parsed.primary_reason}` : ''}`);
+    }
 
-    // If new schema is found, format it
+    const sceneProducts = Array.isArray(parsed.scene_products) ? parsed.scene_products : [];
+    if (sceneProducts.length > 0) {
+        lines.push('scene_products:');
+        sceneProducts.forEach((product, idx) => {
+            lines.push(`${idx + 1}. product_id=${product.product_id || 'N/A'} | product_name=${product.product_name || 'Unknown'} | scene_position=${product.scene_position || 'visible'} | confidence=${product.confidence || 'unknown'}${product.matched_catalog_image_url ? ` | matched_image_url=${product.matched_catalog_image_url}` : ''}${product.reason ? ` | reason=${product.reason}` : ''}`);
+        });
+    }
+
     if (parsed.per_image_match || parsed.best_product_id) {
         if (parsed.best_product_id) {
             lines.push(`best_product_id=${parsed.best_product_id} | best_product_name=${parsed.best_product_name || 'Unknown'} | confidence=${parsed.confidence || 'unknown'}`);
             if (parsed.reasoning) lines.push(`reasoning=${parsed.reasoning}`);
-        } else {
+        } else if (sceneProducts.length === 0) {
              lines.push('matched_products=None');
              if (parsed.reasoning) lines.push(`reasoning=${parsed.reasoning}`);
         }
         return lines.join('\n');
     }
 
-    // Fallback to old schema
     const matchedProducts = Array.isArray(parsed.matched_products) ? parsed.matched_products : [];
     if (matchedProducts.length > 0) {
+        lines.push('matched_products:');
         matchedProducts.forEach((product, idx) => {
-            lines.push(`${idx + 1}. product_id=${product.product_id || 'N/A'} | product_name=${product.product_name || 'Unknown'} | confidence=${product.confidence || 'unknown'}${product.reason ? ` | reason=${product.reason}` : ''}`);
+            lines.push(`${idx + 1}. product_id=${product.product_id || 'N/A'} | product_name=${product.product_name || 'Unknown'} | confidence=${product.confidence || 'unknown'}${product.matched_catalog_image_url ? ` | matched_image_url=${product.matched_catalog_image_url}` : ''}${product.reason ? ` | reason=${product.reason}` : ''}`);
         });
     } else if (parsed.non_product_analysis?.summary) {
         lines.push(`summary=${String(parsed.non_product_analysis.summary).trim()}`);
-    } else {
+    } else if (sceneProducts.length === 0 && !parsed.primary_requested_product_id) {
         lines.push('matched_products=None');
     }
 
@@ -552,26 +563,47 @@ function extractConfirmedMatchesFromReasoning(reasoningText) {
     if (!parsed) return [];
 
     const matches = [];
-    const matchedProducts = Array.isArray(parsed?.matched_products) ? parsed.matched_products : [];
-    matchedProducts.forEach((product) => {
-        const id = String(product?.product_id || '').trim();
-        const confidence = String(product?.confidence || '').toLowerCase();
+    const pushMatch = (product, defaults = {}) => {
+        const id = String(product?.product_id || defaults.product_id || '').trim();
+        const confidence = String(product?.confidence || defaults.confidence || '').toLowerCase();
         if (!id || confidence === 'low') return;
         matches.push({
             product_id: id,
-            product_name: product?.product_name || product?.name || null,
+            product_name: product?.product_name || product?.name || defaults.product_name || null,
             confidence: confidence || 'medium',
-            reason: product?.reason || null
+            reason: product?.reason || defaults.reason || null,
+            scene_position: product?.scene_position || defaults.scene_position || null,
+            matched_image_url: product?.matched_catalog_image_url || defaults.matched_image_url || null,
+            is_primary: Boolean(defaults.is_primary)
         });
-    });
+    };
+
+    const primaryProductId = String(parsed?.primary_requested_product_id || '').trim();
+    if (primaryProductId) {
+        pushMatch(null, {
+            product_id: primaryProductId,
+            product_name: parsed?.primary_requested_product_name || null,
+            confidence: 'high',
+            reason: parsed?.primary_reason || null,
+            scene_position: 'primary',
+            is_primary: true
+        });
+    }
+
+    const sceneProducts = Array.isArray(parsed?.scene_products) ? parsed.scene_products : [];
+    sceneProducts.forEach((product) => pushMatch(product));
+
+    const matchedProducts = Array.isArray(parsed?.matched_products) ? parsed.matched_products : [];
+    matchedProducts.forEach((product) => pushMatch(product));
 
     const bestProductId = String(parsed?.best_product_id || '').trim();
     if (bestProductId) {
-        matches.push({
+        pushMatch(null, {
             product_id: bestProductId,
             product_name: parsed?.best_product_name || null,
             confidence: String(parsed?.confidence || '').toLowerCase() || 'medium',
-            reason: parsed?.reasoning || null
+            reason: parsed?.reasoning || null,
+            is_primary: true
         });
     }
 
@@ -723,7 +755,9 @@ function formatImageAnalysisBlock(result) {
         const candidates = result.matchedProducts || [];
         if (candidates.length > 0) {
             const options = candidates.map((product, idx) => {
-                return `${idx + 1}. product_id=${product.product_id} | product_name=${product.name || 'Unknown'} | image_score=${clampMatchScore(product.direct_image_score ?? product.match_score)}%`;
+                const matchedImageUrl = normalizeCandidateUrl(product.matched_image_url);
+                const imageRole = product.image_role || 'unknown';
+                return `${idx + 1}. product_id=${product.product_id} | product_name=${product.name || 'Unknown'} | image_score=${clampMatchScore(product.direct_image_score ?? product.match_score)}% | matched_image_url=${matchedImageUrl || 'N/A'} | image_role=${imageRole}`;
             }).join('\n');
             const decision = result.matchDecision || {};
             block += `\n\nProduct Match Gate (Embedding Fallback):\nstatus=${decision.status || 'EVIDENCE_ONLY'} | confidence=${decision.confidence || 'informational'} | reason=${decision.reason || 'vision_reasoning_failed'}`;
@@ -765,6 +799,8 @@ function buildLastImageMapWithAggregate(results, aggregateResult = null) {
                 match_score: primary?.match_score || null,
                 match_decision: result.matchDecision?.status || 'CONFIRMED_VISUAL_MATCH',
                 candidate_options: options.filter((option) => confirmedIds.has(String(option?.product_id || ''))),
+                matched_image_url: primary?.matched_image_url || options.find((option) => String(option?.product_id || '') === String(primary?.product_id || ''))?.matched_image_url || null,
+                image_role: primary?.image_role || options.find((option) => String(option?.product_id || '') === String(primary?.product_id || ''))?.image_role || null,
                 image_url: result.imageUrl
             };
         }
