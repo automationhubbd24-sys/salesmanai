@@ -31,10 +31,11 @@ import { Switch } from "@/components/ui/switch";
 import { BACKEND_URL } from "@/config";
 import { cn } from "@/lib/utils";
 
-const CHAT_POLL_INTERVAL_MS = 30000;
-const MESSAGE_POLL_INTERVAL_MS = 12000;
-const CHAT_LIMIT = 60;
-const MESSAGE_LIMIT = 40;
+const CHAT_POLL_INTERVAL_MS = 60000;
+const MESSAGE_POLL_INTERVAL_MS = 25000;
+const CHAT_LIMIT = 30;
+const MESSAGE_LIMIT = 30;
+const SMART_INBOX_CACHE_VERSION = "v1";
 
 type LabelKey = "agent" | "human" | "order" | "human_transfer";
 type FilterKey = "all" | LabelKey;
@@ -108,6 +109,27 @@ const getActiveResourceId = (platform?: string | null) => {
   if (platform === "whatsapp") return localStorage.getItem("active_wa_session_id");
   if (platform === "instagram") return localStorage.getItem("active_ig_account_id");
   return localStorage.getItem("active_fb_page_id");
+};
+
+const getSmartInboxCacheKey = (platform: PlatformKey, resourceId: string, scope: string) =>
+  `smart-inbox:${SMART_INBOX_CACHE_VERSION}:${platform}:${resourceId}:${scope}`;
+
+const readSmartInboxCache = <T,>(key: string): T | null => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { data?: T };
+    return parsed.data ?? null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const writeSmartInboxCache = (key: string, data: unknown) => {
+  try {
+    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data }));
+  } catch (_) {
+  }
 };
 
 const getPlatformTitle = (platform?: string | null) =>
@@ -413,6 +435,8 @@ const SmartInbox = () => {
       }));
       const signature = JSON.stringify(lightweightData);
 
+      writeSmartInboxCache(getSmartInboxCacheKey(platform, activeResourceId, "chats"), lightweightData);
+
       if (signature !== chatsSignatureRef.current) {
         chatsSignatureRef.current = signature;
         setChats(lightweightData);
@@ -478,6 +502,8 @@ const SmartInbox = () => {
 
         const data = (await response.json()) as MessageItem[];
         const signature = JSON.stringify(data);
+
+        writeSmartInboxCache(getSmartInboxCacheKey(platform, activeResourceId, `messages:${chatId}`), data || []);
 
         if (signature !== messagesSignatureRef.current) {
           messagesSignatureRef.current = signature;
@@ -627,9 +653,16 @@ const SmartInbox = () => {
       if (preview) URL.revokeObjectURL(preview);
       return null;
     });
-    setChats([]);
+    const cachedChats = activeResourceId ? readSmartInboxCache<Conversation[]>(getSmartInboxCacheKey(platform, activeResourceId, "chats")) : null;
+    if (cachedChats?.length) {
+      setChats(cachedChats);
+      chatsSignatureRef.current = JSON.stringify(cachedChats);
+      setLoading(false);
+    } else {
+      setChats([]);
+    }
     setIsMobileListVisible(true);
-    chatsSignatureRef.current = "";
+    chatsSignatureRef.current = cachedChats?.length ? JSON.stringify(cachedChats) : "";
     messagesSignatureRef.current = "";
   }, [platform, activeResourceId]);
 
@@ -661,6 +694,15 @@ const SmartInbox = () => {
   useEffect(() => {
     if (!selectedChat?.id) return undefined;
 
+    if (activeResourceId) {
+      const cachedMessages = readSmartInboxCache<MessageItem[]>(getSmartInboxCacheKey(platform, activeResourceId, `messages:${selectedChat.id}`));
+      if (cachedMessages?.length) {
+        messagesSignatureRef.current = JSON.stringify(cachedMessages);
+        setMessages(mergeMessageLists([], cachedMessages));
+        setMsgLoading(false);
+      }
+    }
+
     fetchMessages(selectedChat.id);
 
     const interval = window.setInterval(() => {
@@ -673,7 +715,7 @@ const SmartInbox = () => {
       window.clearInterval(interval);
       messagesAbortRef.current?.abort();
     };
-  }, [fetchMessages, selectedChat?.id]);
+  }, [activeResourceId, fetchMessages, platform, selectedChat?.id]);
 
   useEffect(() => {
     if (!messages.length) return;
