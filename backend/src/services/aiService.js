@@ -2699,6 +2699,7 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
         try { return JSON.parse(raw.slice(start, end + 1)); } catch { return null; }
     };
 
+
     const extractVisualEvidenceProductIds = (text) => {
         const ids = new Set();
         const source = String(text || '');
@@ -4782,12 +4783,15 @@ async function reasonImageProductMatchWithVision(imageUrl, candidates = [], page
     const usableCandidates = (candidates || [])
         .filter(candidate => candidate && candidate.product_id && Number(candidate.match_score || candidate.direct_image_score || 0) >= 50)
         .slice(0, 5);
-    if (!imageUrl || usableCandidates.length === 0) return null;
+    if (!imageUrl || usableCandidates.length === 0) {
+        return { text: '', usage: 0, model: 'vision-skipped', error: 'missing_image_or_candidates' };
+    }
 
     const config = await resolveOpenAiCompatibleVisionConfig(pageConfig);
     if (!config.apiKey || !config.baseURL || !config.model) {
-        console.warn('[Vision Product Reasoning] Skipped: missing usable vision API key/config');
-        return null;
+        const error = 'missing usable vision API key/config';
+        console.warn(`[Vision Product Reasoning] Skipped: ${error}`);
+        return { text: '', usage: 0, model: config.model || 'vision-skipped', error };
     }
 
     const prompt = `You are a human-like visual product matching judge for an ecommerce chatbot. Compare the USER IMAGE against the EXACT catalog image matched by image embedding for each candidate.
@@ -4841,8 +4845,9 @@ Schema:
         const text = res.data?.choices?.[0]?.message?.content || '';
         return { text: String(text).trim(), usage: res.data?.usage?.total_tokens || 0, model: res.data?.model || config.model };
     } catch (err) {
-        console.warn(`[Vision Product Reasoning] Failed: ${err.response?.data?.error?.message || err.message}`);
-        return null;
+        const error = err.response?.data?.error?.message || err.message;
+        console.warn(`[Vision Product Reasoning] Failed: ${error}`);
+        return { text: '', usage: 0, model: config.model, error };
     }
 }
 

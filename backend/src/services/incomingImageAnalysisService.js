@@ -702,10 +702,18 @@ async function analyzeAndMatchIncomingImage({
             exactMatchedImagesOnly: true
         });
         if (reasoned?.text) {
+            matchDecision.vision_reasoning_status = 'completed';
+            matchDecision.vision_reasoning_model = reasoned.model || 'unknown';
+            matchDecision.vision_reasoning_usage = reasoned.usage || 0;
             matchDecision.vision_reasoning_text = reasoned.text;
             analysisText = analysisText
                 ? `${analysisText}\n\n[Product Vision Reasoning]\n${reasoned.text}`
                 : reasoned.text;
+        } else {
+            matchDecision.vision_reasoning_status = reasoned?.error ? 'failed' : 'skipped';
+            matchDecision.vision_reasoning_model = reasoned?.model || 'unknown';
+            matchDecision.vision_reasoning_usage = reasoned?.usage || 0;
+            matchDecision.vision_reasoning_error = reasoned?.error || 'empty_vision_reasoning_result';
         }
     }
 
@@ -741,16 +749,27 @@ async function analyzeAndMatchIncomingImage({
     };
 }
 
+function formatVisionAuditStatus(matchDecision = {}) {
+    const status = matchDecision.vision_reasoning_status || (matchDecision.vision_reasoning_text ? 'completed' : 'not_available');
+    const lines = [`status=${status}`];
+    if (matchDecision.vision_reasoning_model) lines.push(`model=${matchDecision.vision_reasoning_model}`);
+    if (matchDecision.vision_reasoning_usage !== undefined && matchDecision.vision_reasoning_usage !== null) lines.push(`usage=${matchDecision.vision_reasoning_usage}`);
+    if (matchDecision.vision_reasoning_error) lines.push(`error=${matchDecision.vision_reasoning_error}`);
+    return lines.join(' | ');
+}
+
 function formatImageAnalysisBlock(result) {
     const label = `IMAGE ${result.imageIndex}`;
     const cleanAnalysisText = stripVisionReasoningFromAnalysis(result.analysisText || '');
     const reasoningText = extractVisionReasoningText(result);
     const reasoningSummary = reasoningText ? formatVisionDecisionSummary(reasoningText) : null;
+    const visionAuditStatus = formatVisionAuditStatus(result.matchDecision || {});
     let block = `[${label} VISUAL EVIDENCE]\nAnalyzer Summary / OCR / Visual Text:\n${cleanAnalysisText || 'N/A'}`;
 
     if (reasoningSummary) {
         block += `\n\n[Product Vision Reasoning]\n${reasoningText}`;
         block += `\n\nVision Final Decision:\n${reasoningSummary}`;
+        block += `\n\nVision Reasoning Audit:\n${visionAuditStatus}`;
     } else {
         const candidates = result.matchedProducts || [];
         if (candidates.length > 0) {
@@ -762,8 +781,10 @@ function formatImageAnalysisBlock(result) {
             const decision = result.matchDecision || {};
             block += `\n\nProduct Match Gate (Embedding Fallback):\nstatus=${decision.status || 'EVIDENCE_ONLY'} | confidence=${decision.confidence || 'informational'} | reason=${decision.reason || 'vision_reasoning_failed'}`;
             block += `\n\nRecommended Product Candidates:\n${options}`;
+            block += `\n\nVision Reasoning Audit:\n${visionAuditStatus}`;
         } else {
             block += `\n\nProduct Match Gate:\nstatus=no_product_match\nmatched_products=None`;
+            block += `\n\nVision Reasoning Audit:\n${visionAuditStatus}`;
         }
     }
 
