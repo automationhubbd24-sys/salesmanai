@@ -335,6 +335,7 @@ const SmartInbox = () => {
   const selectedSenderIdRef = useRef<string | null>(null);
   const [activeResourceId, setActiveResourceId] = useState<string | null>(() => getActiveResourceId(platform));
   const hasActiveResource = Boolean(activeResourceId);
+  const diagnosticStatusCacheRef = useRef<Record<string, { enabled: boolean; ts: number }>>({});
 
   const syncActiveResourceId = useCallback(() => {
     setActiveResourceId((prev) => {
@@ -566,21 +567,36 @@ const SmartInbox = () => {
       return;
     }
 
-    let cancelled = false;
+    const cacheKey = `${platform}:${activeResourceId}`;
+    const cached = diagnosticStatusCacheRef.current[cacheKey];
+    if (cached && Date.now() - cached.ts < 30000) {
+      setDiagnosticEnabled(cached.enabled);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2500);
+
     const loadDiagnosticStatus = async () => {
       try {
         const params = new URLSearchParams({ page_id: activeResourceId, platform });
-        const response = await fetch(`${BACKEND_URL}/api/diagnostic/status?${params.toString()}`);
+        const response = await fetch(`${BACKEND_URL}/api/diagnostic/status?${params.toString()}`, { signal: controller.signal });
         const data = await response.json().catch(() => null);
-        if (!cancelled) setDiagnosticEnabled(Boolean(data?.success && data?.enabled));
+        const enabled = Boolean(data?.success && data?.enabled);
+        diagnosticStatusCacheRef.current[cacheKey] = { enabled, ts: Date.now() };
+        setDiagnosticEnabled(enabled);
       } catch (_) {
-        if (!cancelled) setDiagnosticEnabled(false);
+        diagnosticStatusCacheRef.current[cacheKey] = { enabled: false, ts: Date.now() };
+        setDiagnosticEnabled(false);
+      } finally {
+        window.clearTimeout(timeout);
       }
     };
 
     loadDiagnosticStatus();
     return () => {
-      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
     };
   }, [activeResourceId, platform]);
 
