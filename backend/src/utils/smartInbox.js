@@ -144,11 +144,15 @@ function buildConversationPayload(row) {
     };
 }
 
-async function getSmartInboxConversations(pgClient, platform, resourceId) {
+async function getSmartInboxConversations(pgClient, platform, resourceId, options = {}) {
     const config = PLATFORM_CONFIG[platform];
     if (!config) {
         throw new Error(`Unsupported platform: ${platform}`);
     }
+
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 60, 20), 120);
+    const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
+    const todayOnly = Boolean(options.todayOnly);
 
     await ensureSmartInboxLabelsTable(pgClient);
 
@@ -173,6 +177,10 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
             FROM ${config.chatsTable}
             WHERE ${config.resourceColumn} = $1
               AND ${config.chatPlatformCondition || 'TRUE'}
+              AND (
+                  $5::boolean = FALSE
+                  OR TO_TIMESTAMP((${config.timestampExpression}) / 1000)::date = CURRENT_DATE
+              )
         ),
         usable_messages AS (
             SELECT *
@@ -271,17 +279,18 @@ async function getSmartInboxConversations(pgClient, platform, resourceId) {
         ${conversationNameJoin}
         WHERE ${conversationIdExpression} IS NOT NULL
         ORDER BY COALESCE(lp.event_at, lf.event_at, ls.event_at) DESC
+        LIMIT $3 OFFSET $4
     `;
     };
 
     let result;
     try {
-        result = await pgClient.query(buildQuery(true), [resourceId, platform]);
+        result = await pgClient.query(buildQuery(true), [resourceId, platform, limit, offset, todayOnly]);
     } catch (error) {
         if (!config.conversationNameJoin || (error?.code !== '42P01' && error?.code !== '42703')) {
             throw error;
         }
-        result = await pgClient.query(buildQuery(false), [resourceId, platform]);
+        result = await pgClient.query(buildQuery(false), [resourceId, platform, limit, offset, todayOnly]);
     }
 
     return result.rows.map(buildConversationPayload);

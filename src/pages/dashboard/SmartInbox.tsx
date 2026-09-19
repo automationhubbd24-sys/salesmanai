@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 
 const CHAT_POLL_INTERVAL_MS = 60000;
 const MESSAGE_POLL_INTERVAL_MS = 25000;
-const CHAT_LIMIT = 30;
+const CHAT_LIMIT = 100;
 const MESSAGE_LIMIT = 30;
 const SMART_INBOX_CACHE_VERSION = "v1";
 
@@ -331,6 +331,8 @@ const SmartInbox = () => {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingChats, setRefreshingChats] = useState(false);
+  const [loadingMoreChats, setLoadingMoreChats] = useState(false);
+  const [hasMoreChats, setHasMoreChats] = useState(false);
   const [msgLoading, setMsgLoading] = useState(false);
   const [refreshingMessages, setRefreshingMessages] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
@@ -388,19 +390,25 @@ const SmartInbox = () => {
     setSelectedChat((prev) => (prev?.id === nextConversation.id ? nextConversation : prev));
   }, []);
 
-  const fetchChats = useCallback(async (options?: { silent?: boolean }) => {
+  const fetchChats = useCallback(async (options?: { silent?: boolean; append?: boolean }) => {
     const silent = options?.silent ?? false;
+    const append = options?.append ?? false;
+    const backgroundRefresh = silent || Boolean(chatsSignatureRef.current);
 
     if (!hasActiveResource || !platform) {
       chatsAbortRef.current?.abort();
       setChats([]);
       setSelectedChat(null);
+      setHasMoreChats(false);
       setLoading(false);
       setRefreshingChats(false);
+      setLoadingMoreChats(false);
       return;
     }
 
-    if (silent) {
+    if (append) {
+      setLoadingMoreChats(true);
+    } else if (backgroundRefresh) {
       setRefreshingChats(true);
     } else {
       setLoading(true);
@@ -412,12 +420,14 @@ const SmartInbox = () => {
 
     try {
       const token = localStorage.getItem("auth_token");
+      const offset = append ? chats.length : 0;
+      const query = `limit=${CHAT_LIMIT}&offset=${offset}${append ? "" : "&today=true"}`;
       const endpoint =
         platform === "whatsapp"
-          ? `/api/whatsapp/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`
+          ? `/api/whatsapp/conversations/${activeResourceId}?${query}`
           : platform === "instagram"
-            ? `/api/instagram/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`
-            : `/api/messenger/conversations/${activeResourceId}?limit=${CHAT_LIMIT}`;
+            ? `/api/instagram/conversations/${activeResourceId}?${query}`
+            : `/api/messenger/conversations/${activeResourceId}?${query}`;
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -433,8 +443,22 @@ const SmartInbox = () => {
         ...chat,
         body: getMessagePreview(chat.body)
       }));
-      const signature = JSON.stringify(lightweightData);
+      setHasMoreChats(append ? lightweightData.length === CHAT_LIMIT : true);
 
+      if (append || silent) {
+        setChats((prev) => {
+          const existingIds = new Set(lightweightData.map((chat) => chat.id));
+          const merged = append
+            ? [...prev, ...lightweightData.filter((chat) => !prev.some((item) => item.id === chat.id))]
+            : [...lightweightData, ...prev.filter((chat) => !existingIds.has(chat.id))];
+          chatsSignatureRef.current = JSON.stringify(merged);
+          writeSmartInboxCache(getSmartInboxCacheKey(platform, activeResourceId, "chats"), merged);
+          return merged;
+        });
+        return;
+      }
+
+      const signature = JSON.stringify(lightweightData);
       writeSmartInboxCache(getSmartInboxCacheKey(platform, activeResourceId, "chats"), lightweightData);
 
       if (signature !== chatsSignatureRef.current) {
@@ -448,22 +472,27 @@ const SmartInbox = () => {
 
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
-        if (!silent) {
+        if (!silent && !append) {
           toast.error("Conversation list load korte parini");
+        } else if (append) {
+          toast.error("More conversations load korte parini");
         }
       }
     } finally {
-      if (silent) {
+      if (append) {
+        setLoadingMoreChats(false);
+      } else if (backgroundRefresh) {
         setRefreshingChats(false);
       } else {
         setLoading(false);
       }
     }
-  }, [activeResourceId, hasActiveResource, platform]);
+  }, [activeResourceId, chats.length, hasActiveResource, platform]);
 
   const fetchMessages = useCallback(
     async (chatId: string, options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false;
+      const backgroundRefresh = silent || Boolean(messagesSignatureRef.current);
 
       if (!hasActiveResource || !platform || !chatId) {
         setMessages([]);
@@ -521,7 +550,7 @@ const SmartInbox = () => {
           }
         }
       } finally {
-        if (silent) {
+        if (backgroundRefresh) {
           setRefreshingMessages(false);
         } else {
           setMsgLoading(false);
@@ -656,10 +685,12 @@ const SmartInbox = () => {
     const cachedChats = activeResourceId ? readSmartInboxCache<Conversation[]>(getSmartInboxCacheKey(platform, activeResourceId, "chats")) : null;
     if (cachedChats?.length) {
       setChats(cachedChats);
+      setHasMoreChats(true);
       chatsSignatureRef.current = JSON.stringify(cachedChats);
       setLoading(false);
     } else {
       setChats([]);
+      setHasMoreChats(false);
     }
     setIsMobileListVisible(true);
     chatsSignatureRef.current = cachedChats?.length ? JSON.stringify(cachedChats) : "";
@@ -694,16 +725,20 @@ const SmartInbox = () => {
   useEffect(() => {
     if (!selectedChat?.id) return undefined;
 
-    if (activeResourceId) {
-      const cachedMessages = readSmartInboxCache<MessageItem[]>(getSmartInboxCacheKey(platform, activeResourceId, `messages:${selectedChat.id}`));
-      if (cachedMessages?.length) {
-        messagesSignatureRef.current = JSON.stringify(cachedMessages);
-        setMessages(mergeMessageLists([], cachedMessages));
-        setMsgLoading(false);
-      }
+    const cachedMessages = activeResourceId
+      ? readSmartInboxCache<MessageItem[]>(getSmartInboxCacheKey(platform, activeResourceId, `messages:${selectedChat.id}`))
+      : null;
+
+    if (cachedMessages?.length) {
+      messagesSignatureRef.current = JSON.stringify(cachedMessages);
+      setMessages(mergeMessageLists([], cachedMessages));
+      setMsgLoading(false);
+    } else {
+      messagesSignatureRef.current = "";
+      setMessages([]);
     }
 
-    fetchMessages(selectedChat.id);
+    fetchMessages(selectedChat.id, { silent: Boolean(cachedMessages?.length) });
 
     const interval = window.setInterval(() => {
       if (!document.hidden) {
@@ -1213,6 +1248,20 @@ const SmartInbox = () => {
                   </button>
                 );
               })}
+              {!searchTerm && activeFilter === "all" && hasMoreChats && (
+                <div className="pt-2 text-center">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => fetchChats({ append: true })}
+                    disabled={loadingMoreChats}
+                    className="h-9 rounded-full border border-white/10 bg-white/[0.03] px-4 text-xs text-white/55 hover:bg-white/[0.06] hover:text-white"
+                  >
+                    {loadingMoreChats ? "Loading..." : "Load next 100 conversations"}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </ScrollArea>

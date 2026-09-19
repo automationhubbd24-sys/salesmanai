@@ -371,7 +371,10 @@ router.get('/conversations/:accountId', authMiddleware, async (req, res) => {
     try {
         const account = await getAccount(req.params.accountId, req.user.id);
         if (!account) return res.status(404).json({ error: 'Instagram account not found' });
-        res.json(await getSmartInboxConversations(pgClient, 'instagram', account.page_id));
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const todayOnly = req.query.today === 'true' || req.query.todayOnly === 'true';
+        res.json(await getSmartInboxConversations(pgClient, 'instagram', account.page_id, { limit, offset, todayOnly }));
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

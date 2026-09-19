@@ -1300,8 +1300,10 @@ router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
     try {
         const { pageId } = req.params;
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const todayOnly = req.query.today === 'true' || req.query.todayOnly === 'true';
         if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
-        const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId, { limit });
+        const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId, { limit, offset, todayOnly });
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });

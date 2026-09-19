@@ -1102,8 +1102,10 @@ router.get('/conversations/:sessionName', authMiddleware, async (req, res) => {
     try {
         const { sessionName } = req.params;
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 20), 120);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const todayOnly = req.query.today === 'true' || req.query.todayOnly === 'true';
         if (!await requireWhatsAppResource(req, res, sessionName, 'smart_inbox', 'view')) return;
-        const rows = await getSmartInboxConversations(pgClient, 'whatsapp', sessionName, { limit });
+        const rows = await getSmartInboxConversations(pgClient, 'whatsapp', sessionName, { limit, offset, todayOnly });
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
