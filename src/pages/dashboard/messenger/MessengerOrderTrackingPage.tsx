@@ -564,7 +564,7 @@ Phone: ${order.number || 'N/A'}`;
                                           <AlertDialogHeader>
                                             <AlertDialogTitle>Delete this order?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                              This will permanently delete order #{order.id} from the database.
+                                              This will permanently delete order #{order.id} from the database. Chat messages will stay.
                                             </AlertDialogDescription>
                                           </AlertDialogHeader>
                                           <AlertDialogFooter>

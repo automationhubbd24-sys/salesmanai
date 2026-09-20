@@ -2953,52 +2953,69 @@ async function saveOrderTracking(orderData) {
 
     try {
         // --- 2. HUMAN-LIKE AGENT DECISION ---
+        const hasValue = (val) => val != null && !['', 'Pending', 'Recovered Lead', 'Unknown', 'null', 'N/A'].includes(String(val).trim());
+        const isCorrection = order_action === 'update_existing_order';
+        const isExplicitNewOrder = order_action === 'create_new_order';
+
         const recentOrder = await db.query(
-            `SELECT id, is_locked, status, product_name, number, location, product_quantity, price, customer_name
+            `SELECT id, is_locked, status, product_name, number, location, product_quantity, price, customer_name, updated_at, created_at
              FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
-             ORDER BY created_at DESC LIMIT 1`,
+             ORDER BY created_at DESC LIMIT 5`,
             [page_id || null, sender_id || null]
         );
 
-        if (recentOrder.rows.length > 0) {
-            const existing = recentOrder.rows[0];
-            
-            // --- LOCK MECHANISM: If order is locked or delivered, do NOT update it. Create new instead. ---
-            if (existing.is_locked || existing.status === 'delivered' || existing.status === 'locked' || order_action === 'create_new_order') {
-                console.log(`[Order] Creating a fresh order row. Previous order: ${existing.id}, action: ${order_action || 'auto'}`);
-            } else if (order_action === 'answer_only') {
-                console.log(`[Order] Follow-up/info message detected. Keeping existing order (${existing.id}) untouched.`);
-                return { id: existing.id, status: 'unchanged', isNew: false };
-            } else {
+        const candidates = recentOrder.rows.filter((order) => !order.is_locked && order.status !== 'delivered' && order.status !== 'locked');
+
+        if (order_action === 'answer_only' && candidates.length > 0) {
+            console.log(`[Order] Follow-up/info message detected. Keeping existing order (${candidates[0].id}) untouched.`);
+            return { id: candidates[0].id, status: 'unchanged', isNew: false };
+        }
+
+        if (!isExplicitNewOrder && candidates.length > 0) {
+            const incoming = {
+                product_name: hasValue(product_name) ? String(product_name) : null,
+                number: hasValue(number) ? String(number) : null,
+                product_quantity: hasValue(product_quantity) ? String(product_quantity) : null
+            };
+
+            const scoredCandidates = candidates.map((existing, index) => {
+                const existingMissingDetails = !hasValue(existing.product_name) || !hasValue(existing.number) || !hasValue(existing.location) || !hasValue(existing.customer_name);
+                const sameProduct = !incoming.product_name || !hasValue(existing.product_name) || incoming.product_name === existing.product_name;
+                const samePhone = !incoming.number || !hasValue(existing.number) || incoming.number === existing.number;
+                const sameQuantity = !incoming.product_quantity || incoming.product_quantity === '1' || incoming.product_quantity === String(existing.product_quantity || '1');
+                let score = Math.max(0, 5 - index);
+
+                if (sameProduct) score += 8;
+                if (samePhone) score += 10;
+                if (sameQuantity) score += 3;
+                if (existingMissingDetails) score += 6;
+                if (isCorrection) score += 4;
+                if (incoming.number && hasValue(existing.number) && incoming.number !== existing.number && !isCorrection) score -= 20;
+                if (incoming.product_name && hasValue(existing.product_name) && incoming.product_name !== existing.product_name) score -= 8;
+
+                return { existing, score, existingMissingDetails, sameProduct, samePhone, sameQuantity };
+            }).sort((a, b) => b.score - a.score);
+
+            const best = scoredCandidates[0];
+            if (best && (best.score >= 8 || isCorrection)) {
+                const existing = best.existing;
                 const orderId = existing.id;
-                
-                // --- HUMAN-LIKE UPDATE RULES ---
-                // Same product + same phone in an ongoing conversation means the customer is completing/refining the same order.
-                const isMissingDetails = !existing.product_name || existing.product_name === 'Pending' || existing.product_name === 'Recovered Lead' ||
-                                       !existing.number || existing.number === 'Pending' ||
-                                       !existing.location || existing.location === 'Pending' ||
-                                       !existing.customer_name || existing.customer_name === 'Pending';
-                const isCorrection = order_action === 'update_existing_order';
-                const sameProduct = !product_name || product_name === 'Recovered Lead' || product_name === 'Pending' || product_name === existing.product_name;
-                const samePhone = !number || number === 'Pending' || number === 'null' || number === existing.number;
-                const sameQuantity = !product_quantity || String(product_quantity) === '1' || String(product_quantity) === String(existing.product_quantity || '1');
-                const incomingSameOrder = sameProduct && samePhone && sameQuantity;
+                const safeNumber = number && number !== 'Pending' && number !== 'null' && (!hasValue(existing.number) || number === existing.number || isCorrection) ? number : null;
+                if (number && hasValue(existing.number) && number !== existing.number && !isCorrection) {
+                    console.log(`[Order] Phone mismatch protected for order ${orderId}. Existing phone kept.`);
+                }
+                console.log(`[Order] Updating candidate order (${orderId}). Score: ${best.score}. Missing: ${best.existingMissingDetails}. Same product: ${best.sameProduct}. Same phone: ${best.samePhone}.`);
 
-                if (!isMissingDetails && !isCorrection && !incomingSameOrder) {
-                    console.log(`[Order] Existing complete order (${orderId}) plus different order data. Creating new order row.`);
-                } else {
-                    console.log(`[Order] Found active order (${orderId}). Incomplete: ${isMissingDetails}. Correction: ${isCorrection}. Same order: ${incomingSameOrder}. Updating...`);
+                const mergedOrder = {
+                    product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
+                    number: safeNumber || existing.number,
+                    location: location && location !== 'N/A' && location !== 'Pending' && location !== 'null' && location !== '' ? location : existing.location
+                };
+                const nextStatus = getOrderLifecycleStatus(mergedOrder);
 
-                    const mergedOrder = {
-                        product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
-                        number: number && number !== 'Pending' && number !== 'null' ? number : existing.number,
-                        location: location && location !== 'N/A' && location !== 'Pending' && location !== 'null' && location !== '' ? location : existing.location
-                    };
-                    const nextStatus = getOrderLifecycleStatus(mergedOrder);
-                    
-                    await db.query(
+                await db.query(
                     `UPDATE fb_order_tracking SET
                         product_name = CASE 
                             WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> 'Unknown' AND $1::text <> '' THEN $1::text 
@@ -3035,11 +3052,14 @@ async function saveOrderTracking(orderData) {
                         status = $10::text,
                         updated_at = NOW()
                      WHERE id = $7::bigint`,
-                    [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null, nextStatus]
+                    [product_name || null, safeNumber, location || null, product_quantity || null, price || null, safeNumber || sender_number || null, orderId, orderData.customer_name || null, customer_email || null, nextStatus]
                 );
                 return { id: orderId, status: 'updated', isNew: false };
-                }
             }
+
+            console.log(`[Order] No safe matching active order found. Creating new order row. Best score: ${best?.score ?? 0}`);
+        } else if (isExplicitNewOrder && recentOrder.rows.length > 0) {
+            console.log(`[Order] Customer explicitly requested a new order. Creating fresh row.`);
         }
 
         // --- 3. NEW ORDER ---

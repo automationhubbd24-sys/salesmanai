@@ -43,19 +43,47 @@ function extractOrderDetailsFromReply(replyText) {
     if (!text.trim()) return {};
 
     const details = {};
-    const nameMatch = text.match(/(?:^|\n)\s*(?:নাম|name)\s*[:：-]\s*([^\n]+)/i);
-    if (nameMatch?.[1]) details.customer_name = nameMatch[1].trim();
+    const labelMap = [
+        { key: 'customer_name', pattern: /^(?:নাম|name|customer\s*name)\s*[:：-]\s*(.+)$/i },
+        { key: 'phone', pattern: /^(?:ফোন|phone|mobile|number|নম্বর|নাম্বার)\s*[:：-]\s*(.+)$/i },
+        { key: 'address', pattern: /^(?:ঠিকানা|address|location|লোকেশন)\s*[:：-]\s*(.+)$/i },
+        { key: 'product_name', pattern: /^(?:প্রোডাক্ট(?:ের)?\s*নাম|product(?:\s*name)?)\s*[:：-]\s*(.+)$/i },
+        { key: 'quantity', pattern: /^(?:quantity|qty|পরিমাণ)\s*[:：-]\s*(.+)$/i },
+        { key: 'price', pattern: /^(?:মোট\s*বিল|price|total\s*(?:bill|price|amount))\s*[:：-]?\s*(?:bdt|৳|tk|taka)?\s*(.+)$/i }
+    ];
+    for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.replace(/^\s*[-•*]\s*/, '').trim();
+        if (!line) continue;
 
-    const totalMatch = text.match(/(?:মোট\s*বিল|total\s*(?:bill|price|amount))\s*[:：-]?\s*(?:bdt|৳|tk|taka)?\s*([০-৯0-9]+(?:[.,][০-৯0-9]+)?)/i);
-    if (totalMatch?.[1]) details.price = totalMatch[1].trim();
+        for (const { key, pattern } of labelMap) {
+            const match = line.match(pattern);
+            if (!match?.[1]) continue;
+            const value = match[1].replace(/\s*(?:bdt|৳|tk|taka|টাকা)\s*$/i, '').trim();
+            if (value && !/^(?:null|none|n\/a|pending|unknown)$/i.test(value)) details[key] = value;
+            break;
+        }
+    }
 
     return details;
 }
 
+function normalizeOrderDetailsForDecision(orderData) {
+    if (!orderData || typeof orderData !== 'object') return {};
+    const normalized = {};
+    for (const [key, value] of Object.entries(orderData)) {
+        if (value == null) continue;
+        const text = String(value).trim();
+        if (!text || /^(?:null|none|n\/a|pending|unknown)$/i.test(text)) continue;
+        normalized[key] = value;
+    }
+    return normalized;
+}
+
 function mergeReplyOrderFallback(orderData, replyText) {
+    const base = normalizeOrderDetailsForDecision(orderData);
     const fallback = extractOrderDetailsFromReply(replyText);
-    if (!Object.keys(fallback).length) return orderData;
-    return { ...(orderData || {}), ...fallback };
+    if (!Object.keys(fallback).length) return base;
+    return { ...base, ...fallback };
 }
 
 function shouldSkipOrderOrchestration(userText, orderData) {

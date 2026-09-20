@@ -1271,22 +1271,33 @@ router.delete('/orders/:id', authMiddleware, async (req, res) => {
         const order = orderResult.rows[0];
         if (!await requireMessengerResource(req, res, order.page_id, 'orders', 'assign')) return;
 
-        await pgClient.query(
-            `DELETE FROM team_order_assignments
-             WHERE source = 'fb' AND resource_id = $1 AND order_identity = $2`,
-            [order.page_id, String(order.id)]
-        );
+        const client = await pgClient.getPool().connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(
+                `DELETE FROM team_order_assignments
+                 WHERE source = 'fb' AND resource_id = $1 AND order_identity = $2`,
+                [order.page_id, String(order.id)]
+            );
 
-        const result = await pgClient.query(
-            'DELETE FROM fb_order_tracking WHERE id = $1 RETURNING id',
-            [id]
-        );
+            const result = await client.query(
+                'DELETE FROM fb_order_tracking WHERE id = $1 RETURNING id',
+                [id]
+            );
 
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Order not found' });
+            if (result.rowCount === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ error: 'Order not found' });
+            }
+
+            await client.query('COMMIT');
+            res.json({ success: true, deletedId: result.rows[0].id });
+        } catch (deleteErr) {
+            await client.query('ROLLBACK');
+            throw deleteErr;
+        } finally {
+            client.release();
         }
-
-        res.json({ success: true, deletedId: result.rows[0].id });
     } catch (err) {
         console.error('Error deleting order:', err);
         res.status(500).json({ error: err.message });

@@ -3158,17 +3158,20 @@ ${productContext || "No specific product context provided yet."}
 - Never invent stock counts, inventory numbers, or "stock out" claims from missing data.
 - If the customer asks about stock, reply using availability wording only.
 - Only say "unavailable" or "stock out" when product data or SKU data explicitly marks it unavailable/inactive.
-- order_details: Whenever the user provides ANY order info (phone, address, etc.), you MUST include it here.
+- order_details: Whenever the user provides ANY order info (phone, address, name, quantity, product, delivery area), you MUST include it here.
+- If your reply_text contains an order summary, confirmation, or asks only for missing order fields, order_details MUST NOT be null.
 - If the customer only asks price/details/photo/availability or says generic words like "price", "dam", "details", "pic", do NOT create order_details and do NOT set action to save_order. Answer information only and ask confirmation if needed.
 - If a visual message contains multiple possible products/colors, do NOT create order_details until the customer clearly confirms which product/color they want to order.
 
 [SALES WORKFLOW - HUMAN-LIKE ORDER INTELLIGENCE]
-1. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (like just a phone number). Do NOT wait for all fields to be filled.
-2. FOLLOW-UP QUESTIONS: After an order is saved, if the customer asks delivery charge, delivery time, quality, return, COD, status, price, photo, availability, or another product's information, answer only. Do NOT create or update order_details unless the customer gives actual order info.
-3. CORRECTIONS: If the customer says a phone/address/name/quantity/color/product was wrong or should be changed, include order_details.intent = "update_existing_order" and only the corrected/latest fields.
-4. REPEAT OR EXTRA ORDER: If the customer says they want another one, same product again, reorder, "arekta", "abar", "aro 1 ta", or a different product as an additional purchase, include order_details.intent = "create_new_order" only when they clearly wants to place that new order. If unsure, ask confirmation like a human.
-5. DATA PERSISTENCE: Keep latest known values when completing an incomplete order, but do not blindly resave a completed order for normal conversation.
-6. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
+1. INTENT VOCABULARY: Use only these order_details.intent values: "answer_only", "update_existing_order", "create_new_order", "confirm_pending_order".
+2. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (phone, address, name, quantity, product). Do NOT wait for all fields.
+3. CUSTOMER DETAILS AFTER ORDER REQUEST: If the customer provides name/phone/address after you asked for order details, treat it as the SAME pending order and use intent "update_existing_order".
+4. FOLLOW-UP QUESTIONS: After an order is saved, if the customer asks delivery charge, delivery time, quality, return, COD, status, price, photo, availability, or another product's information, answer only and use intent "answer_only" or null order_details unless they gives actual order info.
+5. CORRECTIONS: If the customer says a phone/address/name/quantity/color/product was wrong or should be changed, use intent "update_existing_order" and include only the corrected/latest fields.
+6. REPEAT OR EXTRA ORDER: If the customer clearly says "new order", "ager ta alada", "another", "arekta", "abar", "aro 1 ta", reorder, or a different product as an additional purchase, use intent "create_new_order". If unsure, ask confirmation like a human.
+7. DATA PERSISTENCE: Keep latest known values when completing an incomplete order, but do not blindly resave a completed order for normal conversation.
+8. SMART INFERENCE: Extract product_name, quantity, and price from the current product context; never invent price if product context/tool result does not support it.
 
 [RESPONSE FORMAT]
 {
@@ -3190,7 +3193,7 @@ ${productContext || "No specific product context provided yet."}
   "quantity": 1,
   "price": 0,
   "order_details": {
-    "intent": "order_create_or_update",
+    "intent": "update_existing_order",
     "fields": {
        "phone": "...",
        "address": "...",

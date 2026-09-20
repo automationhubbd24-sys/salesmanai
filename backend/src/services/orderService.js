@@ -37,20 +37,24 @@ function parsePrice(value) {
 function resolveOrderAction({ intent, data, rawText }) {
     const explicitAction = String(data.order_action || data.action || intent || '').toLowerCase();
     const text = normalizeBanglaDigits(String(rawText || data.intent || '').toLowerCase());
+    const decide = (action, reason) => {
+        console.log(`[OrderEngine] Action resolved: ${action} (${reason})`);
+        return action;
+    };
 
-    if (/create_new_order|new_order|repeat_order|reorder/.test(explicitAction)) return 'create_new_order';
-    if (/update_existing_order|correction|edit_order|modify_order/.test(explicitAction)) return 'update_existing_order';
-    if (/answer_only|status_check|none/.test(explicitAction)) return 'answer_only';
+    if (/create_new_order|new_order|repeat_order|reorder/.test(explicitAction)) return decide('create_new_order', 'explicit_ai_intent');
+    if (/update_existing_order|confirm_pending_order|correction|edit_order|modify_order/.test(explicitAction)) return decide('update_existing_order', 'explicit_ai_intent');
+    if (/answer_only|status_check|none/.test(explicitAction)) return decide('answer_only', 'explicit_ai_intent');
 
-    if (/\b(again|another|new order|reorder|repeat|same again|aro\s*(1|one|ek|akta|ekta)|arekta|arekti|abar|abaro)\b|আরেকটা|আরও\s*(একটা|১টা|1টা)|আবার|নতুন\s*অর্ডার|একইটা\s*আবার/i.test(text)) {
-        return 'create_new_order';
+    if (/\b(again|another|new order|separate order|different order|reorder|repeat|same again|eta new|this is new|ager ta alada|previous one separate|aro\s*(1|one|ek|akta|ekta)|arekta|arekti|abar|abaro)\b|আরেকটা|আরও\s*(একটা|১টা|1টা)|আবার|নতুন\s*অর্ডার|আলাদা\s*অর্ডার|আগেরটা\s*আলাদা|একইটা\s*আবার/i.test(text)) {
+        return decide('create_new_order', 'customer_requested_new_or_repeat_order');
     }
 
-    if (/\b(wrong|vul|bhul|change|correct|correction|edit|update|replace)\b|ভুল|ভূল|চেঞ্জ|পরিবর্তন|সংশোধন|আপডেট|ঠিকানা\s*(চেঞ্জ|পরিবর্তন)|নাম্বার\s*(চেঞ্জ|ভুল)|নম্বর\s*(চেঞ্জ|ভুল)/i.test(text)) {
-        return 'update_existing_order';
+    if (/\b(wrong|vul|bhul|change|correct|correction|edit|update|replace|not this|eta na|eta vul|number ta vul|phone ta vul|address ta vul|name ta vul)\b|ভুল|ভূল|চেঞ্জ|পরিবর্তন|সংশোধন|আপডেট|এটা\s*না|ঠিকানা\s*(চেঞ্জ|পরিবর্তন|ভুল)|নাম্বার\s*(চেঞ্জ|ভুল)|নম্বর\s*(চেঞ্জ|ভুল)|নাম\s*(চেঞ্জ|ভুল)/i.test(text)) {
+        return decide('update_existing_order', 'customer_corrected_order_data');
     }
 
-    return 'auto';
+    return decide('auto', 'no_explicit_action');
 }
 
 /**
