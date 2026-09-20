@@ -2586,6 +2586,56 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
         }
 
+        try {
+            if (result && typeof result === 'object') {
+                const summarizeToolCall = (toolCall) => ({
+                    id: toolCall?.id || null,
+                    name: toolCall?.function?.name || toolCall?.name || null,
+                    arguments: toolCall?.function?.arguments || toolCall?.arguments || null
+                });
+                const summarizeToolResult = (entry) => {
+                    const resultData = entry?.result || entry;
+                    return {
+                        tool: entry?.tool_call?.function?.name || entry?.tool_call?.name || null,
+                        status: resultData?.status || null,
+                        found_count: resultData?.found_count || null,
+                        data_injection: resultData?.data_injection || null,
+                        product: resultData?.product ? {
+                            id: resultData.product.id || resultData.product.product_id || null,
+                            name: resultData.product.name || null,
+                            price: resultData.product.price || null,
+                            currency: resultData.product.currency || null
+                        } : null,
+                        total_price: resultData?.total_price || null,
+                        breakdown: resultData?.breakdown || null,
+                        message: resultData?.message || null
+                    };
+                };
+
+                result.decision_audit = {
+                    user_message: cleanUserMessage,
+                    model: displayModel,
+                    raw_model: result.model || null,
+                    final_action: result.action || null,
+                    final_product_id: result.product_id || null,
+                    final_reply: result.reply || null,
+                    order_details: result.order_details || null,
+                    product_context: productContext || null,
+                    last_product_context: lastProductContext || null,
+                    found_products: Array.isArray(result.foundProducts) ? result.foundProducts.slice(0, 5).map((product) => ({
+                        id: product.id || product.product_id || null,
+                        name: product.name || null,
+                        price: product.price || null,
+                        currency: product.currency || null
+                    })) : [],
+                    tool_calls: Array.isArray(result.agent_trace?.tool_calls) ? result.agent_trace.tool_calls.map(summarizeToolCall) : [],
+                    tool_results: Array.isArray(result.agent_trace?.tool_results) ? result.agent_trace.tool_results.map(summarizeToolResult) : []
+                };
+            }
+        } catch (auditErr) {
+            console.warn(`[AI Audit] Failed to attach decision audit: ${auditErr.message}`);
+        }
+
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---
         if (pageConfig.user_id && (result.token_usage > 0 || pageConfig.is_external_api === true || pageConfig.billing_mode === 'request')) {
             // isRequestBilling, displayModel, usageTokens, cost are already calculated above

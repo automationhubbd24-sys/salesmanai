@@ -371,6 +371,52 @@ async function saveFbOutgoingLog({
     });
 }
 
+function compactAuditValue(value, maxLength = 1800) {
+    if (value == null || value === '') return 'none';
+    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    return text.length > maxLength ? `${text.slice(0, maxLength)}\n... [truncated]` : text;
+}
+
+function formatAiDecisionAudit(audit = {}) {
+    const toolCalls = Array.isArray(audit.tool_calls) ? audit.tool_calls : [];
+    const toolResults = Array.isArray(audit.tool_results) ? audit.tool_results : [];
+    const foundProducts = Array.isArray(audit.found_products) ? audit.found_products : [];
+
+    const lines = [
+        '[AI Decision Audit]',
+        `Model: ${audit.model || audit.raw_model || 'unknown'}`,
+        `Raw Model: ${audit.raw_model || 'unknown'}`,
+        `Final Action: ${audit.final_action || 'none'}`,
+        `Final Product ID: ${audit.final_product_id || 'none'}`,
+        '',
+        '[User Message]',
+        compactAuditValue(audit.user_message, 800),
+        '',
+        '[Final Reply]',
+        compactAuditValue(audit.final_reply, 1200),
+        '',
+        '[Product Context / Text Vector Snapshot]',
+        compactAuditValue(audit.product_context, 3500),
+        '',
+        '[Last Product Context]',
+        compactAuditValue(audit.last_product_context, 1200),
+        '',
+        '[Found Products Returned To Reply Layer]',
+        foundProducts.length ? foundProducts.map((product, index) => `${index + 1}. id=${product.id || 'none'} | name=${product.name || 'none'} | price=${product.price || 'none'} ${product.currency || ''}`.trim()).join('\n') : 'none',
+        '',
+        '[Tool Calls Requested By LLM]',
+        toolCalls.length ? toolCalls.map((call, index) => `${index + 1}. ${call.name || 'unknown'}\nArguments: ${compactAuditValue(call.arguments, 1000)}`).join('\n\n') : 'none',
+        '',
+        '[Tool Results / DB Proof Given Back]',
+        toolResults.length ? toolResults.map((entry, index) => `${index + 1}. ${entry.tool || 'unknown'} | status=${entry.status || 'none'} | found_count=${entry.found_count ?? 'none'}\nProduct: ${compactAuditValue(entry.product, 900)}\nTotal Price: ${entry.total_price ?? 'none'}\nBreakdown: ${compactAuditValue(entry.breakdown, 900)}\nData Injection: ${compactAuditValue(entry.data_injection, 1800)}\nMessage: ${compactAuditValue(entry.message, 800)}`).join('\n\n') : 'none',
+        '',
+        '[Order Details Extracted]',
+        compactAuditValue(audit.order_details, 1200)
+    ];
+
+    return lines.join('\n');
+}
+
 // Helper to log to file (Async)
 function logToFile(message) {
     const logPath = path.join(__dirname, '../../debug.log');
@@ -5067,6 +5113,19 @@ STRICT RULES:
                 token: aiResponse.token_usage || 0,
                 aiModel: aiModelLabel
             });
+
+            if (aiResponse?.decision_audit) {
+                await saveFbOutgoingLog({
+                    pageId,
+                    recipientId: senderId,
+                    messageId: `ai_decision_audit_${botMessageId}`,
+                    text: formatAiDecisionAudit(aiResponse.decision_audit),
+                    status: 'sent',
+                    replyBy: 'system',
+                    token: 0,
+                    aiModel: aiModelLabel
+                });
+            }
             
             if (!isNoReply) {
                 // Track bot reply in memory BEFORE sending to block the echo

@@ -1500,6 +1500,7 @@ const SmartInbox = () => {
                         lowerBody.includes("system memory: user is viewing image") ||
                         lowerBody.includes("sent images to user"));
                     const isAnalysisMessage = /\[Analyzed Images?\]|\[Analyzed Image\s*\d*\]|Analyzed Image:|Analyzed Voice:/i.test(body);
+                    const isDecisionAuditMessage = /\[AI Decision Audit\]/i.test(body);
                     const isTranscriptMessage = /^\[Transcript\]:/i.test(body.trim());
                     const isOutgoing = message.from === "me" || message.reply_by === "admin" || isBotImage;
                     const isBot = message.reply_by === "bot" || isBotImage;
@@ -1565,11 +1566,11 @@ const SmartInbox = () => {
                                 </p>
                               )}
                             </div>
-                          ) : isAnalysisMessage || isTranscriptMessage ? (
+                          ) : isAnalysisMessage || isTranscriptMessage || isDecisionAuditMessage ? (
                             <details className="group max-w-[min(78vw,220px)] sm:max-w-[360px]">
                               <summary className={cn("cursor-pointer list-none rounded-2xl border px-3 py-2 text-xs font-black transition-colors", isBot ? "border-black/10 bg-black/5 text-black/80" : "border-white/10 bg-white/[0.04] text-[#8effc4]")}>
                                 <span className="flex items-center justify-between gap-3">
-                                  <span>{isTranscriptMessage ? "Voice transcript" : body.toLowerCase().includes("voice") ? "Voice analysis" : "Image analysis"}</span>
+                                  <span>{isDecisionAuditMessage ? "AI decision audit" : isTranscriptMessage ? "Voice transcript" : body.toLowerCase().includes("voice") ? "Voice analysis" : "Image analysis"}</span>
                                   <span className="text-[10px] opacity-60 group-open:hidden">Expand</span>
                                   <span className="hidden text-[10px] opacity-60 group-open:inline">Collapse</span>
                                 </span>
@@ -1579,6 +1580,7 @@ const SmartInbox = () => {
                                   .replace(/\[Analyzed Images?\]:?\s*/i, "")
                                   .replace(/\[Analyzed Image\s*\d*\]:?\s*/i, "")
                                   .replace(/\[Analyzed Voice\]:?\s*/i, "")
+                                  .replace(/\[AI Decision Audit\]:?\s*/i, "")
                                   .replace(/^\[Transcript\]:\s*/i, "")
                                   .replace(/Analyzed Image:\s*/i, "")
                                   .replace(/Analyzed Voice:\s*/i, "")
