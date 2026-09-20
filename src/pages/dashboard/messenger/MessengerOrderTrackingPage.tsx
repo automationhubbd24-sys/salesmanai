@@ -21,7 +21,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw, MessageSquare } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw, MessageSquare, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
@@ -110,6 +121,7 @@ export default function MessengerOrderTrackingPage() {
   const [orderView, setOrderView] = useState<'active' | 'draft'>('active');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const lastFetchParams = useRef("");
   const lastFetchAt = useRef(0);
   const ordersRef = useRef<Order[]>([]);
@@ -143,6 +155,33 @@ export default function MessengerOrderTrackingPage() {
     } catch (error) {
       console.error("Error updating order status:", error);
       toast.error("Failed to update status");
+    }
+  };
+
+  const deleteOrder = async (orderId: string) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+
+    setDeletingOrderId(orderId);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/orders/${orderId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) throw new Error("Failed to delete order");
+
+      setOrders((current) => current.filter((order) => order.id !== orderId));
+      if (selectedOrder?.id === orderId) setSelectedOrder(null);
+      toast.success("Order deleted from database");
+      fetchOrders(false);
+    } catch (error) {
+      console.error("Error deleting order:", error);
+      toast.error("Failed to delete order");
+    } finally {
+      setDeletingOrderId(null);
     }
   };
 
@@ -510,6 +549,35 @@ Phone: ${order.number || 'N/A'}`;
                                           <Copy className="h-4 w-4 text-muted-foreground" />
                                         )}
                                       </Button>
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            disabled={deletingOrderId === order.id}
+                                            title="Delete Order"
+                                          >
+                                            <Trash2 className="h-4 w-4 text-destructive" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>Delete this order?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              This will permanently delete order #{order.id} from the database.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                              onClick={() => deleteOrder(order.id)}
+                                            >
+                                              Delete
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
                                     </div>
                                   </TableCell>
                               </TableRow>

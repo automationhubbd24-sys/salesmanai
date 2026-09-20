@@ -2975,25 +2975,21 @@ async function saveOrderTracking(orderData) {
                 const orderId = existing.id;
                 
                 // --- HUMAN-LIKE UPDATE RULES ---
-                // Update only when the current order is incomplete, or the customer clearly corrects existing order info.
+                // Same product + same phone in an ongoing conversation means the customer is completing/refining the same order.
                 const isMissingDetails = !existing.product_name || existing.product_name === 'Pending' || existing.product_name === 'Recovered Lead' ||
-                                       !existing.number || existing.number === 'Pending' || 
-                                       !existing.location || existing.location === 'Pending';
+                                       !existing.number || existing.number === 'Pending' ||
+                                       !existing.location || existing.location === 'Pending' ||
+                                       !existing.customer_name || existing.customer_name === 'Pending';
                 const isCorrection = order_action === 'update_existing_order';
-                const incomingSameOrder =
-                    (!product_name || product_name === 'Recovered Lead' || product_name === 'Pending' || product_name === existing.product_name) &&
-                    (!number || number === 'Pending' || number === 'null' || number === existing.number) &&
-                    (!location || location === 'N/A' || location === 'Pending' || location === 'null' || location === '' || location === existing.location) &&
-                    (!product_quantity || String(product_quantity) === '1' || String(product_quantity) === String(existing.product_quantity || '1'));
+                const sameProduct = !product_name || product_name === 'Recovered Lead' || product_name === 'Pending' || product_name === existing.product_name;
+                const samePhone = !number || number === 'Pending' || number === 'null' || number === existing.number;
+                const sameQuantity = !product_quantity || String(product_quantity) === '1' || String(product_quantity) === String(existing.product_quantity || '1');
+                const incomingSameOrder = sameProduct && samePhone && sameQuantity;
 
-                if (!isMissingDetails && !isCorrection) {
-                    if (incomingSameOrder) {
-                        console.log(`[Order] Existing complete order (${orderId}) already matches incoming data. No overwrite.`);
-                        return { id: orderId, status: 'unchanged', isNew: false };
-                    }
+                if (!isMissingDetails && !isCorrection && !incomingSameOrder) {
                     console.log(`[Order] Existing complete order (${orderId}) plus different order data. Creating new order row.`);
                 } else {
-                    console.log(`[Order] Found active order (${orderId}). Incomplete: ${isMissingDetails}. Correction: ${isCorrection}. Updating...`);
+                    console.log(`[Order] Found active order (${orderId}). Incomplete: ${isMissingDetails}. Correction: ${isCorrection}. Same order: ${incomingSameOrder}. Updating...`);
 
                     const mergedOrder = {
                         product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,

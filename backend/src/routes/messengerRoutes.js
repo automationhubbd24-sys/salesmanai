@@ -1256,6 +1256,43 @@ router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
     }
 });
 
+router.delete('/orders/:id', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orderResult = await pgClient.query(
+            'SELECT id, page_id FROM fb_order_tracking WHERE id = $1 LIMIT 1',
+            [id]
+        );
+
+        if (orderResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        const order = orderResult.rows[0];
+        if (!await requireMessengerResource(req, res, order.page_id, 'orders', 'assign')) return;
+
+        await pgClient.query(
+            `DELETE FROM team_order_assignments
+             WHERE source = 'fb' AND resource_id = $1 AND order_identity = $2`,
+            [order.page_id, String(order.id)]
+        );
+
+        const result = await pgClient.query(
+            'DELETE FROM fb_order_tracking WHERE id = $1 RETURNING id',
+            [id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        res.json({ success: true, deletedId: result.rows[0].id });
+    } catch (err) {
+        console.error('Error deleting order:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/download-conversation', authMiddleware, async (req, res) => {
     try {
         const pageId = String(req.query.page_id || '').trim();
