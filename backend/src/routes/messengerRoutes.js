@@ -12,6 +12,7 @@ const { resolveAuthorizedTeamResource } = require('../services/teamAuthorization
 
 const webhookController = require('../controllers/webhookController');
 const { getSmartInboxConversations, upsertSmartInboxLabel } = require('../utils/smartInbox');
+const { isValidContactName } = require('../utils/contactName');
 const commentAutomationService = require('../services/commentAutomationService');
 const FACEBOOK_GRAPH_VERSION = process.env.FACEBOOK_GRAPH_VERSION || 'v25.0';
 const smartInboxUpload = multer({
@@ -1304,6 +1305,32 @@ router.get('/conversations/:pageId', authMiddleware, async (req, res) => {
         const todayOnly = req.query.today === 'true' || req.query.todayOnly === 'true';
         if (!await requireMessengerResource(req, res, pageId, 'smart_inbox', 'view')) return;
         const rows = await getSmartInboxConversations(pgClient, 'messenger', pageId, { limit, offset, todayOnly });
+
+        const pageResult = await pgClient.query(
+            `SELECT page_access_token
+             FROM page_access_token_message
+             WHERE page_id = $1
+             LIMIT 1`,
+            [pageId]
+        );
+        const pageAccessToken = pageResult.rows[0]?.page_access_token;
+        const missingNameRows = pageAccessToken
+            ? rows.filter((row) => !isValidContactName(row.name) && row.id)
+            : [];
+
+        if (missingNameRows.length > 0) {
+            await Promise.allSettled(
+                missingNameRows.slice(0, 10).map(async (row) => {
+                    const profile = await facebookService.getUserProfile(row.id, pageAccessToken);
+                    if (!isValidContactName(profile?.name)) return;
+                    await dbService.updateFbChatSenderName(pageId, row.id, profile.name);
+                    row.name = profile.name.trim();
+                    row.display_name = row.name;
+                    row.contact = row.name;
+                })
+            );
+        }
+
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
