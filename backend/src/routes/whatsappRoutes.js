@@ -565,6 +565,48 @@ router.get('/orders', authMiddleware, async (req, res) => {
     }
 });
 
+router.patch('/orders/:id', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orderResult = await pgClient.query(
+            'SELECT session_name FROM whatsapp_order_tracking WHERE id = $1 LIMIT 1',
+            [id]
+        );
+        if (orderResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        if (!await requireWhatsAppResource(req, res, orderResult.rows[0].session_name, 'orders', 'assign')) return;
+
+        const fields = ['product_name', 'product_quantity', 'price', 'location', 'customer_name', 'number'];
+        const updates = [];
+        const values = [];
+        fields.forEach((field) => {
+            if (Object.prototype.hasOwnProperty.call(req.body || {}, field)) {
+                values.push(req.body[field]);
+                updates.push(`${field} = $${values.length}`);
+            }
+        });
+
+        if (!updates.length) {
+            return res.status(400).json({ error: 'No editable fields provided' });
+        }
+
+        values.push(id);
+        const result = await pgClient.query(
+            `UPDATE whatsapp_order_tracking
+             SET ${updates.join(', ')}
+             WHERE id = $${values.length}
+             RETURNING *`,
+            values
+        );
+
+        res.json({ success: true, order: result.rows[0] });
+    } catch (err) {
+        console.error('Error updating WhatsApp order:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.patch('/orders/:id/status', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;

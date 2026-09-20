@@ -21,7 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw, MessageSquare, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, RefreshCw, MessageSquare, Trash2, Pencil } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +34,9 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
 import { ConversationDialog } from "@/components/dashboard/ConversationDialog";
@@ -58,12 +61,23 @@ interface Order {
   ad_id?: string | number | null;
 }
 
+type OrderEditForm = Pick<Order, "product_name" | "product_quantity" | "price" | "location" | "customer_name" | "number">;
+
 const getOrderAdTitle = (order: Order) => {
   const source = `${order.source || ""} ${order.lead_source || ""}`.toLowerCase();
   const title = order.ad_title || order.ad_name || order.campaign_name;
   if (!title && !order.ad_id && !source.includes("ad") && !source.includes("ads")) return null;
   return title || "Ads Lead";
 };
+
+const getOrderEditForm = (order: Order): OrderEditForm => ({
+  product_name: order.product_name || "",
+  product_quantity: order.product_quantity || "",
+  price: order.price || "",
+  location: order.location || "",
+  customer_name: order.customer_name || "",
+  number: order.number || "",
+});
 
 const orderExportHeaders = ["ID", "Product Name", "Customer Name", "Number", "Location", "Quantity", "Price", "Date"];
 
@@ -122,6 +136,9 @@ export default function MessengerOrderTrackingPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
   const lastFetchParams = useRef("");
   const lastFetchAt = useRef(0);
   const ordersRef = useRef<Order[]>([]);
@@ -155,6 +172,47 @@ export default function MessengerOrderTrackingPage() {
     } catch (error) {
       console.error("Error updating order status:", error);
       toast.error("Failed to update status");
+    }
+  };
+
+  const openEditOrder = (order: Order) => {
+    setEditingOrder(order);
+    setEditForm(getOrderEditForm(order));
+  };
+
+  const updateEditField = (field: keyof OrderEditForm, value: string) => {
+    setEditForm((current) => current ? { ...current, [field]: value } : current);
+  };
+
+  const saveOrderEdit = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token || !editingOrder || !editForm) return;
+
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/messenger/orders/${editingOrder.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(editForm),
+      });
+
+      if (!res.ok) throw new Error("Failed to update order");
+
+      const data = await res.json();
+      const updatedOrder = data.order || { ...editingOrder, ...editForm };
+      setOrders((current) => current.map((order) => order.id === editingOrder.id ? { ...order, ...updatedOrder } : order));
+      setEditingOrder(null);
+      setEditForm(null);
+      toast.success("Order updated successfully");
+      fetchOrders(false);
+    } catch (error) {
+      console.error("Error updating order:", error);
+      toast.error("Failed to update order");
+    } finally {
+      setSavingOrder(false);
     }
   };
 
@@ -457,7 +515,7 @@ Phone: ${order.number || 'N/A'}`;
                               <TableHead>Phone</TableHead>
                               <TableHead>Status</TableHead>
                               <TableHead>Sender ID</TableHead>
-                              <TableHead className="w-[120px]">Actions</TableHead>
+                              <TableHead className="w-[160px] text-right">Actions</TableHead>
                           </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -528,7 +586,7 @@ Phone: ${order.number || 'N/A'}`;
                                   </TableCell>
                                   <TableCell>{order.sender_id}</TableCell>
                                   <TableCell>
-                                    <div className="flex items-center gap-1">
+                                    <div className="grid grid-cols-2 gap-1 sm:flex sm:items-center sm:justify-end sm:gap-1">
                                       <Button
                                         variant="ghost"
                                         size="icon"
@@ -536,6 +594,14 @@ Phone: ${order.number || 'N/A'}`;
                                         title="Open Conversation"
                                       >
                                         <MessageSquare className="h-4 w-4 text-primary" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => openEditOrder(order)}
+                                        title="Edit Order"
+                                      >
+                                        <Pencil className="h-4 w-4 text-[#00ff88]" />
                                       </Button>
                                       <Button
                                         variant="ghost"
@@ -588,6 +654,51 @@ Phone: ${order.number || 'N/A'}`;
           )}
         </CardContent>
       </Card>
+      <Dialog open={editingOrder !== null} onOpenChange={(open) => {
+        if (!open) {
+          setEditingOrder(null);
+          setEditForm(null);
+        }
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit order</DialogTitle>
+            <DialogDescription>Update product, customer, phone, price, quantity and delivery location.</DialogDescription>
+          </DialogHeader>
+          {editForm && (
+            <div className="grid gap-4 py-2 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="messenger-product-name">Product name</Label>
+                <Input id="messenger-product-name" value={String(editForm.product_name)} onChange={(event) => updateEditField("product_name", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="messenger-qty">Qty</Label>
+                <Input id="messenger-qty" value={String(editForm.product_quantity)} onChange={(event) => updateEditField("product_quantity", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="messenger-price">Price</Label>
+                <Input id="messenger-price" value={String(editForm.price)} onChange={(event) => updateEditField("price", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="messenger-customer">Customer name</Label>
+                <Input id="messenger-customer" value={String(editForm.customer_name || "")} onChange={(event) => updateEditField("customer_name", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="messenger-phone">Phone</Label>
+                <Input id="messenger-phone" value={String(editForm.number)} onChange={(event) => updateEditField("number", event.target.value)} />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="messenger-location">Location</Label>
+                <Input id="messenger-location" value={String(editForm.location)} onChange={(event) => updateEditField("location", event.target.value)} />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditingOrder(null)} disabled={savingOrder}>Cancel</Button>
+            <Button onClick={saveOrderEdit} disabled={savingOrder}>{savingOrder ? "Saving..." : "Save changes"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConversationDialog
         open={selectedOrder !== null}
         onOpenChange={(open) => !open && setSelectedOrder(null)}

@@ -88,6 +88,13 @@ async function ensureInstagramTables() {
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
 
+        ALTER TABLE instagram_order_tracking ADD COLUMN IF NOT EXISTS product_name TEXT;
+        ALTER TABLE instagram_order_tracking ADD COLUMN IF NOT EXISTS product_quantity TEXT;
+        ALTER TABLE instagram_order_tracking ADD COLUMN IF NOT EXISTS price TEXT;
+        ALTER TABLE instagram_order_tracking ADD COLUMN IF NOT EXISTS location TEXT;
+        ALTER TABLE instagram_order_tracking ADD COLUMN IF NOT EXISTS customer_name TEXT;
+        ALTER TABLE instagram_order_tracking ADD COLUMN IF NOT EXISTS number TEXT;
+
         CREATE INDEX IF NOT EXISTS idx_instagram_accounts_user ON instagram_accounts(user_id);
         CREATE INDEX IF NOT EXISTS idx_instagram_chats_account_sender ON instagram_chats(instagram_account_id, sender_id);
         CREATE INDEX IF NOT EXISTS idx_instagram_orders_account_sender ON instagram_order_tracking(instagram_account_id, sender_id);
@@ -424,6 +431,44 @@ router.get('/orders', authMiddleware, async (req, res) => {
         if (!account) return res.status(404).json({ error: 'Instagram account not found' });
         const { rows } = await pgClient.query(`SELECT * FROM instagram_order_tracking WHERE instagram_account_id = $1 ORDER BY created_at DESC`, [account.page_id]);
         res.json(rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.patch('/orders/:id', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orderResult = await pgClient.query(
+            'SELECT instagram_account_id FROM instagram_order_tracking WHERE id = $1 LIMIT 1',
+            [id]
+        );
+        if (orderResult.rowCount === 0) return res.status(404).json({ error: 'Order not found' });
+
+        const account = await getAccount(orderResult.rows[0].instagram_account_id, req.user.id);
+        if (!account) return res.status(404).json({ error: 'Instagram account not found' });
+
+        const fields = ['product_name', 'product_quantity', 'price', 'location', 'customer_name', 'number'];
+        const updates = [];
+        const values = [];
+        fields.forEach((field) => {
+            if (Object.prototype.hasOwnProperty.call(req.body || {}, field)) {
+                values.push(req.body[field]);
+                updates.push(`${field} = $${values.length}`);
+            }
+        });
+
+        if (!updates.length) return res.status(400).json({ error: 'No editable fields provided' });
+
+        values.push(id);
+        const { rows } = await pgClient.query(
+            `UPDATE instagram_order_tracking
+             SET ${updates.join(', ')}, updated_at = NOW()
+             WHERE id = $${values.length}
+             RETURNING *`,
+            values
+        );
+        res.json({ success: true, order: rows[0] });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

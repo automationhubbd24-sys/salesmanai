@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar as CalendarIcon, Check, Copy, Download, MessageSquare, RefreshCw, ShoppingBag } from "lucide-react";
+import { Calendar as CalendarIcon, Check, Copy, Download, MessageSquare, RefreshCw, ShoppingBag, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -8,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar } from "@/components/ui/calendar";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
 import { ConversationDialog } from "@/components/dashboard/ConversationDialog";
 import { useInstagram } from "@/context/InstagramContext";
@@ -31,11 +34,21 @@ type Order = {
 
 type DateFilter = "today" | "yesterday" | "custom" | "all";
 type OrderView = "active" | "draft";
+type OrderEditForm = Pick<Order, "product_name" | "product_quantity" | "price" | "location" | "customer_name" | "number">;
 
 const csvCell = (value: unknown) => {
   const text = String(value ?? "");
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
+
+const getOrderEditForm = (order: Order): OrderEditForm => ({
+  product_name: order.product_name || "",
+  product_quantity: order.product_quantity || "",
+  price: order.price || "",
+  location: order.location || "",
+  customer_name: order.customer_name || "",
+  number: order.number || "",
+});
 
 export default function InstagramOrderTrackingPage() {
   const navigate = useNavigate();
@@ -47,6 +60,9 @@ export default function InstagramOrderTrackingPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   const accountId = currentAccount?.page_id || null;
   const dbId = currentAccount?.db_id || currentAccount?.id || 0;
@@ -121,6 +137,46 @@ export default function InstagramOrderTrackingPage() {
     link.download = `instagram-${orderView}-orders-${format(new Date(), "yyyy-MM-dd")}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const openEditOrder = (order: Order) => {
+    setEditingOrder(order);
+    setEditForm(getOrderEditForm(order));
+  };
+
+  const updateEditField = (field: keyof OrderEditForm, value: string) => {
+    setEditForm((current) => current ? { ...current, [field]: value } : current);
+  };
+
+  const saveOrderEdit = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token || !editingOrder || !editForm) return;
+
+    setSavingOrder(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/instagram/orders/${editingOrder.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(editForm),
+      });
+
+      if (!response.ok) throw new Error("Order update করা যায়নি");
+
+      const data = await response.json();
+      const updatedOrder = data.order || { ...editingOrder, ...editForm };
+      setOrders((current) => current.map((order) => order.id === editingOrder.id ? { ...order, ...updatedOrder } : order));
+      setEditingOrder(null);
+      setEditForm(null);
+      toast.success("Order updated successfully");
+      void fetchOrders();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Order update করা যায়নি");
+    } finally {
+      setSavingOrder(false);
+    }
   };
 
   const copyOrder = async (order: Order) => {
@@ -242,12 +298,17 @@ export default function InstagramOrderTrackingPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
+                        <div className="grid grid-cols-3 justify-end gap-1 sm:inline-grid sm:w-auto sm:grid-cols-3">
                         <Button variant="ghost" size="icon" title="Open conversation" disabled={!order.sender_id} onClick={() => setSelectedOrder(order)}>
                           <MessageSquare className="h-4 w-4 text-pink-500" />
+                        </Button>
+                        <Button variant="ghost" size="icon" title="Edit order" onClick={() => openEditOrder(order)}>
+                          <Pencil className="h-4 w-4 text-pink-500" />
                         </Button>
                         <Button variant="ghost" size="icon" title="Copy order" onClick={() => void copyOrder(order)}>
                           {copiedId === order.id ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
                         </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -257,6 +318,52 @@ export default function InstagramOrderTrackingPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={editingOrder !== null} onOpenChange={(open) => {
+        if (!open) {
+          setEditingOrder(null);
+          setEditForm(null);
+        }
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit order</DialogTitle>
+            <DialogDescription>Product, customer, phone, price, quantity ও location update করুন।</DialogDescription>
+          </DialogHeader>
+          {editForm && (
+            <div className="grid gap-4 py-2 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="instagram-product-name">Product name</Label>
+                <Input id="instagram-product-name" value={String(editForm.product_name || "")} onChange={(event) => updateEditField("product_name", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="instagram-qty">Qty</Label>
+                <Input id="instagram-qty" value={String(editForm.product_quantity || "")} onChange={(event) => updateEditField("product_quantity", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="instagram-price">Price</Label>
+                <Input id="instagram-price" value={String(editForm.price || "")} onChange={(event) => updateEditField("price", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="instagram-customer">Customer name</Label>
+                <Input id="instagram-customer" value={String(editForm.customer_name || "")} onChange={(event) => updateEditField("customer_name", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="instagram-phone">Phone</Label>
+                <Input id="instagram-phone" value={String(editForm.number || "")} onChange={(event) => updateEditField("number", event.target.value)} />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="instagram-location">Location</Label>
+                <Input id="instagram-location" value={String(editForm.location || "")} onChange={(event) => updateEditField("location", event.target.value)} />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditingOrder(null)} disabled={savingOrder}>Cancel</Button>
+            <Button onClick={saveOrderEdit} disabled={savingOrder}>{savingOrder ? "Saving..." : "Save changes"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConversationDialog
         open={selectedOrder !== null}
