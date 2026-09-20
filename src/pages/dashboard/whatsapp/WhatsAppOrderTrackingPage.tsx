@@ -39,7 +39,20 @@ interface Order {
   status: string;
   sender_id: string;
   created_at: string;
+  source?: string | null;
+  lead_source?: string | null;
+  ad_title?: string | null;
+  ad_name?: string | null;
+  campaign_name?: string | null;
+  ad_id?: string | number | null;
 }
+
+const getOrderAdTitle = (order: Order) => {
+  const source = `${order.source || ""} ${order.lead_source || ""}`.toLowerCase();
+  const title = order.ad_title || order.ad_name || order.campaign_name;
+  if (!title && !order.ad_id && !source.includes("ad") && !source.includes("ads")) return null;
+  return title || "Ads Lead";
+};
 
 const orderExportHeaders = ["ID", "Product Name", "Customer Name", "Number", "Location", "Quantity", "Price", "Date"];
 
@@ -384,11 +397,23 @@ Phone: ${order.number || 'N/A'}`;
                       </TableHeader>
                       <TableBody>
                           {visibleOrders.map((order) => (
-                              <TableRow key={order.id} className="hover:bg-muted/50">
+                              <TableRow
+                                key={order.id}
+                                className={cn("hover:bg-muted/50", getOrderAdTitle(order) && "border-l-4 border-l-[#00ff88]/70")}
+                              >
                                   <TableCell className="font-medium whitespace-nowrap">
                                       {format(new Date(order.created_at), "MMM d, HH:mm")}
                                   </TableCell>
-                                  <TableCell className="font-medium">{order.product_name}</TableCell>
+                                  <TableCell className="font-medium">
+                                    <div className="space-y-1">
+                                      <div>{order.product_name}</div>
+                                      {getOrderAdTitle(order) && (
+                                        <div className="inline-flex max-w-[260px] items-center rounded-full border border-[#00ff88]/30 bg-[#00ff88]/10 px-2 py-0.5 text-[10px] font-bold text-[#8effc4]">
+                                          <span className="truncate">Ads Lead: {getOrderAdTitle(order)}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </TableCell>
                                   <TableCell>{order.product_quantity}</TableCell>
                                   <TableCell>{order.price}</TableCell>
                                   <TableCell className="max-w-[200px]">

@@ -41,7 +41,23 @@ type LabelKey = "agent" | "human" | "order" | "human_transfer";
 type FilterKey = "all" | LabelKey;
 type PlatformKey = "whatsapp" | "messenger" | "instagram";
 
-type Conversation = {
+type AdAttribution = {
+  title: string;
+  campaign?: string;
+};
+
+type AdAttributionFields = {
+  source?: string | null;
+  lead_source?: string | null;
+  referral?: unknown;
+  messaging_referral?: unknown;
+  ad_id?: string | number | null;
+  ad_title?: string | null;
+  ad_name?: string | null;
+  campaign_name?: string | null;
+};
+
+type Conversation = AdAttributionFields & {
   id: string;
   from: string;
   name: string | null;
@@ -64,7 +80,7 @@ type Conversation = {
   };
 };
 
-type MessageItem = {
+type MessageItem = AdAttributionFields & {
   id?: string | number | null;
   message_id?: string | null;
   messageId?: string | null;
@@ -134,6 +150,33 @@ const writeSmartInboxCache = (key: string, data: unknown) => {
 
 const getPlatformTitle = (platform?: string | null) =>
   platform === "whatsapp" ? "WhatsApp" : platform === "instagram" ? "Instagram" : "Messenger";
+
+const readNestedString = (value: unknown, path: string[]) => {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || !(key in current)) return "";
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current.trim() : "";
+};
+
+const getAdAttribution = (item?: AdAttributionFields | null): AdAttribution | null => {
+  if (!item) return null;
+
+  const source = `${item.source || ""} ${item.lead_source || ""}`.toLowerCase();
+  const title =
+    item.ad_title?.trim() ||
+    item.ad_name?.trim() ||
+    readNestedString(item.referral, ["ads_context_data", "ad_title"]) ||
+    readNestedString(item.messaging_referral, ["ads_context_data", "ad_title"]);
+  const campaign =
+    item.campaign_name?.trim() ||
+    readNestedString(item.referral, ["ads_context_data", "campaign_name"]) ||
+    readNestedString(item.messaging_referral, ["ads_context_data", "campaign_name"]);
+
+  if (!title && !campaign && !item.ad_id && !source.includes("ad") && !source.includes("ads")) return null;
+  return { title: title || "Ads theke asha message", campaign: campaign || undefined };
+};
 
 const getPlatformTheme = (platform: PlatformKey) => {
   if (platform === "whatsapp") {
@@ -777,10 +820,13 @@ const SmartInbox = () => {
         return true;
       }
 
+      const adAttribution = getAdAttribution(chat);
       const haystack = [
         getDisplayName(chat),
         chat.from,
         chat.body,
+        adAttribution?.title,
+        adAttribution?.campaign,
         ...chat.active_label_titles
       ]
         .join(" ")
@@ -1053,6 +1099,7 @@ const SmartInbox = () => {
     () => messages.filter((message) => !shouldHideMessage(message)),
     [messages]
   );
+  const selectedAdAttribution = getAdAttribution(selectedChat);
 
   return (
     <div className="fixed inset-0 z-50 flex h-[100dvh] min-w-0 max-w-full overflow-hidden border-0 bg-[radial-gradient(circle_at_top_left,rgba(37,211,102,0.08),transparent_32%),linear-gradient(135deg,#050810,#081020)] shadow-2xl sm:relative sm:z-auto sm:h-[calc(100dvh-70px)] md:h-[calc(100vh-80px)] md:rounded-[2rem] md:border md:border-white/8">
@@ -1161,6 +1208,7 @@ const SmartInbox = () => {
             <div className="min-w-0 overflow-hidden p-2 sm:p-3 md:p-3.5 space-y-2 sm:space-y-2.5">
               {filteredChats.map((chat) => {
                 const isActive = selectedChat?.id === chat.id;
+                const adAttribution = getAdAttribution(chat);
                 return (
                   <button
                     key={chat.id}
@@ -1210,6 +1258,13 @@ const SmartInbox = () => {
                             </span>
                           </div>
                         </div>
+
+                        {adAttribution && (
+                          <div className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[10px] font-black text-amber-100">
+                            <Flag size={11} className="shrink-0" />
+                            <span className="truncate">Ads Lead: {adAttribution.title}</span>
+                          </div>
+                        )}
 
                         <p className="mt-1.5 sm:mt-2 max-w-full overflow-hidden break-words [overflow-wrap:anywhere] text-sm leading-relaxed text-white/65 line-clamp-2">
                           {getMessagePreview(chat.body)}
@@ -1333,6 +1388,15 @@ const SmartInbox = () => {
               </div>
 
               <div className="mt-3.5 hidden gap-1.5 overflow-x-auto pb-1 sm:flex sm:gap-2">
+                {selectedAdAttribution && (
+                  <Badge
+                    variant="outline"
+                    className="rounded-full border-amber-400/35 bg-amber-400/10 px-3 py-1.5 text-[10px] font-black text-amber-100 whitespace-nowrap shadow-sm"
+                  >
+                    <Flag size={10} className="mr-1" />
+                    Ads Lead: {selectedAdAttribution.title}
+                  </Badge>
+                )}
                 {selectedChat.active_labels.length > 0 ? (
                   selectedChat.active_labels.map((label) => (
                     <Badge
@@ -1423,6 +1487,7 @@ const SmartInbox = () => {
 
                   {visibleMessages.map((message, index) => {
                     const body = message.body || "";
+                    const messageAdAttribution = getAdAttribution(message);
                     const imageUrl = extractMediaImageUrl(body);
                     const hasFailedMediaImage = Boolean(imageUrl && failedMediaUrlsRef.current.has(imageUrl));
                     const hasMediaImage = Boolean(imageUrl) && !hasFailedMediaImage;
@@ -1466,6 +1531,12 @@ const SmartInbox = () => {
                               : "rounded-bl-md border border-white/10 bg-gradient-to-br from-[#202c33] to-[#17212b] text-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.28)]"
                           )}
                         >
+                          {messageAdAttribution && (
+                            <div className={cn("mb-2 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black", isBot ? "border-amber-700/20 bg-amber-500/15 text-amber-900" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
+                              <Flag size={10} className="shrink-0" />
+                              <span className="truncate">Ads Lead: {messageAdAttribution.title}</span>
+                            </div>
+                          )}
                           {hasMediaImage && !isAnalysisMessage ? (
                             <div className="space-y-3">
                               <img
@@ -1666,6 +1737,12 @@ const SmartInbox = () => {
                 <PlatformIcon size={14} />
                 {platformTheme.title}
               </div>
+              {selectedAdAttribution && (
+                <div className="mt-2 inline-flex max-w-full items-center gap-2 rounded-full border border-amber-400/35 bg-amber-400/10 px-4 py-1.5 text-[11px] font-black text-amber-100 shadow-sm">
+                  <Flag size={13} className="shrink-0" />
+                  <span className="truncate">Ads Lead: {selectedAdAttribution.title}</span>
+                </div>
+              )}
             </div>
           </div>
 
