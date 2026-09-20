@@ -2824,7 +2824,7 @@ async function logMessage(msgData) {
 
 // 12. Save Order (Unified Wrapper)
 async function saveOrder(orderData) {
-    const { platform } = orderData;
+    const { platform, order_action } = orderData;
     const client = await getPool().connect();
     try {
         await client.query('BEGIN');
@@ -2840,7 +2840,8 @@ async function saveOrder(orderData) {
                     product_quantity: orderData.quantity,
                     price: orderData.price,
                     customer_email: orderData.customer_email,
-                    customer_name: orderData.customer_name
+                    customer_name: orderData.customer_name,
+                    order_action
                 }
                 : {
                     page_id: orderData.page_id,
@@ -2852,7 +2853,8 @@ async function saveOrder(orderData) {
                     price: orderData.price,
                     sender_number: orderData.phone,
                     customer_email: orderData.customer_email,
-                    customer_name: orderData.customer_name
+                    customer_name: orderData.customer_name,
+                    order_action
                 }),
             client
         });
@@ -2892,7 +2894,7 @@ async function updateContactPhone(pageId, senderId, phone) {
 
 // 12. Save Order Tracking (Messenger)
 async function saveOrderTracking(orderData) {
-    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, client } = orderData;
+    let { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_email, client, order_action } = orderData;
     const db = client || { query };
     
     // --- 1. SMART DATA CLEANING (Filter out templates like "নাম: ঠিকানা:") ---
@@ -2950,9 +2952,10 @@ async function saveOrderTracking(orderData) {
     }
 
     try {
-        // --- 2. SMART AGENT DECISION (Merge into existing incomplete order) ---
+        // --- 2. HUMAN-LIKE AGENT DECISION ---
         const recentOrder = await db.query(
-            `SELECT id, is_locked, status, product_name, number, location FROM fb_order_tracking 
+            `SELECT id, is_locked, status, product_name, number, location, product_quantity, price, customer_name
+             FROM fb_order_tracking 
              WHERE page_id = $1::text AND sender_id = $2::text 
              AND created_at > NOW() - INTERVAL '24 hours'
              ORDER BY created_at DESC LIMIT 1`,
@@ -2963,26 +2966,43 @@ async function saveOrderTracking(orderData) {
             const existing = recentOrder.rows[0];
             
             // --- LOCK MECHANISM: If order is locked or delivered, do NOT update it. Create new instead. ---
-            if (existing.is_locked || existing.status === 'delivered' || existing.status === 'locked') {
-                console.log(`[Order] Recent order (${existing.id}) is LOCKED/DELIVERED. Creating a fresh order row.`);
+            if (existing.is_locked || existing.status === 'delivered' || existing.status === 'locked' || order_action === 'create_new_order') {
+                console.log(`[Order] Creating a fresh order row. Previous order: ${existing.id}, action: ${order_action || 'auto'}`);
+            } else if (order_action === 'answer_only') {
+                console.log(`[Order] Follow-up/info message detected. Keeping existing order (${existing.id}) untouched.`);
+                return { id: existing.id, status: 'unchanged', isNew: false };
             } else {
                 const orderId = existing.id;
                 
-                // --- INCOMPLETE ORDER LOGIC: Check if vital fields are missing ---
-                const isMissingDetails = !existing.product_name || existing.product_name === 'Pending' || 
+                // --- HUMAN-LIKE UPDATE RULES ---
+                // Update only when the current order is incomplete, or the customer clearly corrects existing order info.
+                const isMissingDetails = !existing.product_name || existing.product_name === 'Pending' || existing.product_name === 'Recovered Lead' ||
                                        !existing.number || existing.number === 'Pending' || 
                                        !existing.location || existing.location === 'Pending';
+                const isCorrection = order_action === 'update_existing_order';
+                const incomingSameOrder =
+                    (!product_name || product_name === 'Recovered Lead' || product_name === 'Pending' || product_name === existing.product_name) &&
+                    (!number || number === 'Pending' || number === 'null' || number === existing.number) &&
+                    (!location || location === 'N/A' || location === 'Pending' || location === 'null' || location === '' || location === existing.location) &&
+                    (!product_quantity || String(product_quantity) === '1' || String(product_quantity) === String(existing.product_quantity || '1'));
 
-                console.log(`[Order] Found active recent order (${orderId}). Incomplete: ${isMissingDetails}. Updating...`);
+                if (!isMissingDetails && !isCorrection) {
+                    if (incomingSameOrder) {
+                        console.log(`[Order] Existing complete order (${orderId}) already matches incoming data. No overwrite.`);
+                        return { id: orderId, status: 'unchanged', isNew: false };
+                    }
+                    console.log(`[Order] Existing complete order (${orderId}) plus different order data. Creating new order row.`);
+                } else {
+                    console.log(`[Order] Found active order (${orderId}). Incomplete: ${isMissingDetails}. Correction: ${isCorrection}. Updating...`);
 
-                const mergedOrder = {
-                    product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
-                    number: number && number !== 'Pending' && number !== 'null' ? number : existing.number,
-                    location: location && location !== 'N/A' && location !== 'Pending' && location !== 'null' && location !== '' ? location : existing.location
-                };
-                const nextStatus = getOrderLifecycleStatus(mergedOrder);
-                
-                await db.query(
+                    const mergedOrder = {
+                        product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
+                        number: number && number !== 'Pending' && number !== 'null' ? number : existing.number,
+                        location: location && location !== 'N/A' && location !== 'Pending' && location !== 'null' && location !== '' ? location : existing.location
+                    };
+                    const nextStatus = getOrderLifecycleStatus(mergedOrder);
+                    
+                    await db.query(
                     `UPDATE fb_order_tracking SET
                         product_name = CASE 
                             WHEN $1::text IS NOT NULL AND $1::text <> 'Pending' AND $1::text <> 'Recovered Lead' AND $1::text <> 'Unknown' AND $1::text <> '' THEN $1::text 
@@ -3022,6 +3042,7 @@ async function saveOrderTracking(orderData) {
                     [product_name || null, number || null, location || null, product_quantity || null, price || null, sender_number || null, orderId, orderData.customer_name || null, customer_email || null, nextStatus]
                 );
                 return { id: orderId, status: 'updated', isNew: false };
+                }
             }
         }
 

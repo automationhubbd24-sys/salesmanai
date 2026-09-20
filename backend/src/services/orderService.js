@@ -34,6 +34,25 @@ function parsePrice(value) {
     return isFinite(num) ? num : 0;
 }
 
+function resolveOrderAction({ intent, data, rawText }) {
+    const explicitAction = String(data.order_action || data.action || intent || '').toLowerCase();
+    const text = normalizeBanglaDigits(String(rawText || data.intent || '').toLowerCase());
+
+    if (/create_new_order|new_order|repeat_order|reorder/.test(explicitAction)) return 'create_new_order';
+    if (/update_existing_order|correction|edit_order|modify_order/.test(explicitAction)) return 'update_existing_order';
+    if (/answer_only|status_check|none/.test(explicitAction)) return 'answer_only';
+
+    if (/\b(again|another|new order|reorder|repeat|same again|aro\s*(1|one|ek|akta|ekta)|arekta|arekti|abar|abaro)\b|আরেকটা|আরও\s*(একটা|১টা|1টা)|আবার|নতুন\s*অর্ডার|একইটা\s*আবার/i.test(text)) {
+        return 'create_new_order';
+    }
+
+    if (/\b(wrong|vul|bhul|change|correct|correction|edit|update|replace)\b|ভুল|ভূল|চেঞ্জ|পরিবর্তন|সংশোধন|আপডেট|ঠিকানা\s*(চেঞ্জ|পরিবর্তন)|নাম্বার\s*(চেঞ্জ|ভুল)|নম্বর\s*(চেঞ্জ|ভুল)/i.test(text)) {
+        return 'update_existing_order';
+    }
+
+    return 'auto';
+}
+
 /**
  * Fetches the most recent pending/incomplete order for a user to provide context to the AI.
  */
@@ -117,6 +136,8 @@ async function orchestrateOrder(params) {
             resolvedProductName = `${resolvedProductName} [SKU:${skuRef}]`;
         }
 
+        const orderAction = resolveOrderAction({ intent, data: extracted, rawText });
+
         // Persistence via dbService (which already handles the smart merge internally)
         // New orders require a valid phone number; reminders are handled from conversation history.
         const savePayload = {
@@ -130,7 +151,8 @@ async function orchestrateOrder(params) {
             price: extracted.price ? parsePrice(extracted.price) : null,
             customer_name: extracted.customer_name || extracted.name || 'Pending',
             customer_email: extracted.email || null,
-            sender_number: extracted.phone || null
+            sender_number: extracted.phone || null,
+            order_action: orderAction
         };
 
         try {

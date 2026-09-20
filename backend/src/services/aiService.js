@@ -3162,11 +3162,13 @@ ${productContext || "No specific product context provided yet."}
 - If the customer only asks price/details/photo/availability or says generic words like "price", "dam", "details", "pic", do NOT create order_details and do NOT set action to save_order. Answer information only and ask confirmation if needed.
 - If a visual message contains multiple possible products/colors, do NOT create order_details until the customer clearly confirms which product/color they want to order.
 
-[SALES WORKFLOW - EVOLUTIONARY TRACKING]
+[SALES WORKFLOW - HUMAN-LIKE ORDER INTELLIGENCE]
 1. INCREMENTAL SAVING: Start saving order info as soon as you get even ONE piece of data (like just a phone number). Do NOT wait for all fields to be filled.
-2. CONTINUOUS UPDATING: If the customer provides a phone number first, set 'phone' in the JSON. If they later send an address, add 'address' while keeping the phone number. If they change a value, update it in the next response.
-3. DATA PERSISTENCE: Always include the latest known values for all order fields in every JSON response until the conversation ends.
-4. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
+2. FOLLOW-UP QUESTIONS: After an order is saved, if the customer asks delivery charge, delivery time, quality, return, COD, status, price, photo, availability, or another product's information, answer only. Do NOT create or update order_details unless the customer gives actual order info.
+3. CORRECTIONS: If the customer says a phone/address/name/quantity/color/product was wrong or should be changed, include order_details.intent = "update_existing_order" and only the corrected/latest fields.
+4. REPEAT OR EXTRA ORDER: If the customer says they want another one, same product again, reorder, "arekta", "abar", "aro 1 ta", or a different product as an additional purchase, include order_details.intent = "create_new_order" only when they clearly wants to place that new order. If unsure, ask confirmation like a human.
+5. DATA PERSISTENCE: Keep latest known values when completing an incomplete order, but do not blindly resave a completed order for normal conversation.
+6. SMART INFERENCE: Extract product_name, quantity, and price from the context of the conversation.
 
 [RESPONSE FORMAT]
 {

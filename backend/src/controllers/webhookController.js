@@ -38,6 +38,26 @@ function hasMeaningfulOrderFields(orderData) {
         || /\b(order|confirm|book|booking|delivery|cod|cash on delivery)\b/i.test(String(orderData.intent || ''));
 }
 
+function extractOrderDetailsFromReply(replyText) {
+    const text = String(replyText || '');
+    if (!text.trim()) return {};
+
+    const details = {};
+    const nameMatch = text.match(/(?:^|\n)\s*(?:নাম|name)\s*[:：-]\s*([^\n]+)/i);
+    if (nameMatch?.[1]) details.customer_name = nameMatch[1].trim();
+
+    const totalMatch = text.match(/(?:মোট\s*বিল|total\s*(?:bill|price|amount))\s*[:：-]?\s*(?:bdt|৳|tk|taka)?\s*([০-৯0-9]+(?:[.,][০-৯0-9]+)?)/i);
+    if (totalMatch?.[1]) details.price = totalMatch[1].trim();
+
+    return details;
+}
+
+function mergeReplyOrderFallback(orderData, replyText) {
+    const fallback = extractOrderDetailsFromReply(replyText);
+    if (!Object.keys(fallback).length) return orderData;
+    return { ...(orderData || {}), ...fallback };
+}
+
 function shouldSkipOrderOrchestration(userText, orderData) {
     if (!orderData || Object.keys(orderData || {}).length === 0) return true;
     if (isInfoOnlyCustomerQuery(userText) && !hasMeaningfulOrderFields(orderData)) return true;
@@ -2234,8 +2254,8 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     }
 
     try {
-        const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
-        const orderIntent = aiResponse.order_details?.intent || 'upsert';
+        const orderDataFromAI = mergeReplyOrderFallback(aiResponse.order_details?.fields || aiResponse.order_details, finalReplyText || aiResponse.reply || '');
+        const orderIntent = aiResponse.order_details?.intent || (Object.keys(orderDataFromAI || {}).length ? 'update_existing_order' : 'upsert');
         const orderGuardText = combinedText || finalUserMessage;
         const skipOrder = shouldSkipOrderOrchestration(orderGuardText, orderDataFromAI);
         diagnosticOrderData = skipOrder
@@ -4303,8 +4323,8 @@ STRICT RULES:
 
         // --- UNIFIED ORDER ENGINE (Clean Architecture) ---
         // Handles AI intent + Deterministic fallback in one place.
-        const orderDataFromAI = aiResponse.order_details?.fields || aiResponse.order_details;
-        const orderIntent = aiResponse.order_details?.intent || 'upsert';
+        const orderDataFromAI = mergeReplyOrderFallback(aiResponse.order_details?.fields || aiResponse.order_details, replyText || aiResponse.reply || '');
+        const orderIntent = aiResponse.order_details?.intent || (Object.keys(orderDataFromAI || {}).length ? 'update_existing_order' : 'upsert');
         const orderGuardText = combinedText || finalUserMessage;
         const skipOrder = shouldSkipOrderOrchestration(orderGuardText, orderDataFromAI);
         diagnosticOrderData = skipOrder
