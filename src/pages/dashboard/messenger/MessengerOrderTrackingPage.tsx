@@ -40,7 +40,7 @@ import { Label } from "@/components/ui/label";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
 import { ConversationDialog } from "@/components/dashboard/ConversationDialog";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 interface Order {
   id: string;
@@ -140,6 +140,7 @@ export default function MessengerOrderTrackingPage() {
   const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
   const [sendingCourierId, setSendingCourierId] = useState<string | null>(null);
+  const [sendingCourierBulk, setSendingCourierBulk] = useState(false);
   const lastFetchParams = useRef("");
   const lastFetchAt = useRef(0);
   const ordersRef = useRef<Order[]>([]);
@@ -282,20 +283,46 @@ Phone: ${order.number || 'N/A'}`;
         },
         body: JSON.stringify({ platform: notificationPlatform, provider: "steadfast", order }),
       });
+      const data = await response.json().catch(() => ({}));
 
       if (response.status === 404) {
-        toast.error("Courier API is not connected yet");
+        toast.error("Courier API is not connected yet. Setup first from Courier Integration.");
         return;
       }
-      if (!response.ok) throw new Error("Courier booking failed");
+      if (!response.ok) throw new Error(data.error || "Courier booking failed");
 
-      const data = await response.json().catch(() => ({}));
       toast.success(data.tracking_code ? `Sent to courier: ${data.tracking_code}` : "Order sent to courier");
       fetchOrders(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Courier booking failed");
     } finally {
       setSendingCourierId(null);
+    }
+  };
+
+  const sendBulkToCourier = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token || !activeOrders.length) return;
+
+    setSendingCourierBulk(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/courier/shipments/bulk`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ platform: notificationPlatform, provider: "steadfast", orders: activeOrders }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 404) throw new Error("Courier API is not connected yet. Setup first from Courier Integration.");
+      if (!response.ok) throw new Error(data.error || "Bulk courier booking failed");
+      toast.success(`${data.sent || 0} orders sent, ${data.failed || 0} failed`);
+      fetchOrders(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk courier booking failed");
+    } finally {
+      setSendingCourierBulk(false);
     }
   };
 
@@ -514,6 +541,18 @@ Phone: ${order.number || 'N/A'}`;
                   <Button variant="outline" onClick={downloadGoogleSheet}>
                       <Download className="mr-2 h-4 w-4" />
                       Google Sheet
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="gap-2 border-[#00ff88]/30 bg-[#00ff88]/5 text-[#00ff88] hover:bg-[#00ff88]/10"
+                    disabled={orderView === "draft" || !activeOrders.length || sendingCourierBulk}
+                    onClick={sendBulkToCourier}
+                  >
+                    {sendingCourierBulk ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                    Send Active to Courier
+                  </Button>
+                  <Button asChild variant="ghost" className="text-[#00ff88]">
+                    <Link to="/dashboard/courier">Courier Setup</Link>
                   </Button>
               </div>
            </div>

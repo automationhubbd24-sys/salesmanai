@@ -64,6 +64,7 @@ export default function InstagramOrderTrackingPage() {
   const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
   const [sendingCourierId, setSendingCourierId] = useState<string | null>(null);
+  const [sendingCourierBulk, setSendingCourierBulk] = useState(false);
 
   const accountId = currentAccount?.page_id || null;
   const dbId = currentAccount?.db_id || currentAccount?.id || 0;
@@ -201,20 +202,46 @@ export default function InstagramOrderTrackingPage() {
         },
         body: JSON.stringify({ platform: "instagram", provider: "steadfast", order }),
       });
+      const data = await response.json().catch(() => ({}));
 
       if (response.status === 404) {
-        toast.error("Courier API is not connected yet");
+        toast.error("Courier API is not connected yet. Setup first from Courier Integration.");
         return;
       }
-      if (!response.ok) throw new Error("Courier booking failed");
+      if (!response.ok) throw new Error(data.error || "Courier booking failed");
 
-      const data = await response.json().catch(() => ({}));
       toast.success(data.tracking_code ? `Sent to courier: ${data.tracking_code}` : "Order sent to courier");
       void fetchOrders();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Courier booking failed");
     } finally {
       setSendingCourierId(null);
+    }
+  };
+
+  const sendBulkToCourier = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token || !activeOrders.length) return;
+
+    setSendingCourierBulk(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/courier/shipments/bulk`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ platform: "instagram", provider: "steadfast", orders: activeOrders }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 404) throw new Error("Courier API is not connected yet. Setup first from Courier Integration.");
+      if (!response.ok) throw new Error(data.error || "Bulk courier booking failed");
+      toast.success(`${data.sent || 0} orders sent, ${data.failed || 0} failed`);
+      void fetchOrders();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk courier booking failed");
+    } finally {
+      setSendingCourierBulk(false);
     }
   };
 
@@ -287,6 +314,18 @@ export default function InstagramOrderTrackingPage() {
                 <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
               </Button>
               <Button variant="outline" onClick={downloadCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>
+              <Button
+                variant="outline"
+                className="gap-2 border-pink-500/30 bg-pink-500/5 text-pink-500 hover:bg-pink-500/10"
+                disabled={orderView === "draft" || !activeOrders.length || sendingCourierBulk}
+                onClick={sendBulkToCourier}
+              >
+                {sendingCourierBulk ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                Send Active to Courier
+              </Button>
+              <Button variant="ghost" className="text-pink-500" onClick={() => navigate("/dashboard/courier")}>
+                Courier Setup
+              </Button>
             </div>
           </div>
         </CardHeader>

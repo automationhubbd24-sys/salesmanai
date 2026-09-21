@@ -56,6 +56,7 @@ import ApiManagementPage from "./pages/dashboard/ApiManagementPage";
 import DeveloperPage from "./pages/dashboard/DeveloperPage";
 import ApiDocsPage from "./pages/dashboard/ApiDocsPage";
 import ShopifyPage from "./pages/dashboard/ShopifyPage";
+import CourierSettingsPage from "./pages/dashboard/CourierSettingsPage";
 import TeamManagementPage from "./pages/dashboard/TeamManagementPage";
 
 import SmartInbox from "./pages/dashboard/SmartInbox";
@@ -102,6 +103,7 @@ const App = () => (
                 <Route path="payment" element={<PaymentPage />} />
                 <Route path="profile" element={<ProfilePage />} />
                 <Route path="shopify" element={<ShopifyPage />} />
+                <Route path="courier" element={<CourierSettingsPage />} />
                 <Route path="team-management" element={<TeamManagementPage />} />
 
                 {/* WhatsApp Routes */}

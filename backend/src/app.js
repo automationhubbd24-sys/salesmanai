@@ -18,6 +18,7 @@ const statsRoutes = require('./routes/statsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const marketingRoutes = require('./routes/marketingRoutes');
 const shopifyRoutes = require('./routes/shopifyRoutes');
+const courierRoutes = require('./routes/courierRoutes');
 const runtimeHealthRoutes = require('./routes/runtimeHealthRoutes');
 const diagnosticRoutes = require('./routes/diagnosticRoutes');
 const runtimeMonitor = require('./services/runtimeMonitor');
@@ -84,6 +85,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/shopify', shopifyRoutes);
+app.use('/api/courier', courierRoutes);
 app.use('/api/runtime-health', runtimeHealthRoutes);
 app.use('/api/diagnostic', diagnosticRoutes);
 
