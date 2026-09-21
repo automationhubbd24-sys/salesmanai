@@ -6,6 +6,12 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
 const STEADFAST_BASE_URL = process.env.STEADFAST_BASE_URL || 'https://portal.packzy.com/api/v1';
+const SUPPORTED_PROVIDERS = ['steadfast', 'pathao', 'redx'];
+
+function normalizeProvider(provider) {
+    const value = String(provider || '').trim().toLowerCase();
+    return SUPPORTED_PROVIDERS.includes(value) ? value : 'steadfast';
+}
 
 function getCipherKey() {
     const secret = process.env.COURIER_ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.DATABASE_URL || 'salesmanai-courier-local-key';
@@ -45,6 +51,8 @@ async function ensureCourierTables() {
             provider TEXT NOT NULL DEFAULT 'steadfast',
             api_key_encrypted TEXT,
             secret_key_encrypted TEXT,
+            merchant_id_encrypted TEXT,
+            store_id_encrypted TEXT,
             pickup_address TEXT,
             is_active BOOLEAN DEFAULT TRUE,
             last_tested_at TIMESTAMP WITH TIME ZONE,
@@ -72,6 +80,9 @@ async function ensureCourierTables() {
             UNIQUE(provider, platform, order_id)
         );
 
+        ALTER TABLE courier_settings ADD COLUMN IF NOT EXISTS merchant_id_encrypted TEXT;
+        ALTER TABLE courier_settings ADD COLUMN IF NOT EXISTS store_id_encrypted TEXT;
+
         ALTER TABLE IF EXISTS whatsapp_order_tracking ADD COLUMN IF NOT EXISTS courier_provider TEXT;
         ALTER TABLE IF EXISTS whatsapp_order_tracking ADD COLUMN IF NOT EXISTS courier_tracking_code TEXT;
         ALTER TABLE IF EXISTS whatsapp_order_tracking ADD COLUMN IF NOT EXISTS courier_status TEXT;
@@ -88,15 +99,21 @@ function toPublicSettings(row) {
     if (!row) return { connected: false, provider: 'steadfast', is_active: false };
     let apiKey = '';
     let secretKey = '';
+    let merchantId = '';
+    let storeId = '';
     try {
         apiKey = decrypt(row.api_key_encrypted);
         secretKey = decrypt(row.secret_key_encrypted);
+        merchantId = decrypt(row.merchant_id_encrypted);
+        storeId = decrypt(row.store_id_encrypted);
     } catch (_) {}
     return {
         connected: Boolean(row.api_key_encrypted && row.secret_key_encrypted && row.is_active),
         provider: row.provider,
         api_key_masked: maskSecret(apiKey),
         secret_key_masked: maskSecret(secretKey),
+        merchant_id_masked: maskSecret(merchantId),
+        store_id_masked: maskSecret(storeId),
         pickup_address: row.pickup_address || '',
         is_active: Boolean(row.is_active),
         last_tested_at: row.last_tested_at,
@@ -113,13 +130,28 @@ async function getSettings(userId, provider = 'steadfast') {
     return rows[0] || null;
 }
 
-async function getActiveCredentials(userId, provider = 'steadfast') {
-    const settings = await getSettings(userId, provider);
+async function getActiveSettings(userId, provider) {
+    if (provider) return getSettings(userId, normalizeProvider(provider));
+    await ensureCourierTables();
+    const { rows } = await pgClient.query(
+        `SELECT * FROM courier_settings
+         WHERE user_id::text = $1::text AND is_active = TRUE
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [String(userId)]
+    );
+    return rows[0] || null;
+}
+
+async function getActiveCredentials(userId, provider) {
+    const settings = await getActiveSettings(userId, provider);
     if (!settings || !settings.is_active || !settings.api_key_encrypted || !settings.secret_key_encrypted) return null;
     return {
         ...settings,
         apiKey: decrypt(settings.api_key_encrypted),
         secretKey: decrypt(settings.secret_key_encrypted),
+        merchantId: decrypt(settings.merchant_id_encrypted),
+        storeId: decrypt(settings.store_id_encrypted),
     };
 }
 
@@ -131,12 +163,31 @@ function getSteadfastHeaders(credentials) {
     };
 }
 
-async function testSteadfast(credentials) {
-    const response = await axios.get(`${STEADFAST_BASE_URL}/get_balance`, {
-        headers: getSteadfastHeaders(credentials),
-        timeout: 15000,
-    });
-    return response.data;
+async function testCourier(credentials) {
+    if (credentials.provider === 'steadfast') {
+        const response = await axios.get(`${STEADFAST_BASE_URL}/get_balance`, {
+            headers: getSteadfastHeaders(credentials),
+            timeout: 15000,
+        });
+        return response.data;
+    }
+
+    return {
+        message: `${credentials.provider} credentials saved. Live test endpoint is not configured yet.`,
+        configured: true,
+    };
+}
+
+async function createCourierOrder(provider, credentials, payload) {
+    if (provider === 'steadfast') {
+        const response = await axios.post(`${STEADFAST_BASE_URL}/create_order`, payload, {
+            headers: getSteadfastHeaders(credentials),
+            timeout: 20000,
+        });
+        return response.data || {};
+    }
+
+    throw new Error(`${provider} live booking endpoint is not configured yet`);
 }
 
 function normalizeMoney(value) {
@@ -217,6 +268,7 @@ async function markOrderShipped(platform, orderId, provider, trackingCode, couri
 
 async function createShipment({ req, platform, provider, order }) {
     const credentials = await getActiveCredentials(req.user.id, provider);
+    const activeProvider = credentials?.provider || normalizeProvider(provider);
     if (!credentials) {
         const error = new Error('Courier API is not connected yet');
         error.statusCode = 404;
@@ -238,12 +290,7 @@ async function createShipment({ req, platform, provider, order }) {
     const payload = normalizeOrderPayload(dbOrder);
     let courierResponse;
     try {
-        if (provider !== 'steadfast') throw new Error('Unsupported courier provider');
-        const response = await axios.post(`${STEADFAST_BASE_URL}/create_order`, payload, {
-            headers: getSteadfastHeaders(credentials),
-            timeout: 20000,
-        });
-        courierResponse = response.data || {};
+        courierResponse = await createCourierOrder(activeProvider, credentials, payload);
     } catch (error) {
         const message = error.response?.data?.message || error.response?.data?.error || error.message || 'Courier booking failed';
         await pgClient.query(
@@ -251,7 +298,7 @@ async function createShipment({ req, platform, provider, order }) {
              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)
              ON CONFLICT (provider, platform, order_id)
              DO UPDATE SET request_payload = EXCLUDED.request_payload, response_payload = EXCLUDED.response_payload, error_message = EXCLUDED.error_message, courier_status = EXCLUDED.courier_status, updated_at = NOW()`,
-            [String(req.user.id), req.user.email || null, provider, platform, String(dbOrder.id), payload.invoice, JSON.stringify(payload), JSON.stringify(error.response?.data || {}), message, 'failed']
+            [String(req.user.id), req.user.email || null, activeProvider, platform, String(dbOrder.id), payload.invoice, JSON.stringify(payload), JSON.stringify(error.response?.data || {}), message, 'failed']
         );
         const err = new Error(message);
         err.statusCode = error.response?.status || 502;
@@ -269,16 +316,16 @@ async function createShipment({ req, platform, provider, order }) {
          ON CONFLICT (provider, platform, order_id)
          DO UPDATE SET tracking_code = EXCLUDED.tracking_code, consignment_id = EXCLUDED.consignment_id, invoice = EXCLUDED.invoice, courier_status = EXCLUDED.courier_status, request_payload = EXCLUDED.request_payload, response_payload = EXCLUDED.response_payload, error_message = NULL, updated_at = NOW()
          RETURNING *`,
-        [String(req.user.id), req.user.email || null, provider, platform, String(dbOrder.id), trackingCode, consignmentId, payload.invoice, courierStatus, JSON.stringify(payload), JSON.stringify(courierResponse)]
+        [String(req.user.id), req.user.email || null, activeProvider, platform, String(dbOrder.id), trackingCode, consignmentId, payload.invoice, courierStatus, JSON.stringify(payload), JSON.stringify(courierResponse)]
     );
 
-    await markOrderShipped(platform, dbOrder.id, provider, trackingCode, courierStatus);
-    return { success: true, tracking_code: trackingCode, consignment_id: consignmentId, status: courierStatus, response: courierResponse };
+    await markOrderShipped(platform, dbOrder.id, activeProvider, trackingCode, courierStatus);
+    return { success: true, provider: activeProvider, tracking_code: trackingCode, consignment_id: consignmentId, status: courierStatus, response: courierResponse };
 }
 
 router.get('/settings', authMiddleware, async (req, res) => {
     try {
-        const provider = String(req.query.provider || 'steadfast').trim().toLowerCase();
+        const provider = normalizeProvider(req.query.provider || 'steadfast');
         const settings = await getSettings(req.user.id, provider);
         res.json(toPublicSettings(settings));
     } catch (error) {
@@ -290,14 +337,17 @@ router.get('/settings', authMiddleware, async (req, res) => {
 router.post('/settings', authMiddleware, async (req, res) => {
     try {
         await ensureCourierTables();
-        const provider = String(req.body?.provider || 'steadfast').trim().toLowerCase();
-        if (provider !== 'steadfast') return res.status(400).json({ error: 'Only Steadfast is supported now' });
+        const provider = normalizeProvider(req.body?.provider || 'steadfast');
 
         const existing = await getSettings(req.user.id, provider);
         const apiKey = String(req.body?.api_key || '').trim();
         const secretKey = String(req.body?.secret_key || '').trim();
+        const merchantId = String(req.body?.merchant_id || '').trim();
+        const storeId = String(req.body?.store_id || '').trim();
         const apiKeyEncrypted = apiKey ? encrypt(apiKey) : existing?.api_key_encrypted || null;
         const secretKeyEncrypted = secretKey ? encrypt(secretKey) : existing?.secret_key_encrypted || null;
+        const merchantIdEncrypted = merchantId ? encrypt(merchantId) : existing?.merchant_id_encrypted || null;
+        const storeIdEncrypted = storeId ? encrypt(storeId) : existing?.store_id_encrypted || null;
         const pickupAddress = String(req.body?.pickup_address || '').trim();
         const isActive = req.body?.is_active !== false;
 
@@ -305,13 +355,20 @@ router.post('/settings', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'API key and secret key are required' });
         }
 
+        if (isActive) {
+            await pgClient.query(
+                `UPDATE courier_settings SET is_active = FALSE, updated_at = NOW() WHERE user_id::text = $1::text AND provider <> $2`,
+                [String(req.user.id), provider]
+            );
+        }
+
         const { rows } = await pgClient.query(
-            `INSERT INTO courier_settings (user_id, user_email, provider, api_key_encrypted, secret_key_encrypted, pickup_address, is_active)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO courier_settings (user_id, user_email, provider, api_key_encrypted, secret_key_encrypted, merchant_id_encrypted, store_id_encrypted, pickup_address, is_active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (user_id, provider)
-             DO UPDATE SET user_email = EXCLUDED.user_email, api_key_encrypted = EXCLUDED.api_key_encrypted, secret_key_encrypted = EXCLUDED.secret_key_encrypted, pickup_address = EXCLUDED.pickup_address, is_active = EXCLUDED.is_active, updated_at = NOW()
+             DO UPDATE SET user_email = EXCLUDED.user_email, api_key_encrypted = EXCLUDED.api_key_encrypted, secret_key_encrypted = EXCLUDED.secret_key_encrypted, merchant_id_encrypted = EXCLUDED.merchant_id_encrypted, store_id_encrypted = EXCLUDED.store_id_encrypted, pickup_address = EXCLUDED.pickup_address, is_active = EXCLUDED.is_active, updated_at = NOW()
              RETURNING *`,
-            [String(req.user.id), req.user.email || null, provider, apiKeyEncrypted, secretKeyEncrypted, pickupAddress, isActive]
+            [String(req.user.id), req.user.email || null, provider, apiKeyEncrypted, secretKeyEncrypted, merchantIdEncrypted, storeIdEncrypted, pickupAddress, isActive]
         );
 
         res.json({ success: true, settings: toPublicSettings(rows[0]) });
@@ -323,10 +380,10 @@ router.post('/settings', authMiddleware, async (req, res) => {
 
 router.post('/test', authMiddleware, async (req, res) => {
     try {
-        const provider = String(req.body?.provider || 'steadfast').trim().toLowerCase();
+        const provider = normalizeProvider(req.body?.provider || 'steadfast');
         const credentials = await getActiveCredentials(req.user.id, provider);
         if (!credentials) return res.status(404).json({ error: 'Courier API is not connected yet' });
-        const data = await testSteadfast(credentials);
+        const data = await testCourier(credentials);
         await pgClient.query(
             `UPDATE courier_settings SET last_tested_at = NOW(), updated_at = NOW() WHERE user_id::text = $1::text AND provider = $2`,
             [String(req.user.id), provider]
@@ -342,7 +399,7 @@ router.post('/shipments', authMiddleware, async (req, res) => {
     try {
         await ensureCourierTables();
         const platform = String(req.body?.platform || '').trim().toLowerCase();
-        const provider = String(req.body?.provider || 'steadfast').trim().toLowerCase();
+        const provider = req.body?.provider ? normalizeProvider(req.body.provider) : null;
         if (!['whatsapp', 'messenger', 'instagram'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' });
         const result = await createShipment({ req, platform, provider, order: req.body?.order });
         res.json(result);
@@ -355,7 +412,7 @@ router.post('/shipments/bulk', authMiddleware, async (req, res) => {
     try {
         await ensureCourierTables();
         const platform = String(req.body?.platform || '').trim().toLowerCase();
-        const provider = String(req.body?.provider || 'steadfast').trim().toLowerCase();
+        const provider = req.body?.provider ? normalizeProvider(req.body.provider) : null;
         const orders = Array.isArray(req.body?.orders) ? req.body.orders : [];
         if (!['whatsapp', 'messenger', 'instagram'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' });
         if (!orders.length) return res.status(400).json({ error: 'No orders selected' });

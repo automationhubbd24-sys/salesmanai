@@ -325,7 +325,7 @@ Phone: ${order.number || 'N/A'}`;
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ platform: "whatsapp", provider: "steadfast", orders: activeOrders }),
+        body: JSON.stringify({ platform: "whatsapp", orders: activeOrders }),
       });
       const data = await response.json().catch(() => ({}));
       if (response.status === 404) throw new Error("Courier API is not connected yet. Setup first from Courier Integration.");
@@ -602,7 +602,7 @@ Phone: ${order.number || 'N/A'}`;
                                       title={orderView === "draft" ? "Only active orders can be sent" : "Send to Steadfast courier"}
                                     >
                                       {sendingCourierId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
-                                      Steadfast
+                                      Courier
                                     </Button>
                                   </TableCell>
                                   <TableCell>

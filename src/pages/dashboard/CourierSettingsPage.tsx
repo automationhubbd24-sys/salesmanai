@@ -10,11 +10,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { BACKEND_URL } from "@/config";
 import { toast } from "sonner";
 
+const providerOptions = [
+  { value: "steadfast", label: "Steadfast" },
+  { value: "pathao", label: "Pathao" },
+  { value: "redx", label: "RedX" },
+];
+
+const providerLabels = Object.fromEntries(providerOptions.map((item) => [item.value, item.label]));
+
 type CourierSettings = {
   connected: boolean;
   provider: string;
   api_key_masked?: string | null;
   secret_key_masked?: string | null;
+  merchant_id_masked?: string | null;
+  store_id_masked?: string | null;
   pickup_address?: string;
   is_active: boolean;
   last_tested_at?: string | null;
@@ -25,6 +35,8 @@ export default function CourierSettingsPage() {
   const [provider, setProvider] = useState("steadfast");
   const [apiKey, setApiKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
+  const [merchantId, setMerchantId] = useState("");
+  const [storeId, setStoreId] = useState("");
   const [pickupAddress, setPickupAddress] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -44,6 +56,10 @@ export default function CourierSettingsPage() {
       if (!response.ok) throw new Error("Courier settings load kora jayni");
       const data = await response.json();
       setSettings(data);
+      setApiKey("");
+      setSecretKey("");
+      setMerchantId("");
+      setStoreId("");
       setPickupAddress(data.pickup_address || "");
       setIsActive(data.is_active !== false);
     } catch (error) {
@@ -76,6 +92,8 @@ export default function CourierSettingsPage() {
           provider,
           api_key: apiKey.trim() || undefined,
           secret_key: secretKey.trim() || undefined,
+          merchant_id: merchantId.trim() || undefined,
+          store_id: storeId.trim() || undefined,
           pickup_address: pickupAddress.trim(),
           is_active: isActive,
         }),
@@ -85,7 +103,9 @@ export default function CourierSettingsPage() {
       setSettings(data.settings);
       setApiKey("");
       setSecretKey("");
-      toast.success("Courier integration saved");
+      setMerchantId("");
+      setStoreId("");
+      toast.success(`${providerLabels[provider]} integration saved`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Courier settings save kora jayni");
     } finally {
@@ -107,7 +127,7 @@ export default function CourierSettingsPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Courier test failed");
-      toast.success("Courier API connected successfully");
+      toast.success(`${providerLabels[provider]} API connected successfully`);
       void loadSettings();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Courier test failed");
@@ -121,7 +141,7 @@ export default function CourierSettingsPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Courier Integration</h2>
-          <p className="text-muted-foreground">Business owner nijer courier API ekhane setup korbe.</p>
+          <p className="text-muted-foreground">Business owner Steadfast, Pathao ba RedX API ekhane setup korbe.</p>
         </div>
         <div className="flex items-center gap-2 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 px-4 py-2 text-sm text-[#00ff88]">
           {settings?.connected ? <CheckCircle2 className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
@@ -141,21 +161,36 @@ export default function CourierSettingsPage() {
               <Select value={provider} onValueChange={setProvider}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="steadfast">Steadfast</SelectItem>
+                  {providerOptions.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label>API Key</Label>
+                <Label>{provider === "pathao" ? "Client ID / API Key" : "API Key"}</Label>
                 <Input value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings?.api_key_masked || "Enter API key"} autoComplete="off" />
               </div>
               <div className="grid gap-2">
-                <Label>Secret Key</Label>
+                <Label>{provider === "pathao" ? "Client Secret" : "Secret Key"}</Label>
                 <Input type="password" value={secretKey} onChange={(event) => setSecretKey(event.target.value)} placeholder={settings?.secret_key_masked || "Enter secret key"} autoComplete="new-password" />
               </div>
             </div>
+
+            {(provider === "pathao" || provider === "redx") && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label>{provider === "pathao" ? "Store ID" : "Merchant ID"}</Label>
+                  <Input value={merchantId} onChange={(event) => setMerchantId(event.target.value)} placeholder={settings?.merchant_id_masked || "Optional provider ID"} autoComplete="off" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>{provider === "pathao" ? "Access Token / Store Secret" : "Store ID"}</Label>
+                  <Input value={storeId} onChange={(event) => setStoreId(event.target.value)} placeholder={settings?.store_id_masked || "Optional extra credential"} autoComplete="off" />
+                </div>
+              </div>
+            )}
 
             <div className="grid gap-2">
               <Label>Pickup Address</Label>
@@ -188,8 +223,8 @@ export default function CourierSettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-muted-foreground">
             <div className="rounded-2xl border border-white/10 p-4">
-              <p className="font-semibold text-foreground">1. Steadfast panel theke API key nin</p>
-              <p>Business er own merchant account er API key and secret key paste korun.</p>
+              <p className="font-semibold text-foreground">1. Courier provider select korun</p>
+              <p>Steadfast, Pathao ba RedX er merchant account credential paste korun.</p>
             </div>
             <div className="rounded-2xl border border-white/10 p-4">
               <p className="font-semibold text-foreground">2. Save + Test</p>

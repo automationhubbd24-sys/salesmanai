@@ -200,7 +200,7 @@ export default function InstagramOrderTrackingPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ platform: "instagram", provider: "steadfast", order }),
+        body: JSON.stringify({ platform: "instagram", order }),
       });
       const data = await response.json().catch(() => ({}));
 
@@ -231,7 +231,7 @@ export default function InstagramOrderTrackingPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ platform: "instagram", provider: "steadfast", orders: activeOrders }),
+        body: JSON.stringify({ platform: "instagram", orders: activeOrders }),
       });
       const data = await response.json().catch(() => ({}));
       if (response.status === 404) throw new Error("Courier API is not connected yet. Setup first from Courier Integration.");
@@ -376,10 +376,10 @@ export default function InstagramOrderTrackingPage() {
                           className="h-8 gap-1 border-pink-500/30 bg-pink-500/5 text-xs text-pink-500 hover:bg-pink-500/10"
                           disabled={orderView === "draft" || sendingCourierId === order.id}
                           onClick={() => sendToCourier(order)}
-                          title={orderView === "draft" ? "Only active orders can be sent" : "Send to Steadfast courier"}
+                          title={orderView === "draft" ? "Only active orders can be sent" : "Send to selected courier"}
                         >
                           {sendingCourierId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
-                          Steadfast
+                          Courier
                         </Button>
                       </TableCell>
                       <TableCell className="text-right">
