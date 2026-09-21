@@ -26,6 +26,22 @@ function hashRoutingId(value) {
 }
 // #endregion
 
+// #region debug-point order-total-tracking
+function reportOrderTotalDebug(hypothesisId, location, msg, data = {}) {
+  try {
+    const envContent = fs.readFileSync(path.resolve(__dirname, '../../../.dbg/order-total-tracking.env'), 'utf8');
+    const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+    const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+    if (!debugUrl || !sessionId) return;
+    fetch(debugUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+    }).catch(() => {});
+  } catch (_) {}
+}
+// #endregion
+
 const productResourceSearchInFlight = new Map();
 
 function recordProductSearchStage(pageId, stage, startedAt, extra = {}) {
@@ -2199,6 +2215,12 @@ async function saveWhatsAppOrderTracking(orderData) {
 
         if (recentOrder.rows.length > 0) {
             const existing = recentOrder.rows[0];
+            // #region debug-point order-total-tracking
+            reportOrderTotalDebug('H4', 'dbService.saveWhatsAppOrderTracking.recentOrder', 'Existing WhatsApp order found for merge evaluation', {
+                existing,
+                incoming: { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name }
+            });
+            // #endregion
             const mergedOrder = {
                 product_name: product_name && product_name !== 'Recovered Lead' && product_name !== 'Pending' ? product_name : existing.product_name,
                 number: number && number !== 'Pending' ? number : existing.number,
@@ -2261,6 +2283,12 @@ async function saveWhatsAppOrderTracking(orderData) {
         }
 
         const nextStatus = getOrderLifecycleStatus({ product_name, number, location });
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H3', 'dbService.saveWhatsAppOrderTracking.insertSelected', 'New WhatsApp order insert selected', {
+            incoming: { session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name },
+            nextStatus
+        });
+        // #endregion
         const result = await db.query(
             `INSERT INTO whatsapp_order_tracking
                 (session_name, sender_id, product_name, number, location, product_quantity, price, customer_email, customer_name, status)
@@ -2825,6 +2853,13 @@ async function logMessage(msgData) {
 // 12. Save Order (Unified Wrapper)
 async function saveOrder(orderData) {
     const { platform, order_action } = orderData;
+    // #region debug-point order-total-tracking
+    reportOrderTotalDebug('H3', 'dbService.saveOrder.input', 'saveOrder received payload', {
+        platform,
+        order_action,
+        orderData
+    });
+    // #endregion
     const client = await getPool().connect();
     try {
         await client.query('BEGIN');
@@ -3015,6 +3050,16 @@ async function saveOrderTracking(orderData) {
                 };
                 const nextStatus = getOrderLifecycleStatus(mergedOrder);
 
+                // #region debug-point order-total-tracking
+                reportOrderTotalDebug('H4', 'dbService.saveOrderTracking.updateSelected', 'Existing Messenger order selected for merge', {
+                    orderId,
+                    score: best.score,
+                    existing,
+                    incoming: { product_name, number, location, product_quantity, price, customer_name: orderData.customer_name, customer_email },
+                    mergedOrder,
+                    nextStatus
+                });
+                // #endregion
                 await db.query(
                     `UPDATE fb_order_tracking SET
                         product_name = CASE 
@@ -3064,6 +3109,12 @@ async function saveOrderTracking(orderData) {
 
         // --- 3. NEW ORDER ---
         const nextStatus = getOrderLifecycleStatus({ product_name, number, location });
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H3', 'dbService.saveOrderTracking.insertSelected', 'New Messenger order insert selected', {
+            incoming: { page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, customer_name: orderData.customer_name, customer_email },
+            nextStatus
+        });
+        // #endregion
         const result = await db.query(
             `INSERT INTO fb_order_tracking
                 (page_id, sender_id, product_name, number, location, product_quantity, price, sender_number, created_at, status, is_locked, customer_name, customer_email)

@@ -14,6 +14,23 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 
+// #region debug-point order-total-tracking
+function reportOrderTotalDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.resolve(__dirname, '../../../.dbg/order-total-tracking.env');
+        const envContent = fs.readFileSync(envPath, 'utf8');
+        const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+        const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+        if (!debugUrl || !sessionId) return;
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
 // --- Simple In-Memory Embedding Cache (500 items, 1 hour TTL) ---
 const embeddingCache = new Map();
 const imageEmbeddingCache = new Map();
@@ -2214,6 +2231,20 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 }
 
                 if (structuredFinal) {
+                    // #region debug-point order-total-tracking
+                    reportOrderTotalDebug('H2', 'aiService.runAgentLoop.structuredFinal', 'LLM structured output parsed', {
+                        platform,
+                        pageId: pageConfig?.page_id || pageId || null,
+                        hasOrderDetails: Boolean(structuredFinal.order_details),
+                        action: structuredFinal.action || null,
+                        topLevelPrice: structuredFinal.price ?? null,
+                        orderDetailsIntent: structuredFinal.order_details?.intent || null,
+                        orderDetailsFields: structuredFinal.order_details?.fields || structuredFinal.order_details || null,
+                        replyMentionsTotalBill: /total\s*bill|মোট\s*বিল/i.test(String(structuredFinal.reply_text || structuredFinal.reply || '')),
+                        replyMentionsDeliveryCharge: /delivery\s*charge|courier|curiar|shipping|ডেলিভারি/i.test(String(structuredFinal.reply_text || structuredFinal.reply || '')),
+                        replyPreview: String(structuredFinal.reply_text || structuredFinal.reply || '').slice(0, 1000)
+                    });
+                    // #endregion
                     // --- AUTO-ORDER SAVE FALLBACK (User Request: JSON based incremental order save) ---
                     // CASE A/B/C: AI provides any piece of order data (phone, address, etc.)
                     if (structuredFinal.order_details || (structuredFinal.action === "save_order" && (structuredFinal.order_data || structuredFinal.details)) || structuredFinal.customer_phone || structuredFinal.customer_address || structuredFinal.phone) {
@@ -2235,6 +2266,14 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                             customer_phone: customerPhone ? String(customerPhone).replace(/[^\d+]/g, '') : null,
                             customer_address: customerAddress ? String(customerAddress).trim() : null
                         };
+
+                        // #region debug-point order-total-tracking
+                        reportOrderTotalDebug('H2', 'aiService.runAgentLoop.orderDataMapping', 'Structured output mapped for order orchestration', {
+                            rawData,
+                            structuredPrice: structuredFinal.price ?? null,
+                            mappedOrderData: orderData
+                        });
+                        // #endregion
 
                         const hasMeaningfulOrderData = Boolean(
                             orderData.customer_phone ||
@@ -2584,56 +2623,6 @@ async function generateReply(userMessage, pageConfig, pagePrompts, history = [],
             }
         } catch (e) {
             console.warn(`[AI] Failed to trigger semantic cache save: ${e.message}`);
-        }
-
-        try {
-            if (result && typeof result === 'object') {
-                const summarizeToolCall = (toolCall) => ({
-                    id: toolCall?.id || null,
-                    name: toolCall?.function?.name || toolCall?.name || null,
-                    arguments: toolCall?.function?.arguments || toolCall?.arguments || null
-                });
-                const summarizeToolResult = (entry) => {
-                    const resultData = entry?.result || entry;
-                    return {
-                        tool: entry?.tool_call?.function?.name || entry?.tool_call?.name || null,
-                        status: resultData?.status || null,
-                        found_count: resultData?.found_count || null,
-                        data_injection: resultData?.data_injection || null,
-                        product: resultData?.product ? {
-                            id: resultData.product.id || resultData.product.product_id || null,
-                            name: resultData.product.name || null,
-                            price: resultData.product.price || null,
-                            currency: resultData.product.currency || null
-                        } : null,
-                        total_price: resultData?.total_price || null,
-                        breakdown: resultData?.breakdown || null,
-                        message: resultData?.message || null
-                    };
-                };
-
-                result.decision_audit = {
-                    user_message: cleanUserMessage,
-                    model: displayModel,
-                    raw_model: result.model || null,
-                    final_action: result.action || null,
-                    final_product_id: result.product_id || null,
-                    final_reply: result.reply || null,
-                    order_details: result.order_details || null,
-                    product_context: productContext || null,
-                    last_product_context: lastProductContext || null,
-                    found_products: Array.isArray(result.foundProducts) ? result.foundProducts.slice(0, 5).map((product) => ({
-                        id: product.id || product.product_id || null,
-                        name: product.name || null,
-                        price: product.price || null,
-                        currency: product.currency || null
-                    })) : [],
-                    tool_calls: Array.isArray(result.agent_trace?.tool_calls) ? result.agent_trace.tool_calls.map(summarizeToolCall) : [],
-                    tool_results: Array.isArray(result.agent_trace?.tool_results) ? result.agent_trace.tool_results.map(summarizeToolResult) : []
-                };
-            }
-        } catch (auditErr) {
-            console.warn(`[AI Audit] Failed to attach decision audit: ${auditErr.message}`);
         }
 
         // --- 2. Log to API Usage Stats (api_usage_stats table) ---
@@ -3272,6 +3261,18 @@ ${productContext || "No specific product context provided yet."}
 `;
 
         const systemMessage = { role: 'system', content: unifiedSystemPrompt };
+
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H1', 'aiService.generateReply.prompt', 'Order prompt built', {
+            pageId: pageConfig?.page_id || pageId || null,
+            platform: pageConfig?.platform || platform || null,
+            promptHasTotalBill: /total\s*bill|মোট\s*বিল/i.test(unifiedSystemPrompt),
+            promptHasDeliveryCharge: /delivery\s*charge|courier|curiar|shipping|ডেলিভারি/i.test(unifiedSystemPrompt),
+            promptHasDiscount: /discount|ছাড়|ডিসকাউন্ট/i.test(unifiedSystemPrompt),
+            ownerPromptPreview: String(basePrompt || '').slice(0, 1200),
+            systemOrderRulesPreview: unifiedSystemPrompt.slice(unifiedSystemPrompt.indexOf('[SALES WORKFLOW'), unifiedSystemPrompt.indexOf('[RESPONSE FORMAT]')).slice(0, 1600)
+        });
+        // #endregion
 
         const lastHistoryMsg = processedHistory.length > 0 ? processedHistory[processedHistory.length - 1] : null;
         let isDuplicate = false;

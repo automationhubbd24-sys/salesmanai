@@ -1,5 +1,24 @@
 const dbService = require('./dbService');
 const emailService = require('./emailService');
+const fs = require('fs');
+const path = require('path');
+
+// #region debug-point order-total-tracking
+function reportOrderTotalDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.resolve(__dirname, '../../../.dbg/order-total-tracking.env');
+        const envContent = fs.readFileSync(envPath, 'utf8');
+        const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+        const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+        if (!debugUrl || !sessionId) return;
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
 
 /**
  * Normalizes a Bangladeshi phone number to 01XXXXXXXXX format.
@@ -158,6 +177,17 @@ async function orchestrateOrder(params) {
             sender_number: extracted.phone || null,
             order_action: orderAction
         };
+
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H2', 'orderService.orchestrateOrder.savePayload', 'Order payload prepared for dbService.saveOrder', {
+            platform,
+            intent,
+            orderAction,
+            rawData: data,
+            extracted,
+            savePayload
+        });
+        // #endregion
 
         try {
             const result = await dbService.saveOrder(savePayload);

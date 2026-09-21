@@ -153,6 +153,23 @@ setInterval(refreshAllowedPages, CACHE_TTL);
 const configCache = new Map(); // Key: pageId, Value: { config, prompts, timestamp }
 const recentBotReplies = new Map(); // Key: senderId, Value: Array of { text, timestamp }
 
+// #region debug-point order-total-tracking
+function reportOrderTotalDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.resolve(__dirname, '../../../.dbg/order-total-tracking.env');
+        const envContent = fs.readFileSync(envPath, 'utf8');
+        const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+        const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+        if (!debugUrl || !sessionId) return;
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
+
 // #region debug-point A:variant-media-reporter
 function reportVariantDebug(hypothesisId, location, msg, data = {}) {
     try {
@@ -369,52 +386,6 @@ async function saveFbOutgoingLog({
         token,
         ai_model: aiModel
     });
-}
-
-function compactAuditValue(value, maxLength = 1800) {
-    if (value == null || value === '') return 'none';
-    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-    return text.length > maxLength ? `${text.slice(0, maxLength)}\n... [truncated]` : text;
-}
-
-function formatAiDecisionAudit(audit = {}) {
-    const toolCalls = Array.isArray(audit.tool_calls) ? audit.tool_calls : [];
-    const toolResults = Array.isArray(audit.tool_results) ? audit.tool_results : [];
-    const foundProducts = Array.isArray(audit.found_products) ? audit.found_products : [];
-
-    const lines = [
-        '[AI Decision Audit]',
-        `Model: ${audit.model || audit.raw_model || 'unknown'}`,
-        `Raw Model: ${audit.raw_model || 'unknown'}`,
-        `Final Action: ${audit.final_action || 'none'}`,
-        `Final Product ID: ${audit.final_product_id || 'none'}`,
-        '',
-        '[User Message]',
-        compactAuditValue(audit.user_message, 800),
-        '',
-        '[Final Reply]',
-        compactAuditValue(audit.final_reply, 1200),
-        '',
-        '[Product Context / Text Vector Snapshot]',
-        compactAuditValue(audit.product_context, 3500),
-        '',
-        '[Last Product Context]',
-        compactAuditValue(audit.last_product_context, 1200),
-        '',
-        '[Found Products Returned To Reply Layer]',
-        foundProducts.length ? foundProducts.map((product, index) => `${index + 1}. id=${product.id || 'none'} | name=${product.name || 'none'} | price=${product.price || 'none'} ${product.currency || ''}`.trim()).join('\n') : 'none',
-        '',
-        '[Tool Calls Requested By LLM]',
-        toolCalls.length ? toolCalls.map((call, index) => `${index + 1}. ${call.name || 'unknown'}\nArguments: ${compactAuditValue(call.arguments, 1000)}`).join('\n\n') : 'none',
-        '',
-        '[Tool Results / DB Proof Given Back]',
-        toolResults.length ? toolResults.map((entry, index) => `${index + 1}. ${entry.tool || 'unknown'} | status=${entry.status || 'none'} | found_count=${entry.found_count ?? 'none'}\nProduct: ${compactAuditValue(entry.product, 900)}\nTotal Price: ${entry.total_price ?? 'none'}\nBreakdown: ${compactAuditValue(entry.breakdown, 900)}\nData Injection: ${compactAuditValue(entry.data_injection, 1800)}\nMessage: ${compactAuditValue(entry.message, 800)}`).join('\n\n') : 'none',
-        '',
-        '[Order Details Extracted]',
-        compactAuditValue(audit.order_details, 1200)
-    ];
-
-    return lines.join('\n');
 }
 
 // Helper to log to file (Async)
@@ -2332,6 +2303,17 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
         const orderIntent = aiResponse.order_details?.intent || (Object.keys(orderDataFromAI || {}).length ? 'update_existing_order' : 'upsert');
         const orderGuardText = combinedText || finalUserMessage;
         const skipOrder = shouldSkipOrderOrchestration(orderGuardText, orderDataFromAI);
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H2', 'webhookController.whatsapp.orderOrchestrationGate', 'WhatsApp order data before orchestration', {
+            platform: 'whatsapp',
+            orderIntent,
+            skipOrder,
+            orderDataFromAI,
+            aiOrderDetails: aiResponse.order_details || null,
+            replyPreview: String(finalReplyText || aiResponse.reply || '').slice(0, 1000),
+            guardTextPreview: String(orderGuardText || '').slice(0, 500)
+        });
+        // #endregion
         diagnosticOrderData = skipOrder
             ? { order_guard_skipped: isInfoOnlyCustomerQuery(orderGuardText) ? 'info_only_query' : 'empty_order_details', ai_order_details: orderDataFromAI || null }
             : (orderDataFromAI || {});
@@ -4401,6 +4383,17 @@ STRICT RULES:
         const orderIntent = aiResponse.order_details?.intent || (Object.keys(orderDataFromAI || {}).length ? 'update_existing_order' : 'upsert');
         const orderGuardText = combinedText || finalUserMessage;
         const skipOrder = shouldSkipOrderOrchestration(orderGuardText, orderDataFromAI);
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H2', 'webhookController.messenger.orderOrchestrationGate', 'Messenger order data before orchestration', {
+            platform: 'messenger',
+            orderIntent,
+            skipOrder,
+            orderDataFromAI,
+            aiOrderDetails: aiResponse.order_details || null,
+            replyPreview: String(replyText || aiResponse.reply || '').slice(0, 1000),
+            guardTextPreview: String(orderGuardText || '').slice(0, 500)
+        });
+        // #endregion
         diagnosticOrderData = skipOrder
             ? { order_guard_skipped: isInfoOnlyCustomerQuery(orderGuardText) ? 'info_only_query' : 'empty_order_details', ai_order_details: orderDataFromAI || null }
             : (orderDataFromAI || {});
@@ -5114,18 +5107,6 @@ STRICT RULES:
                 aiModel: aiModelLabel
             });
 
-            if (aiResponse?.decision_audit) {
-                await saveFbOutgoingLog({
-                    pageId,
-                    recipientId: senderId,
-                    messageId: `ai_decision_audit_${botMessageId}`,
-                    text: formatAiDecisionAudit(aiResponse.decision_audit),
-                    status: 'sent',
-                    replyBy: 'system',
-                    token: 0,
-                    aiModel: aiModelLabel
-                });
-            }
             
             if (!isNoReply) {
                 // Track bot reply in memory BEFORE sending to block the echo

@@ -4942,7 +4942,7 @@ export default function AdminPage() {
                   </CardTitle>
                   <CardDescription>Enable temporary AI tracing for one page/session when an owner reports a problem.</CardDescription>
                 </div>
-                <Button variant="outline" size="sm" onClick={fetchDiagnosticData} disabled={diagnosticLoading}>
+                <Button variant="outline" size="sm" onClick={() => fetchDiagnosticData()} disabled={diagnosticLoading}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${diagnosticLoading ? 'animate-spin' : ''}`} /> Refresh
                 </Button>
               </div>
