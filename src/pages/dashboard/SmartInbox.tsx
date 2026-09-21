@@ -262,24 +262,33 @@ const getMessagePreview = (body?: string) => {
   return body;
 };
 
-const extractMediaImageUrl = (body?: string) => {
-  if (!body) return "";
+const extractMediaImageUrls = (body?: string) => {
+  if (!body) return [];
 
-  const labeledMatch = body.match(/\[Image URLs?\]:\s*(https?:\/\/[^\s\]\)]+)/i);
-  if (labeledMatch?.[1]) return labeledMatch[1];
+  const urls: string[] = [];
+  const collectUrls = (value?: string) => {
+    if (!value) return;
+    const matches = value.match(/https?:\/\/[^\s,\]\)]+/gi) || [];
+    urls.push(...matches.map((url) => url.replace(/[,.]+$/g, "")));
+  };
 
-  const extensionMatch = body.match(/(https?:\/\/[^\s\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s\]\)]*)?)/i);
-  if (extensionMatch?.[1]) return extensionMatch[1];
+  const labeledMatches = body.matchAll(/\[Image URLs?\]:\s*([^\n]+)/gi);
+  for (const match of labeledMatches) collectUrls(match[1]);
 
-  return "";
+  collectUrls(body.match(/https?:\/\/[^\s,\]\)]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s,\]\)]*)?/i)?.[0]);
+
+  return Array.from(new Set(urls.filter(Boolean)));
 };
+
+const extractMediaImageUrl = (body?: string) => extractMediaImageUrls(body)[0] || "";
 
 const cleanMediaMessageText = (body: string) =>
   body
     .replace(/\[?System Memory:[^\]]+\]?/g, "")
     .replace(/##PRODUCT[^\n]+/g, "")
-    .replace(/\[Image URLs?\]:\s*https?:\/\/[^\s\]\)]+/gi, "")
-    .replace(/https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s]+)?/gi, "")
+    .replace(/\[Images?:\s*\d+\]/gi, "")
+    .replace(/\[Image URLs?\]:\s*[^\n]+/gi, "")
+    .replace(/https?:\/\/[^\s,\]\)]+/gi, "")
     .trim();
 
 const shouldHideMessage = (message: MessageItem) => {
@@ -1489,9 +1498,10 @@ const SmartInbox = () => {
                   {visibleMessages.map((message, index) => {
                     const body = message.body || "";
                     const messageAdAttribution = getAdAttribution(message);
-                    const imageUrl = extractMediaImageUrl(body);
-                    const hasFailedMediaImage = Boolean(imageUrl && failedMediaUrlsRef.current.has(imageUrl));
-                    const hasMediaImage = Boolean(imageUrl) && !hasFailedMediaImage;
+                    const imageUrls = extractMediaImageUrls(body);
+                    const visibleImageUrls = imageUrls.filter((url) => !failedMediaUrlsRef.current.has(url));
+                    const hasFailedMediaImage = imageUrls.length > 0 && visibleImageUrls.length === 0;
+                    const hasMediaImage = visibleImageUrls.length > 0;
                     const lowerBody = body.toLowerCase();
                     const isBotImage =
                       hasMediaImage &&
@@ -1540,15 +1550,20 @@ const SmartInbox = () => {
                           )}
                           {hasMediaImage && !isAnalysisMessage ? (
                             <div className="space-y-3">
-                              <img
-                                src={imageUrl}
-                                alt="Conversation media"
-                                loading="lazy"
-                                decoding="async"
-                                className="w-full max-w-[170px] sm:max-w-[240px] max-h-[220px] rounded-2xl border border-black/10 object-cover cursor-pointer"
-                                onClick={() => window.open(imageUrl, "_blank")}
-                                onError={() => handleMediaError(imageUrl)}
-                              />
+                              <div className={cn("grid gap-2", visibleImageUrls.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+                                {visibleImageUrls.map((imageUrl) => (
+                                  <img
+                                    key={imageUrl}
+                                    src={imageUrl}
+                                    alt="Conversation media"
+                                    loading="lazy"
+                                    decoding="async"
+                                    className="aspect-square w-full max-w-[150px] rounded-2xl border border-black/10 object-cover cursor-pointer sm:max-w-[190px]"
+                                    onClick={() => window.open(imageUrl, "_blank")}
+                                    onError={() => handleMediaError(imageUrl)}
+                                  />
+                                ))}
+                              </div>
                               {cleanMediaMessageText(body) && (
                                 <p className={cn("text-xs leading-relaxed", isBot ? "text-black/70" : "text-white/70")}>
                                   {cleanMediaMessageText(body)}
