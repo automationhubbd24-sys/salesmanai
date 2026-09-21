@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar as CalendarIcon, Check, Copy, Download, MessageSquare, RefreshCw, ShoppingBag, Pencil } from "lucide-react";
+import { Calendar as CalendarIcon, Check, Copy, Download, MessageSquare, RefreshCw, ShoppingBag, Pencil, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -63,6 +63,7 @@ export default function InstagramOrderTrackingPage() {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [sendingCourierId, setSendingCourierId] = useState<string | null>(null);
 
   const accountId = currentAccount?.page_id || null;
   const dbId = currentAccount?.db_id || currentAccount?.id || 0;
@@ -186,6 +187,37 @@ export default function InstagramOrderTrackingPage() {
     window.setTimeout(() => setCopiedId(null), 1800);
   };
 
+  const sendToCourier = async (order: Order) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+
+    setSendingCourierId(order.id);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/courier/shipments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ platform: "instagram", provider: "steadfast", order }),
+      });
+
+      if (response.status === 404) {
+        toast.error("Courier API is not connected yet");
+        return;
+      }
+      if (!response.ok) throw new Error("Courier booking failed");
+
+      const data = await response.json().catch(() => ({}));
+      toast.success(data.tracking_code ? `Sent to courier: ${data.tracking_code}` : "Order sent to courier");
+      void fetchOrders();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Courier booking failed");
+    } finally {
+      setSendingCourierId(null);
+    }
+  };
+
   const dateLabel = useMemo(() => date ? format(date, "PPP") : "তারিখ নির্বাচন করুন", [date]);
 
   if (accountLoading) {
@@ -277,6 +309,7 @@ export default function InstagramOrderTrackingPage() {
                     <TableHead>Customer</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Courier</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -296,6 +329,19 @@ export default function InstagramOrderTrackingPage() {
                         )}>
                           {order.status === "pending" || order.status === "draft" ? "draft" : (order.status || "ongoing")}
                         </span>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1 border-pink-500/30 bg-pink-500/5 text-xs text-pink-500 hover:bg-pink-500/10"
+                          disabled={orderView === "draft" || sendingCourierId === order.id}
+                          onClick={() => sendToCourier(order)}
+                          title={orderView === "draft" ? "Only active orders can be sent" : "Send to Steadfast courier"}
+                        >
+                          {sendingCourierId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
+                          Steadfast
+                        </Button>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="grid grid-cols-3 justify-end gap-1 sm:inline-grid sm:w-auto sm:grid-cols-3">

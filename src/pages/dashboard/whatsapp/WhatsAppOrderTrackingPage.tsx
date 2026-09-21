@@ -21,7 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw, MessageSquare, Pencil } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw, MessageSquare, Pencil, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -121,6 +121,7 @@ export default function WhatsAppOrderTrackingPage() {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [sendingCourierId, setSendingCourierId] = useState<string | null>(null);
 
   const activeSessionName = currentSession?.name
     || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
@@ -278,6 +279,37 @@ Phone: ${order.number || 'N/A'}`;
     }
 
     setSelectedOrder(order);
+  };
+
+  const sendToCourier = async (order: Order) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+
+    setSendingCourierId(order.id);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/courier/shipments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ platform: "whatsapp", provider: "steadfast", order }),
+      });
+
+      if (response.status === 404) {
+        toast.error("Courier API is not connected yet");
+        return;
+      }
+      if (!response.ok) throw new Error("Courier booking failed");
+
+      const data = await response.json().catch(() => ({}));
+      toast.success(data.tracking_code ? `Sent to courier: ${data.tracking_code}` : "Order sent to courier");
+      fetchOrders(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Courier booking failed");
+    } finally {
+      setSendingCourierId(null);
+    }
   };
 
   useEffect(() => {
@@ -450,7 +482,8 @@ Phone: ${order.number || 'N/A'}`;
                               <TableHead>Phone</TableHead>
                               <TableHead>Status</TableHead>
                               <TableHead>Sender ID</TableHead>
-                              <TableHead className="w-[160px] text-right">Actions</TableHead>
+                              <TableHead>Courier</TableHead>
+                              <TableHead className="w-[180px] text-right">Actions</TableHead>
                           </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -520,6 +553,19 @@ Phone: ${order.number || 'N/A'}`;
                                     </Select>
                                   </TableCell>
                                   <TableCell>{order.sender_id}</TableCell>
+                                  <TableCell>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 gap-1 border-[#00ff88]/30 bg-[#00ff88]/5 text-xs text-[#00ff88] hover:bg-[#00ff88]/10"
+                                      disabled={orderView === "draft" || sendingCourierId === order.id}
+                                      onClick={() => sendToCourier(order)}
+                                      title={orderView === "draft" ? "Only active orders can be sent" : "Send to Steadfast courier"}
+                                    >
+                                      {sendingCourierId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
+                                      Steadfast
+                                    </Button>
+                                  </TableCell>
                                   <TableCell>
                                     <div className="grid grid-cols-2 gap-1 sm:flex sm:items-center sm:justify-end sm:gap-1">
                                       <Button
