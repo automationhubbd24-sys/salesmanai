@@ -8,6 +8,7 @@ import { Mail, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
+import SEO from "@/components/SEO";
 
 const ForgotPassword = () => {
   const { t } = useLanguage();
@@ -21,6 +22,7 @@ const ForgotPassword = () => {
       toast.error(t("Please enter your email", "অনুগ্রহ করে আপনার ইমেইল দিন"));
       return;
     }
+    const normalizedEmail = email.trim().toLowerCase();
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/auth/password/reset/request`, {
@@ -28,7 +30,7 @@ const ForgotPassword = () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: normalizedEmail }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) {
@@ -36,11 +38,11 @@ const ForgotPassword = () => {
       }
       toast.success(
         t(
-          "Password reset code sent to your email.",
-          "পাসওয়ার্ড রিসেট কোড আপনার ইমেইলে পাঠানো হয়েছে।"
+          "If this email has an account, a password reset code has been sent.",
+          "এই ইমেইলে অ্যাকাউন্ট থাকলে পাসওয়ার্ড রিসেট কোড পাঠানো হয়েছে।"
         )
       );
-      navigate(`/reset-password?email=${encodeURIComponent(email)}`);
+      navigate(`/reset-password?email=${encodeURIComponent(normalizedEmail)}`);
     } catch (err: any) {
       toast.error(
         err.message ||
@@ -53,6 +55,7 @@ const ForgotPassword = () => {
 
   return (
     <div className="flex min-h-screen bg-[#0b0b0b] text-white">
+      <SEO title="Reset your SalesmanChatbot password" noindex />
       <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:px-20 xl:px-24">
         <div className="mx-auto w-full max-w-md">
           <div className="mb-6">
@@ -67,7 +70,7 @@ const ForgotPassword = () => {
               t("Reset your password", "আপনার পাসওয়ার্ড রিসেট করুন")
             }</h2>
             <p className="mt-2 text-sm text-gray-400">
-              {t("Enter your account email and we'll send you a reset link.", "আপনার অ্যাকাউন্ট ইমেইল দিন, আমরা একটি রিসেট লিংক পাঠাব।")}
+              {t("Enter your account email and we'll send a 6-digit reset code.", "আপনার অ্যাকাউন্ট ইমেইল দিন, আমরা ৬ ডিজিট রিসেট কোড পাঠাব।")}
             </p>
           </div>
           <form onSubmit={handleSendReset} className="space-y-6">
@@ -91,7 +94,7 @@ const ForgotPassword = () => {
               className="h-12 w-full rounded-full bg-[#00ff88] text-black font-bold shadow-[0_10px_30px_rgba(0,255,136,0.25)] hover:bg-[#00f07f] transition-all hover:scale-[1.01] active:scale-95"
               disabled={loading}
             >
-              {loading ? t("Sending...", "পাঠানো হচ্ছে...") : t("Send Reset Link", "রিসেট লিংক পাঠান")}
+              {loading ? t("Sending...", "পাঠানো হচ্ছে...") : t("Send Reset Code", "রিসেট কোড পাঠান")}
             </Button>
           </form>
           <div className="mt-8 text-center">

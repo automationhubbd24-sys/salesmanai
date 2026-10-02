@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -26,6 +26,7 @@ interface ApiItem {
     rpm_limit?: number;
     rpd_limit?: number;
     cooldown_until?: string | null;
+    model_usage?: Record<string, { count?: number; tokens?: number }>;
 }
 
 interface RotationLog {

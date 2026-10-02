@@ -78,14 +78,14 @@ const Navbar = () => {
 
   return (
     <nav className={cn(
-      "fixed top-0 left-0 right-0 z-[100] transition-all duration-500 px-4 pt-4 md:px-6 md:pt-6",
+      "fixed top-0 left-0 right-0 z-[100] transition-all duration-500 px-3 pt-3 sm:px-4 md:px-6 md:pt-6",
       scrolled ? "translate-y-0" : "translate-y-0"
     )}>
       <div className={cn(
-        "mx-auto max-w-7xl flex items-center justify-between px-5 md:px-8 h-16 md:h-20 rounded-2xl border border-white/5 transition-all duration-500",
-        scrolled ? "bg-black/80 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-white/10" : "bg-black/40 backdrop-blur-md"
+        "mx-auto max-w-7xl flex items-center justify-between gap-2 px-3 sm:px-5 md:px-8 h-14 sm:h-16 md:h-20 rounded-2xl border border-white/10 transition-all duration-500",
+        scrolled ? "bg-black/90 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-white/15" : "bg-black/70 backdrop-blur-xl"
       )}>
-        <Link to="/" className="flex items-center group relative z-50 scale-90 md:scale-100 origin-left">
+        <Link to="/" className="flex items-center group relative z-50 scale-[0.68] min-[380px]:scale-[0.74] sm:scale-90 md:scale-100 origin-left min-w-0">
           <Logo size="md" accentColor={accentColor} />
           {/* Logo Glow */}
           <div
@@ -185,19 +185,33 @@ const Navbar = () => {
             className="h-11 px-6 text-sm font-bold bg-[#00ff88] hover:bg-[#00f07f] text-black rounded-full shadow-[0_10px_30px_rgba(0,255,136,0.25)] transition-all hover:scale-105 active:scale-95"
             asChild
           >
-            <Link to={isLoggedIn ? "/dashboard/whatsapp/control" : "/login"}>
+            <Link to={isLoggedIn ? "/dashboard/whatsapp/control" : "/register"}>
               {isLoggedIn ? t("Dashboard", "ড্যাশবোর্ড") : t("Get Started", "শুরু করুন")}
             </Link>
           </Button>
         </div>
 
-        {/* Mobile Menu Button */}
-        <button
-          className="lg:hidden flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-white transition-all active:scale-90 hover:bg-white/10"
-          onClick={() => setIsOpen(!isOpen)}
-        >
-          {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
+        <div className="flex items-center gap-2 lg:hidden shrink-0">
+          {!isLoggedIn && (
+            <Button
+              className="h-10 px-4 text-xs sm:text-sm font-black bg-[#00ff88] hover:bg-[#00f07f] text-black rounded-full shadow-[0_10px_30px_rgba(0,255,136,0.25)] active:scale-95"
+              asChild
+            >
+              <Link to="/register">
+                {t("Start", "শুরু")}
+              </Link>
+            </Button>
+          )}
+
+          {/* Mobile Menu Button */}
+          <button
+            className="flex items-center justify-center w-11 h-11 rounded-2xl bg-white/10 border border-white/15 text-white shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition-all active:scale-90 hover:bg-white/15"
+            onClick={() => setIsOpen(!isOpen)}
+            aria-label={isOpen ? "Close menu" : "Open menu"}
+          >
+            {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Navigation Overlay */}
@@ -208,10 +222,10 @@ const Navbar = () => {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-3xl lg:hidden h-screen w-screen overflow-hidden"
+            className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-3xl lg:hidden h-[100dvh] w-screen overflow-hidden"
           >
-            <div className="flex flex-col h-full p-6 md:p-10">
-              <div className="flex items-center justify-between mb-10">
+            <div className="flex flex-col h-full p-4 sm:p-6 md:p-10">
+              <div className="flex items-center justify-between mb-6 sm:mb-10">
                 <Logo size="md" accentColor={accentColor} />
                 <button
                   className="w-11 h-11 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 text-white transition-all active:scale-90"
@@ -221,8 +235,8 @@ const Navbar = () => {
                 </button>
               </div>
 
-              <div className="flex flex-col gap-2 overflow-y-auto custom-scrollbar flex-1 pb-10">
-                <div className="text-[10px] font-black text-[#00ff88] uppercase tracking-[0.3em] mb-4 px-4 py-1 bg-[#00ff88]/5 rounded-full w-fit">Navigation</div>
+              <div className="flex flex-col gap-1 sm:gap-2 overflow-y-auto custom-scrollbar flex-1 pb-6">
+                <div className="text-[10px] font-black text-[#00ff88] uppercase tracking-[0.3em] mb-3 sm:mb-4 px-4 py-1 bg-[#00ff88]/5 rounded-full w-fit">Navigation</div>
                 {[
                   { label: t("Solutions", "সলিউশনস"), id: 'services' },
                   { label: t("Features", "ফিচারসমূহ"), id: 'detailed' },
@@ -236,7 +250,7 @@ const Navbar = () => {
                     transition={{ delay: 0.1 + idx * 0.05 }}
                     key={item.id}
                     onClick={() => scrollToSection(item.id)}
-                    className="w-full text-left text-white text-3xl font-black py-5 px-4 hover:bg-[#00ff88]/10 rounded-[1.5rem] transition-all active:scale-95 flex items-center justify-between group"
+                    className="w-full text-left text-white text-2xl sm:text-3xl font-black py-4 sm:py-5 px-4 hover:bg-[#00ff88]/10 rounded-[1.5rem] transition-all active:scale-95 flex items-center justify-between group"
                   >
                     <span className="group-hover:translate-x-3 transition-transform duration-500">{item.label}</span>
                     <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-[#00ff88] group-hover:text-black transition-all duration-500">
@@ -246,7 +260,7 @@ const Navbar = () => {
                 ))}
               </div>
 
-              <div className="pt-8 border-t border-white/10 space-y-8 pb-4">
+              <div className="pt-5 sm:pt-8 border-t border-white/10 space-y-5 sm:space-y-8 pb-[max(1rem,env(safe-area-inset-bottom))]">
                 <div className="flex items-center justify-between px-4">
                   <div className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Switch Language</div>
                   <div className="flex gap-2 p-1 bg-white/5 rounded-2xl border border-white/5">
@@ -275,7 +289,7 @@ const Navbar = () => {
                   className="w-full h-16 bg-[#00ff88] hover:bg-[#00f07f] text-black rounded-3xl font-black text-xl shadow-[0_20px_50px_rgba(0,255,136,0.3)] transition-all active:scale-95 flex items-center justify-center gap-4 group" 
                   asChild
                 >
-                  <Link to={isLoggedIn ? "/dashboard/whatsapp/control" : "/login"} onClick={() => setIsOpen(false)}>
+                  <Link to={isLoggedIn ? "/dashboard/whatsapp/control" : "/register"} onClick={() => setIsOpen(false)}>
                     {isLoggedIn ? t("Dashboard", "ড্যাশবোর্ড") : t("Get Started", "শুরু করুন")}
                     <ArrowRight className="w-6 h-6 group-hover:translate-x-2 transition-transform" />
                   </Link>

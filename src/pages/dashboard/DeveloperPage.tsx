@@ -1,738 +1,518 @@
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { toast } from "sonner";
-import { Copy, RefreshCw, Code, Eye, EyeOff, Activity, ArrowRight, Key, Sparkles, Plus, AlertCircle, CheckCircle2, TrendingUp, DollarSign, Cpu, ArrowLeft } from "lucide-react";
-import { BACKEND_URL, EXTERNAL_API_BASE } from "@/config";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { api } from "@/lib/api";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import Logo from "@/components/Logo";
+import { toast } from "sonner";
+import { ArrowLeft, Copy, Eye, EyeOff, Key, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
+import { BACKEND_URL, EXTERNAL_API_BASE } from "@/config";
+
+const token = () => localStorage.getItem("auth_token") || "";
+const authHeaders = () => ({ Authorization: `Bearer ${token()}` });
+const apiBase = BACKEND_URL.endsWith("/api") ? BACKEND_URL.replace(/\/api$/, "") : BACKEND_URL;
+
+type ApiKeyRow = {
+    id: string;
+    name: string;
+    key_prefix: string;
+    status: string;
+    created_at: string;
+    last_used_at?: string;
+};
+
+type ModelRow = {
+    id: string;
+    name: string;
+    description?: string;
+    modalities?: { input?: string[]; output?: string[] };
+    pricing?: { prompt?: number; completion?: number; cached_prompt?: number };
+    context_length?: number;
+    released?: string;
+    release_note?: string;
+    provider?: string;
+    limits?: {
+        max_output_tokens?: number;
+        requests_per_day?: number;
+        tokens_per_day?: number;
+        remaining_requests?: number | null;
+        remaining_tokens?: number | null;
+        used_requests?: number;
+        used_tokens?: number;
+        unavailable?: boolean;
+    };
+    upstream_model?: string;
+};
+
+function StatCard({ label, value, description }: { label: string; value: string; description: string }) {
+    return (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+            <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{label}</div>
+            <div className="mt-3 text-2xl font-semibold tracking-tight text-white md:text-3xl">{value}</div>
+            <div className="mt-2 text-xs text-slate-500">{description}</div>
+        </div>
+    );
+}
 
 export default function DeveloperPage() {
-    const [apiKey, setApiKey] = useState<string | null>(null);
+    const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
+    const [models, setModels] = useState<ModelRow[]>([]);
+    const [usageStats, setUsageStats] = useState<any[]>([]);
+    const [modelBreakdown, setModelBreakdown] = useState<any[]>([]);
+    const [summary, setSummary] = useState<any>({ total_cost: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, total_requests: 0 });
+    const [accountBalance, setAccountBalance] = useState(0);
     const [loading, setLoading] = useState(true);
-    const [loadingStatus, setLoadingStatus] = useState(true);
-    const [showKey, setShowKey] = useState(false);
-    
-    // Developer Access Control
-    const [devStatus, setDevStatus] = useState<string>('none');
-    const [isDevLoggedIn, setIsDevLoggedIn] = useState(false);
-    const [devCreds, setDevCreds] = useState({ id: '', pass: '' });
-    const [registering, setRegistering] = useState(false);
-    const [loggingIn, setLoggingIn] = useState(false);
-    const [regData, setRegData] = useState({ paymentMethod: 'bkash', transactionId: '' });
+    const [newKey, setNewKey] = useState<string | null>(null);
+    const [showNewKey, setShowNewKey] = useState(false);
+    const [keyName, setKeyName] = useState("Production key");
+    const [query, setQuery] = useState("");
+    const [usageFrom, setUsageFrom] = useState("");
+    const [usageTo, setUsageTo] = useState("");
+    const [usageModel, setUsageModel] = useState("");
+    const [liveUsage, setLiveUsage] = useState(false);
+    const [selectedModel, setSelectedModel] = useState<ModelRow | null>(null);
 
-    // User Gemini Key Management
-    const [userGeminiKey, setUserGeminiKey] = useState('');
-    const [userGmail, setUserGmail] = useState('');
-    const [isAddingKey, setIsAddingKey] = useState(false);
-    const userId = localStorage.getItem('auth_user_id');
+    const filteredModels = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        if (!q) return models;
+        return models.filter(model => `${model.id} ${model.name} ${model.description || ""}`.toLowerCase().includes(q));
+    }, [models, query]);
+
+    const usageModelOptions = useMemo(() => {
+        const ids = new Set(models.map(model => model.id));
+        usageStats.forEach(row => row.model && ids.add(row.model));
+        return Array.from(ids).sort();
+    }, [models, usageStats]);
+
+    const modelUsageCounts = useMemo(() => {
+        return (modelBreakdown || [])
+            .map(row => [row.model, Number(row.total_requests || row.requests || row.count || 0)] as [string, number])
+            .filter(([modelId]) => !!modelId)
+            .sort((a, b) => b[1] - a[1]);
+    }, [modelBreakdown]);
 
     useEffect(() => {
-        const init = async () => {
-            setLoadingStatus(true);
-            await fetchDevStatus();
-            const devSession = localStorage.getItem('dev_session_unlocked');
-            if (devSession === 'true') setIsDevLoggedIn(true);
-            setLoadingStatus(false);
-        };
-        init();
+        loadAll();
     }, []);
 
     useEffect(() => {
-        if (devStatus === 'approved' && isDevLoggedIn) {
-            fetchKey();
-            fetchUsage(1);
-        }
-    }, [devStatus, isDevLoggedIn]);
+        if (!liveUsage) return;
+        const interval = window.setInterval(() => {
+            fetchUsage();
+            fetchBalance();
+        }, 5000);
+        return () => window.clearInterval(interval);
+    }, [liveUsage, usageFrom, usageTo, usageModel]);
 
-    const handleDevLogin = async () => {
-        try {
-            if (!devCreds.id || !devCreds.pass) return;
-            setLoggingIn(true);
-            const { data } = await api.post('/auth/developer/login', {
-                userId,
-                devId: devCreds.id,
-                devPass: devCreds.pass
-            });
-            if (data.success) {
-                setIsDevLoggedIn(true);
-                localStorage.setItem('dev_session_unlocked', 'true');
-                toast.success("Developer portal unlocked");
-            }
-        } catch (err: any) {
-            toast.error(err.response?.data?.error || "Invalid Credentials");
-        } finally {
-            setLoggingIn(false);
-        }
-    };
-
-    const fetchDevStatus = async () => {
-        try {
-            if (!userId) return;
-            const res = await fetch(`${BACKEND_URL}/api/auth/developer/stats/${userId}`);
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                console.error("[DevStatus] Error:", err);
-                return;
-            }
-            const data = await res.json();
-            setDevStatus(data.developer_status || 'none');
-        } catch (error) {
-            console.error("Failed to fetch developer status", error);
-        }
-    };
-
-    const handleRegister = async () => {
-        try {
-            if (!regData.transactionId) return;
-            setRegistering(true);
-            await api.post('/auth/developer/register', {
-                userId,
-                ...regData
-            });
-            toast.success("Registration Submitted. Waiting for admin approval.");
-            fetchDevStatus();
-        } catch (err: any) {
-            toast.error(err.response?.data?.error || "Failed to register");
-        } finally {
-            setRegistering(false);
-        }
-    };
-
-    const handleAddGeminiKey = async () => {
-        if (!userGeminiKey || !userGmail) {
-            toast.error("Gmail and API Key are required");
-            return;
-        }
-        setIsAddingKey(true);
-        try {
-            await api.post('/api-engine/keys', {
-                api: userGeminiKey,
-                gmail: userGmail,
-                provider: 'google',
-                mode: 'dev', 
-                owner_id: userId
-            });
-            toast.success("Gemini API Key added successfully");
-            setUserGeminiKey('');
-            setUserGmail('');
-        } catch (err: any) {
-            toast.error(err.response?.data?.error || "Failed to add key");
-        } finally {
-            setIsAddingKey(false);
-        }
-    };
-
-    const [usageStats, setUsageStats] = useState<any[]>([]);
-    const [usageSummary, setUsageSummary] = useState<any>({ 
-        total_cost: 0, 
-        total_tokens: 0,
-        total_requests: 0,
-        today_cost: 0, 
-        today_tokens: 0,
-        today_requests: 0,
-        yesterday_cost: 0,
-        yesterday_tokens: 0,
-        yesterday_requests: 0,
-        range_cost: 0,
-        range_tokens: 0,
-        range_requests: 0
-    });
-    const [startDate, setStartDate] = useState<string>("");
-    const [endDate, setEndDate] = useState<string>("");
-    const [regenDialogOpen, setRegenDialogOpen] = useState(false);
-    const [isRegenerating, setIsRegenerating] = useState(false);
-    const [currentPage, setCurrentPage] = useState(1);
-    const [pagination, setPagination] = useState<any>({
-        total_pages: 1,
-        total_records: 0
-    });
-
-    const formatCompact = (value?: number) => {
-        const n = Number(value || 0);
-        if (isNaN(n) || n === 0) return "0";
-        if (n >= 1000000) {
-            const v = (n / 1000000).toFixed(1).replace(/\.0$/, "");
-            return `${v}M`;
-        }
-        if (n >= 1000) {
-            const v = (n / 1000).toFixed(1).replace(/\.0$/, "");
-            return `${v}k`;
-        }
-        return n.toLocaleString();
-    };
-
-    const setYesterday = () => {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const dateStr = yesterday.toISOString().split('T')[0];
-        setStartDate(dateStr);
-        setEndDate(dateStr);
-        // We'll trigger fetch in useEffect or manually
-    };
-
-    useEffect(() => {
-        if (startDate && endDate) {
-            setCurrentPage(1); // Reset to page 1 on date filter change
-            fetchUsage(1);
-        }
-    }, [startDate, endDate]);
-
-    const fetchUsage = async (page = 1) => {
-        try {
-            const token = localStorage.getItem("auth_token");
-            if (!token) return;
-
-            let url = `${BACKEND_URL}/api/external/usage?page=${page}&limit=20`;
-            if (startDate && endDate) {
-                url += `&startDate=${startDate}&endDate=${endDate}`;
-            }
-
-            const res = await fetch(url, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-            
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                console.error(`[UsageStats] Server Error (${res.status}):`, errorData);
-                // Don't show toast for 500 error on fetch to avoid spamming if server is down/misconfigured
-                // toast.error(`Usage stats error: ${errorData.error || 'Server Error'}`);
-                return;
-            }
-
-            const data = await res.json();
-            if (data.stats) setUsageStats(data.stats);
-            if (data.summary) setUsageSummary(data.summary);
-            if (data.pagination) {
-                setPagination(data.pagination);
-                setCurrentPage(data.pagination.current_page);
-            }
-        } catch (error) {
-            console.error("Failed to fetch usage stats", error);
-        }
-    };
-
-    const fetchKey = async () => {
-        const token = localStorage.getItem("auth_token");
-        if (!token) {
-            setLoading(false);
-            return;
-        }
-
+    const loadAll = async () => {
         setLoading(true);
+        await Promise.all([fetchModels(), fetchKeys(), fetchUsage(), fetchBalance()]);
+        setLoading(false);
+    };
+
+    const fetchModels = async () => {
         try {
-            const res = await fetch(`${BACKEND_URL}/api/external/key`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                console.error(`[FetchKey] Server Error (${res.status}):`, errorData);
-                setLoading(false);
-                return;
-            }
-
+            const res = await fetch(`${apiBase}/api/external/catalog/models`, { headers: authHeaders() });
             const data = await res.json();
-            if (data.api_key) setApiKey(data.api_key);
+            setModels(data.data || []);
         } catch (error) {
-            console.error("Failed to fetch key", error);
-        } finally {
-            setLoading(false);
+            console.error(error);
         }
     };
 
-    const doRegenerate = async () => {
-        const token = localStorage.getItem("auth_token");
-        if (!token) {
-            toast.error("You are not authenticated");
-            return;
-        }
-
-        setIsRegenerating(true);
+    const fetchKeys = async () => {
         try {
-            const res = await fetch(`${BACKEND_URL}/api/external/key/regenerate`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!res.ok) {
-                const errorText = await res.text();
-                console.error("Server error response:", errorText);
-                try {
-                    const errorJson = JSON.parse(errorText);
-                    toast.error(`Error (${res.status}): ${errorJson.error || 'Unknown server error'}`);
-                } catch (e) {
-                    toast.error(`Server Error (${res.status}): Check backend logs`);
-                }
-                return;
-            }
-
+            const res = await fetch(`${apiBase}/api/external/keys`, { headers: authHeaders() });
             const data = await res.json();
-            
-            if (data.error) {
-                toast.error(`Error: ${data.error}`);
-                return;
-            }
+            setApiKeys(data.keys || []);
+        } catch (error) {
+            console.error(error);
+        }
+    };
 
-            if (data.api_key) {
-                setApiKey(data.api_key);
-                toast.success(apiKey ? "API Key regenerated" : "API Key generated");
-                setRegenDialogOpen(false);
-            } else {
-                toast.error("Failed to generate key: No key returned from server");
-            }
+    const fetchUsage = async (fromValue = usageFrom, toValue = usageTo, modelValue = usageModel) => {
+        try {
+            const params = new URLSearchParams({ page: "1", limit: "50" });
+            if (modelValue) params.set("model", modelValue);
+            if (fromValue) params.set("from", new Date(fromValue).toISOString());
+            if (toValue) params.set("to", new Date(toValue).toISOString());
+            const res = await fetch(`${apiBase}/api/external/usage?${params.toString()}`, { headers: authHeaders() });
+            const data = await res.json();
+            setUsageStats(data.stats || []);
+            setModelBreakdown(data.model_breakdown || []);
+            setSummary(data.summary || {});
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    const fetchBalance = async () => {
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/auth/payments/me`, { headers: authHeaders() });
+            if (!res.ok) return;
+            const data = await res.json();
+            setAccountBalance(Number(data.balance) || 0);
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    const createKey = async () => {
+        try {
+            const res = await fetch(`${apiBase}/api/external/keys`, {
+                method: "POST",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ name: keyName })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to create API key");
+            setNewKey(data.api_key);
+            toast.success("API key created");
+            fetchKeys();
         } catch (error: any) {
-            console.error("Key generation error details:", error);
-            if (error.message === "Failed to fetch") {
-                toast.error("Cannot connect to backend server. Is it running?");
-            } else {
-                toast.error(`Failed to generate key: ${error.message}`);
-            }
-        } finally {
-            setIsRegenerating(false);
-        }
-    };
-    
-    const handleGenerateClick = () => {
-        if (!apiKey) {
-            // If no key exists, generate it directly without dialog
-            doRegenerate();
-        } else {
-            // If key exists, show confirmation dialog for regeneration
-            setRegenDialogOpen(true);
+            toast.error(error.message || "Failed to create API key");
         }
     };
 
-    const copyToClipboard = () => {
-        if (apiKey) {
-            navigator.clipboard.writeText(apiKey);
-            toast.success("Copied to clipboard");
+    const toggleKey = async (id: string) => {
+        try {
+            const res = await fetch(`${apiBase}/api/external/keys/${id}/toggle`, { method: "PATCH", headers: authHeaders() });
+            if (!res.ok) throw new Error("Failed to update key");
+            toast.success("API key status updated");
+            fetchKeys();
+        } catch (error: any) {
+            toast.error(error.message);
         }
     };
 
-    if (loadingStatus) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
-                <RefreshCw className="h-12 w-12 text-primary animate-spin" />
-                <p className="text-muted-foreground animate-pulse font-medium text-lg">Verifying Developer Access...</p>
-            </div>
-        );
-    }
+    const deleteKey = async (id: string) => {
+        if (!confirm("Delete this API key permanently?")) return;
+        try {
+            const res = await fetch(`${apiBase}/api/external/keys/${id}`, { method: "DELETE", headers: authHeaders() });
+            if (!res.ok) throw new Error("Failed to delete key");
+            toast.success("API key deleted");
+            fetchKeys();
+        } catch (error: any) {
+            toast.error(error.message);
+        }
+    };
+
+    const copy = (text: string, label = "Copied") => {
+        navigator.clipboard.writeText(text);
+        toast.success(label);
+    };
+
+    const formatNum = (value: any) => Number(value || 0).toLocaleString();
+    const formatBDT = (value: any) => `৳${Number(value || 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const formatMoney = (value: any) => formatBDT(value);
+    const formatDateTime = (value: any) => value ? new Date(value).toLocaleString() : "-";
+    const clearUsageFilter = () => {
+        setUsageFrom("");
+        setUsageTo("");
+        setUsageModel("");
+        fetchUsage("", "", "");
+    };
 
     return (
-        <div className="relative min-h-screen space-y-4 md:space-y-6 p-4 md:p-8 animate-in fade-in duration-500 overflow-x-hidden bg-[#0a0a0a]">
-            {/* Minimal Background Element */}
-            <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
-                <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[120px]"></div>
+        <div className="min-h-screen -m-4 md:-m-6 p-4 md:p-8 bg-[#050507] text-white space-y-6 overflow-x-hidden">
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                <div className="absolute top-[-120px] left-[10%] h-80 w-80 rounded-full bg-purple-600/20 blur-[140px]" />
+                <div className="absolute top-[140px] right-[-80px] h-96 w-96 rounded-full bg-primary/10 blur-[160px]" />
             </div>
 
-            <div className="relative z-10">
-                <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Developer API</h1>
-                <p className="text-sm text-slate-400 mt-1">
-                    Integrate our AI engine into your applications.
-                </p>
-            </div>
-
-            {devStatus === 'none' && (
-                <div className="relative z-10 flex items-center justify-center py-6 md:py-12 px-4">
-                    <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-5 gap-8 lg:gap-12 items-start">
-                        {/* Left Side: Why Buy? (3/5 width) */}
-                        <div className="lg:col-span-3 space-y-8 animate-in fade-in duration-700">
-                            <div className="space-y-4">
-                                <Badge className="bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors">Developer Portal</Badge>
-                                <h2 className="text-3xl md:text-5xl font-bold leading-tight text-white tracking-tight">
-                                    Build Smarter Apps with <span className="text-primary">SalesmanAI API</span>
-                                </h2>
-                                <p className="text-slate-400 text-base md:text-lg leading-relaxed max-w-xl">
-                                    আমাদের পাওয়ারফুল AI ইঞ্জিন ব্যবহার করে আপনার নিজের অ্যাপ্লিকেশনে Text, Vision এবং Voice ফিচার যুক্ত করুন মাত্র কয়েক লাইনে।
-                                </p>
-                            </div>
-
-                            {/* Feature Preview Boxes */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2 group hover:border-primary/30 transition-all">
-                                    <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                                        <Sparkles className="h-4 w-4 text-blue-400" />
-                                    </div>
-                                    <h4 className="text-white font-bold text-sm">Unified AI Engine</h4>
-                                    <p className="text-xs text-slate-500">Access Text, Image, and Audio models through a single API endpoint.</p>
-                                </div>
-                                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2 group hover:border-primary/30 transition-all">
-                                    <div className="h-8 w-8 rounded-lg bg-green-500/10 flex items-center justify-center">
-                                        <Activity className="h-4 w-4 text-green-400" />
-                                    </div>
-                                    <h4 className="text-white font-bold text-sm">Real-time Analytics</h4>
-                                    <p className="text-xs text-slate-500">Monitor your API usage, token consumption, and costs in real-time.</p>
-                                </div>
-                                <div className="p-4 rounded-2xl bg-primary/5 border border-primary/10 space-y-2 group hover:border-primary/30 transition-all sm:col-span-2">
-                                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                                        <CheckCircle2 className="h-4 w-4 text-primary" />
-                                    </div>
-                                    <h4 className="text-white font-bold text-sm">Lifetime Free API Charge</h4>
-                                    <p className="text-xs text-slate-400">একবার অ্যাক্সেস নিলে আজীবনের জন্য এপিআই চার্জ সম্পূর্ণ ফ্রি। কোনো লুকানো খরচ বা মাসিক সাবস্ক্রিপশন নেই।</p>
-                                </div>
-                            </div>
-
-                            {/* Code Preview */}
-                            <div className="rounded-2xl overflow-hidden border border-white/5 bg-black/40 shadow-inner group">
-                                <div className="px-4 py-2 bg-white/5 border-b border-white/5 flex items-center justify-between">
-                                    <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">example_request.js</span>
-                                    <div className="flex gap-1.5">
-                                        <div className="h-2 w-2 rounded-full bg-red-500/20"></div>
-                                        <div className="h-2 w-2 rounded-full bg-amber-500/20"></div>
-                                        <div className="h-2 w-2 rounded-full bg-green-500/20"></div>
-                                    </div>
-                                </div>
-                                <pre className="p-4 text-[10px] md:text-xs font-mono text-primary/80 leading-relaxed overflow-x-auto">
-{`const response = await fetch('api.salesmanchatbot.online/v1/chat', {
-  method: 'POST',
-  headers: { 'Authorization': 'Bearer YOUR_API_KEY' },
-  body: JSON.stringify({
-    model: 'salesmanchatbot-pro',
-    prompt: 'Hello AI!'
-  })
-});`}
-                                </pre>
-                            </div>
-                        </div>
-
-                        {/* Right Side: Access Card (2/5 width) */}
-                        <div className="lg:col-span-2 animate-in fade-in duration-700 lg:sticky lg:top-8">
-                            <Card className="border-white/5 bg-[#121212] rounded-[32px] overflow-hidden shadow-2xl">
-                                <CardHeader className="space-y-1 pb-6 pt-8 px-6 md:px-8 border-b border-white/5">
-                                    <CardTitle className="text-xl font-bold text-white tracking-tight">Access Card</CardTitle>
-                                    <CardDescription className="text-slate-400 text-xs leading-relaxed">
-                                        Lifetime access: <span className="text-primary font-bold">5,000 BDT</span> <br />
-                                        <span className="text-[10px] text-green-500 font-medium">No recurring fees • Lifetime Free API Usage</span>
-                                    </CardDescription>
-                                </CardHeader>
-
-                                <CardContent className="space-y-6 py-8 px-6 md:px-8">
-                                    <div className="space-y-5">
-                                        {/* Simple Instructions */}
-                                        <div className="space-y-2">
-                                            <p className="text-[10px] font-bold uppercase text-slate-500 tracking-widest ml-1">Payment Instruction</p>
-                                            <div className="p-3.5 rounded-2xl bg-primary/5 border border-primary/10 space-y-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-xs text-slate-300 font-medium">bKash/Nagad (Personal)</span>
-                                                </div>
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="text-lg font-mono font-bold text-white">01956871403</span>
-                                                    <Button 
-                                                        variant="ghost" 
-                                                        size="icon" 
-                                                        className="h-8 w-8 text-primary hover:bg-primary/10"
-                                                        onClick={() => {
-                                                            navigator.clipboard.writeText("01956871403");
-                                                            toast.success("Copied to clipboard");
-                                                        }}
-                                                    >
-                                                        <Copy className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Payment Method</Label>
-                                            <select 
-                                                className="w-full h-11 px-3 appearance-none border border-white/10 rounded-xl bg-white/[0.02] text-white text-xs focus:ring-1 focus:ring-primary outline-none transition-all cursor-pointer"
-                                                value={regData.paymentMethod}
-                                                onChange={(e) => setRegData({...regData, paymentMethod: e.target.value})}
-                                            >
-                                                <option value="bkash" className="bg-[#1a1a1a]">bKash</option>
-                                                <option value="nagad" className="bg-[#1a1a1a]">Nagad</option>
-                                            </select>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Transaction ID (TrxID)</Label>
-                                            <Input 
-                                                placeholder="Paste TrxID here"
-                                                value={regData.transactionId}
-                                                onChange={(e) => setRegData({...regData, transactionId: e.target.value})}
-                                                className="h-11 px-3 rounded-xl bg-white/[0.02] border-white/10 text-white placeholder:text-white/10 focus:ring-1 focus:ring-primary transition-all text-sm"
-                                            />
-                                        </div>
-
-                                        <Button 
-                                            className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all active:scale-[0.98] mt-2 shadow-[0_8px_16px_rgba(0,255,136,0.1)]" 
-                                            onClick={handleRegister}
-                                            disabled={registering || !regData.transactionId}
-                                        >
-                                            {registering ? (
-                                                <RefreshCw className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                "Unlock Access"
-                                            )}
-                                        </Button>
-                                    </div>
-
-                                    <div className="flex justify-center">
-                                        <button 
-                                            className="text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1.5"
-                                            onClick={() => window.history.back()}
-                                        >
-                                            <ArrowLeft className="h-3 w-3" /> Dashboard
-                                        </button>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </div>
+            <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="space-y-3">
+                    <Button asChild variant="ghost" className="-ml-3 w-fit text-slate-400 hover:bg-white/5 hover:text-primary rounded-xl">
+                        <a href="/dashboard">
+                            <ArrowLeft className="h-4 w-4 mr-2" /> Back to Salesman Dashboard
+                        </a>
+                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Badge className="w-fit border-primary/20 bg-primary/10 px-3 py-1 text-primary">Connected Xevor AI Dashboard</Badge>
+                        <Badge className="w-fit border-amber-400/20 bg-amber-400/10 px-3 py-1 text-amber-300">BDT Billing</Badge>
                     </div>
+                    <h1 className="max-w-4xl text-4xl font-black tracking-tight md:text-6xl">
+                        Developer API <span className="bg-gradient-to-r from-primary via-emerald-200 to-sky-300 bg-clip-text text-transparent">Command Center</span>
+                    </h1>
+                    <p className="max-w-3xl text-sm leading-7 text-slate-400 md:text-base">
+                        API key, model, usage, endpoint and billing sob ekta premium dashboard-e. Cost now Bangladeshi Taka te dekhabe.
+                    </p>
                 </div>
-            )}
+                <Button onClick={loadAll} disabled={loading} className="rounded-2xl bg-white px-5 text-black shadow-[0_12px_35px_rgba(255,255,255,0.12)] hover:bg-slate-200 font-bold">
+                    <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
+                </Button>
+            </div>
 
-            {devStatus === 'pending' && (
-                <div className="relative z-10 flex items-center justify-center py-20 px-4">
-                    <Card className="w-full max-w-md p-10 text-center border-white/5 bg-[#121212] rounded-3xl shadow-2xl">
-                        <div className="mx-auto bg-amber-500/10 p-4 rounded-full w-fit mb-6">
-                            <AlertCircle className="h-10 w-10 text-amber-500" />
+            <Card className="relative z-10 overflow-hidden rounded-2xl md:rounded-3xl border-white/10 bg-[#0d0f14] shadow-sm">
+                <CardContent className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1.1fr_1fr] lg:p-8">
+                    <div className="space-y-5">
+                        <div className="flex items-center gap-3">
+                            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                                <Key className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-medium uppercase tracking-[0.22em] text-primary">Developer API</p>
+                                <h2 className="text-2xl font-semibold tracking-tight text-white md:text-3xl">Account & API Overview</h2>
+                            </div>
                         </div>
-                        <h2 className="text-2xl font-bold text-white mb-2">Registration Pending</h2>
-                        <p className="text-slate-400 text-sm mb-8">
-                            Your payment is being verified. Verification usually takes less than 24 hours.
+                        <p className="max-w-2xl text-sm leading-6 text-slate-400">
+                            Manage API keys, model access, usage summary and OpenAI-compatible endpoint from one clean dashboard.
                         </p>
-                        <div className="flex flex-col gap-3">
-                            <Button 
-                                onClick={fetchDevStatus}
-                                className="w-full h-12 bg-primary text-black font-bold rounded-xl"
-                            >
-                                <RefreshCw className="mr-2 h-4 w-4" /> Check Status
+                        <div className="flex flex-wrap gap-3">
+                            <Button asChild className="rounded-xl bg-primary px-4 text-black hover:bg-primary/90 font-semibold">
+                                <a href="#api-keys"><Key className="mr-2 h-4 w-4" /> Manage API Keys</a>
                             </Button>
-                            <Button 
-                                variant="ghost"
-                                onClick={() => window.history.back()}
-                                className="w-full h-12 text-slate-400 hover:text-white"
-                            >
-                                Go Back
+                            <Button asChild variant="outline" className="rounded-xl border-white/10 bg-transparent px-4 text-slate-200 hover:bg-white/5">
+                                <a href="/dashboard"><ArrowLeft className="mr-2 h-4 w-4" /> Switch Back</a>
                             </Button>
                         </div>
-                    </Card>
-                </div>
-            )}
-
-            {devStatus === 'approved' && !isDevLoggedIn && (
-                <div className="relative z-10 flex items-center justify-center py-20 px-4">
-                    <Card className="w-full max-w-md border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-2xl">
-                        <CardHeader className="text-center pt-10 pb-6">
-                            <CardTitle className="text-2xl font-bold text-white">Unlock Portal</CardTitle>
-                            <CardDescription className="text-slate-400">Enter your credentials to continue</CardDescription>
-                        </CardHeader>
-
-                        <CardContent className="space-y-6 pb-10 px-8">
-                            <div className="space-y-4">
-                                <div className="space-y-2">
-                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Developer ID</Label>
-                                    <Input 
-                                        placeholder="Enter Dev ID"
-                                        value={devCreds.id}
-                                        onChange={(e) => setDevCreds({...devCreds, id: e.target.value})}
-                                        className="h-12 px-4 rounded-xl bg-white/[0.02] border-white/10 text-white placeholder:text-white/10 focus:ring-1 focus:ring-primary transition-all text-sm"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Password</Label>
-                                    <Input 
-                                        type="password"
-                                        placeholder="Enter Password"
-                                        value={devCreds.pass}
-                                        onChange={(e) => setDevCreds({...devCreds, pass: e.target.value})}
-                                        className="h-12 px-4 rounded-xl bg-white/[0.02] border-white/10 text-white placeholder:text-white/10 focus:ring-1 focus:ring-primary transition-all text-sm"
-                                    />
-                                </div>
-                            </div>
-
-                            <Button 
-                                className="w-full h-12 text-sm font-bold bg-primary text-black hover:bg-primary/90 rounded-xl transition-all" 
-                                onClick={handleDevLogin}
-                                disabled={loggingIn || !devCreds.id || !devCreds.pass}
-                            >
-                                {loggingIn ? (
-                                    <RefreshCw className="animate-spin h-5 w-5" />
-                                ) : (
-                                    "Unlock Access"
-                                )}
-                            </Button>
-                        </CardContent>
-                    </Card>
-                </div>
-            )}
-
-            {devStatus === 'approved' && isDevLoggedIn && (
-                <div className="relative z-10 space-y-6 pb-20">
-                    <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-2xl">
-                        <CardHeader className="pb-4 pt-8 px-6 md:px-10">
-                            <CardTitle className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
-                                <Key className="h-5 w-5 text-primary" />
-                                API Key
-                            </CardTitle>
-                            <CardDescription className="text-slate-400">
-                                Use this key to authenticate your requests. Keep it secure.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6 px-6 md:px-10 pb-10">
-                            <div className="flex flex-col lg:flex-row gap-4">
-                                <div className="relative flex-1 group">
-                                    <Input 
-                                        value={apiKey || "No API Key Generated"} 
-                                        type={showKey ? "text" : "password"} 
-                                        readOnly 
-                                        className="h-12 pr-12 font-mono bg-white/[0.02] border-white/10 rounded-xl text-white text-xs md:text-sm focus:ring-1 focus:ring-primary transition-all"
-                                    />
-                                    <Button 
-                                        variant="ghost" 
-                                        size="sm" 
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 p-0 text-slate-500 hover:text-white"
-                                        onClick={() => setShowKey(!showKey)}
-                                    >
-                                        {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                    </Button>
-                                </div>
-                                <div className="flex flex-row gap-3">
-                                    <Button 
-                                        variant="outline" 
-                                        onClick={copyToClipboard} 
-                                        disabled={!apiKey} 
-                                        className="h-12 px-6 border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white font-bold transition-all text-sm"
-                                    >
-                                        <Copy className="mr-2 h-4 w-4" /> Copy
-                                    </Button>
-                                    <Button 
-                                        onClick={handleGenerateClick} 
-                                        disabled={loading || isRegenerating} 
-                                        className="h-12 px-8 bg-primary text-black font-bold rounded-xl hover:bg-primary/90 transition-all text-sm"
-                                    >
-                                        <RefreshCw className={`mr-2 h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
-                                        {apiKey ? "Regenerate" : "Generate"}
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-                                    <p className="text-sm font-bold text-white">API Docs</p>
-                                    <p className="text-xs text-slate-400 leading-relaxed">Learn how to integrate our AI into your workflow.</p>
-                                    <Button variant="link" className="text-primary font-bold p-0 h-auto text-xs" asChild>
-                                        <Link to="/dashboard/api-docs" className="flex items-center gap-1">
-                                            Open Documentation <ArrowRight className="h-3 w-3" />
-                                        </Link>
-                                    </Button>
-                                </div>
-                                <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
-                                    <p className="text-sm font-bold text-white">Usage Trial</p>
-                                    <p className="text-xs text-slate-400 leading-relaxed">20 free requests included for initial testing.</p>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                            <CardHeader className="pt-8 px-6 md:px-10">
-                                <CardTitle className="text-lg font-bold text-white">External Engine</CardTitle>
-                                <CardDescription className="text-slate-400 text-xs">Add your Gemini API key for extra capacity.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4 px-6 md:px-10 pb-10">
-                                <div className="space-y-3">
-                                    <Input 
-                                        placeholder="Gmail Address" 
-                                        value={userGmail}
-                                        onChange={(e) => setUserGmail(e.target.value)}
-                                        className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
-                                    />
-                                    <Input 
-                                        placeholder="Gemini API Key" 
-                                        value={userGeminiKey}
-                                        onChange={(e) => setUserGeminiKey(e.target.value)}
-                                        className="h-12 bg-white/[0.02] border-white/10 rounded-xl text-white text-sm"
-                                    />
-                                </div>
-                                <Button 
-                                    onClick={handleAddGeminiKey} 
-                                    disabled={isAddingKey || !userGeminiKey || !userGmail}
-                                    className="w-full h-12 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all"
-                                >
-                                    {isAddingKey ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Save Gemini Key"}
-                                </Button>
-                            </CardContent>
-                        </Card>
-
-                        <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                            <CardHeader className="pt-8 px-6 md:px-10">
-                                <CardTitle className="text-lg font-bold text-white">Endpoint</CardTitle>
-                                <CardDescription className="text-slate-400 text-xs">Direct API connection point.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4 px-6 md:px-10 pb-10">
-                                <div className="bg-black/40 p-4 rounded-xl border border-white/5">
-                                    <code className="block text-[10px] md:text-xs font-mono text-primary break-all leading-relaxed">
-                                        {window.location.origin}/api/v1/dev/chat
-                                    </code>
-                                </div>
-                                <div className="flex justify-between text-[10px] md:text-xs text-slate-500 font-medium">
-                                    <span>Auth: Bearer Token</span>
-                                    <span>Model: salesmanchatbot-pro</span>
-                                </div>
-                            </CardContent>
-                        </Card>
                     </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <StatCard label="Account Balance" value={formatBDT(accountBalance)} description="Available user balance" />
+                        <StatCard label="Total API Cost" value={formatMoney(summary.total_cost)} description="Calculated from usage" />
+                        <StatCard label="Total Requests" value={formatNum(summary.total_requests)} description="All recorded API calls" />
+                        <StatCard label="Total Tokens" value={formatNum(summary.total_tokens)} description="Prompt, completion and cached" />
+                    </div>
+                </CardContent>
+            </Card>
 
-                    {/* Stats Table */}
-                    <Card className="border-white/5 bg-[#121212] rounded-3xl overflow-hidden shadow-xl">
-                        <CardHeader className="px-6 md:px-10 pt-8 pb-4">
-                            <CardTitle className="text-lg font-bold text-white">Usage Statistics</CardTitle>
-                        </CardHeader>
-                        <CardContent className="px-6 md:px-10 pb-10">
-                            <div className="rounded-xl border border-white/5 overflow-hidden">
-                                <div className="overflow-x-auto">
-                                    <Table>
-                                        <TableHeader className="bg-white/[0.02]">
-                                            <TableRow className="border-white/5 hover:bg-transparent">
-                                                <TableHead className="text-slate-500 font-bold text-xs uppercase tracking-wider">Date</TableHead>
-                                                <TableHead className="text-slate-500 font-bold text-xs uppercase tracking-wider">Model</TableHead>
-                                                <TableHead className="text-right text-slate-500 font-bold text-xs uppercase tracking-wider">Tokens</TableHead>
-                                                <TableHead className="text-right text-slate-500 font-bold text-xs uppercase tracking-wider">Cost (BDT)</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {usageStats.length > 0 ? (
-                                                usageStats.map((stat, i) => (
-                                                    <TableRow key={i} className="border-white/5 hover:bg-white/[0.01] transition-colors">
-                                                        <TableCell className="text-slate-400 py-4 text-xs">{new Date(stat.created_at).toLocaleDateString()}</TableCell>
-                                                        <TableCell>
-                                                            <span className="text-slate-300 text-xs font-mono">{stat.model}</span>
-                                                        </TableCell>
-                                                        <TableCell className="text-right font-mono text-slate-400 text-xs">{formatCompact(stat.tokens)}</TableCell>
-                                                        <TableCell className="text-right font-mono text-primary font-bold text-xs">৳{Number(stat.cost || 0).toFixed(4)}</TableCell>
-                                                    </TableRow>
-                                                ))
-                                            ) : (
-                                                <TableRow>
-                                                    <TableCell colSpan={4} className="text-center py-10 text-slate-600 text-xs italic">
-                                                        No usage data yet.
-                                                    </TableCell>
-                                                </TableRow>
-                                            )}
-                                        </TableBody>
-                                    </Table>
+
+            <div id="api-keys" className="relative z-10 grid grid-cols-1 xl:grid-cols-5 gap-6">
+                <Card className="xl:col-span-2 bg-[#0e0e12] border-white/10 rounded-3xl overflow-hidden">
+                    <CardHeader>
+                        <CardTitle className="text-white flex items-center gap-2"><Key className="h-5 w-5 text-primary" /> API Keys</CardTitle>
+                        <CardDescription>Create keys for external clients. Keys start with salesmanchatbot-key.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex gap-2">
+                            <Input value={keyName} onChange={e => setKeyName(e.target.value)} className="bg-black/40 border-white/10 text-white rounded-xl" placeholder="Key name" />
+                            <Button onClick={createKey} className="bg-primary text-black hover:bg-primary/90 rounded-xl font-bold"><Plus className="h-4 w-4 mr-2" /> Create</Button>
+                        </div>
+
+                        {newKey && (
+                            <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+                                <p className="text-xs text-primary font-bold">Copy now. This full key will not be shown again.</p>
+                                <div className="flex gap-2">
+                                    <Input readOnly type={showNewKey ? "text" : "password"} value={newKey} className="font-mono bg-black/40 border-white/10 text-white rounded-xl" />
+                                    <Button variant="outline" onClick={() => setShowNewKey(!showNewKey)} className="border-white/10 bg-white/5 text-white rounded-xl">{showNewKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button>
+                                    <Button onClick={() => copy(newKey, "API key copied")} className="bg-white text-black rounded-xl"><Copy className="h-4 w-4" /></Button>
                                 </div>
                             </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            )}
+                        )}
+
+                        <div className="rounded-2xl border border-white/10 overflow-x-auto">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow className="border-white/10 hover:bg-transparent">
+                                        <TableHead className="text-slate-400">Name</TableHead>
+                                        <TableHead className="text-slate-400">Key</TableHead>
+                                        <TableHead className="text-slate-400">Status</TableHead>
+                                        <TableHead className="text-right text-slate-400">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {apiKeys.map(key => (
+                                        <TableRow key={key.id} className="border-white/10 hover:bg-white/[0.02]">
+                                            <TableCell className="text-white text-xs">{key.name}</TableCell>
+                                            <TableCell className="font-mono text-primary text-xs">{key.key_prefix}</TableCell>
+                                            <TableCell><Badge className={key.status === "active" ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}>{key.status}</Badge></TableCell>
+                                            <TableCell className="text-right space-x-1">
+                                                <Button size="icon" variant="ghost" onClick={() => toggleKey(key.id)} className="text-slate-400 hover:text-primary"><Power className="h-4 w-4" /></Button>
+                                                <Button size="icon" variant="ghost" onClick={() => deleteKey(key.id)} className="text-slate-400 hover:text-red-400"><Trash2 className="h-4 w-4" /></Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="xl:col-span-3 overflow-hidden rounded-3xl border-white/10 bg-[#0e0e12]">
+                    <CardHeader>
+                        <CardTitle className="text-white">Available Models</CardTitle>
+                        <CardDescription>Only admin-published models appear here.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                            <Input value={query} onChange={e => setQuery(e.target.value)} className="pl-9 bg-black/40 border-white/10 text-white rounded-xl" placeholder="Search models" />
+                        </div>
+                        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                            {filteredModels.map(model => (
+                                <button key={model.id} onClick={() => setSelectedModel(model)} className={`w-full text-left rounded-2xl border p-3 transition-all ${model.limits?.unavailable ? "border-red-500/20 bg-red-500/[0.04] opacity-70" : "border-white/10 bg-white/[0.025] hover:bg-white/[0.05]"}`}>
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <h3 className="truncate text-white font-semibold text-sm">{model.name}</h3>
+                                                <Badge className={model.limits?.unavailable ? "bg-red-500/10 text-red-300" : "bg-primary/10 text-primary"}>{model.limits?.unavailable ? "Unavailable" : "Available"}</Badge>
+                                            </div>
+                                            <p className="truncate text-primary font-mono text-xs mt-0.5">{model.id}</p>
+                                            {model.release_note && <p className="mt-2 text-xs text-slate-500">{model.release_note}</p>}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-[260px]">
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Provider: <b className="text-slate-200">{model.provider || "-"}</b></span>
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Max out: <b className="text-slate-200">{model.limits?.max_output_tokens ? formatNum(model.limits.max_output_tokens) : "Unlimited"}</b></span>
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Req left: <b className="text-slate-200">{model.limits?.remaining_requests === null ? "Unlimited" : formatNum(model.limits?.remaining_requests)}</b></span>
+                                            <span className="rounded-lg bg-black/30 px-2 py-1 text-slate-400">Tok left: <b className="text-slate-200">{model.limits?.remaining_tokens === null ? "Unlimited" : formatNum(model.limits?.remaining_tokens)}</b></span>
+                                        </div>
+                                    </div>
+                                </button>
+                            ))}
+                            {!filteredModels.length && (
+                                <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-6 text-center text-sm text-slate-500">
+                                    No model published by admin yet.
+                                </div>
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <div className="relative z-10 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <Card className="bg-[#0e0e12] border-white/10 rounded-3xl">
+                    <CardHeader>
+                        <CardTitle className="text-white">OpenAI Compatible Endpoint</CardTitle>
+                        <CardDescription>Use this base URL in OpenAI SDK, n8n, Flowise or any compatible client.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="rounded-2xl bg-black/50 border border-white/10 p-4 flex items-center justify-between gap-3">
+                            <code className="text-primary text-xs md:text-sm break-all">{EXTERNAL_API_BASE}/v1</code>
+                            <Button size="icon" onClick={() => copy(`${EXTERNAL_API_BASE}/v1`, "Base URL copied")} className="bg-white text-black rounded-xl"><Copy className="h-4 w-4" /></Button>
+                        </div>
+                        <pre className="rounded-2xl bg-black/60 border border-white/10 p-4 text-xs text-slate-300 overflow-x-auto">{`curl ${EXTERNAL_API_BASE}/v1/chat/completions \\
+  -H "Authorization: Bearer salesmanchatbot-key-..." \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "your-admin-added-model-id",
+    "messages": [{"role":"user","content":"Hello"}]
+  }'`}</pre>
+                    </CardContent>
+                </Card>
+
+                <Card className="bg-[#0e0e12] border-white/10 rounded-3xl">
+                    <CardHeader>
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                                <CardTitle className="text-white">Usage Logs</CardTitle>
+                                <CardDescription>Filter API usage by custom time range. Live refresh updates every 5 seconds.</CardDescription>
+                            </div>
+                            <Badge className={liveUsage ? "w-fit bg-primary/10 text-primary border-primary/20" : "w-fit bg-white/10 text-slate-300 border-white/10"}>
+                                {liveUsage ? "Live on" : "Live off"}
+                            </Badge>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="grid gap-3 md:grid-cols-3">
+                            <div className="space-y-1.5">
+                                <Label>Model</Label>
+                                <select value={usageModel} onChange={e => setUsageModel(e.target.value)} className="h-10 w-full rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white outline-none focus:ring-2 focus:ring-primary/40">
+                                    <option value="">All models</option>
+                                    {usageModelOptions.map(modelId => <option key={modelId} value={modelId}>{modelId}</option>)}
+                                </select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>From</Label>
+                                <Input type="datetime-local" value={usageFrom} onChange={e => setUsageFrom(e.target.value)} className="bg-black/40 border-white/10 text-white rounded-xl" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>To</Label>
+                                <Input type="datetime-local" value={usageTo} onChange={e => setUsageTo(e.target.value)} className="bg-black/40 border-white/10 text-white rounded-xl" />
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <Button onClick={() => fetchUsage()} className="rounded-xl bg-primary text-black hover:bg-primary/90 font-semibold">
+                                Apply Filter
+                            </Button>
+                            <Button variant="outline" onClick={clearUsageFilter} className="rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10">
+                                Clear
+                            </Button>
+                            <Button variant="outline" onClick={() => setLiveUsage(prev => !prev)} className="rounded-xl border-white/10 bg-white/5 text-white hover:bg-white/10">
+                                {liveUsage ? "Stop Live" : "Start Live"}
+                            </Button>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                            <StatCard label="Filtered Cost" value={formatMoney(summary.total_cost)} description="Selected time range" />
+                            <StatCard label="Requests" value={formatNum(summary.total_requests)} description="Matching log records" />
+                            <StatCard label="Input Tokens" value={formatNum(summary.input_tokens)} description="Prompt tokens" />
+                            <StatCard label="Output Tokens" value={formatNum(summary.output_tokens)} description="Completion tokens" />
+                            <StatCard label="Total Tokens" value={formatNum(summary.total_tokens)} description="Input + output" />
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                            <div className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Model use count</div>
+                            {modelBreakdown.length ? (
+                                <div className="flex flex-wrap gap-2">
+                                    {modelBreakdown.map(row => (
+                                        <button key={row.model} onClick={() => { setUsageModel(row.model); fetchUsage(usageFrom, usageTo, row.model); }} className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-slate-300 hover:border-primary/30 hover:text-primary">
+                                            <span className="font-mono">{row.model}</span> <span className="text-white">{row.requests} use</span> <span>in {formatNum(row.input_tokens)} / out {formatNum(row.output_tokens)}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-sm text-slate-500">No model usage found for this filter.</p>
+                            )}
+                        </div>
+                        <div className="rounded-2xl border border-white/10 overflow-hidden max-h-[420px] overflow-y-auto">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow className="border-white/10 hover:bg-transparent">
+                                        <TableHead className="text-slate-400">Time</TableHead>
+                                        <TableHead className="text-slate-400">Model</TableHead>
+                                        <TableHead className="text-right text-slate-400">Input</TableHead>
+                                        <TableHead className="text-right text-slate-400">Output</TableHead>
+                                        <TableHead className="text-right text-slate-400">Total</TableHead>
+                                        <TableHead className="text-right text-slate-400">Cached</TableHead>
+                                        <TableHead className="text-right text-slate-400">Cost (BDT)</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {usageStats.map(row => (
+                                        <TableRow key={row.id} className="border-white/10 hover:bg-white/[0.02]">
+                                            <TableCell className="text-slate-400 text-xs whitespace-nowrap">{formatDateTime(row.created_at)}</TableCell>
+                                            <TableCell className="text-white font-mono text-xs">{row.model}</TableCell>
+                                            <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.prompt_tokens)}</TableCell>
+                                            <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.completion_tokens)}</TableCell>
+                                            <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.total_tokens)}</TableCell>
+                                            <TableCell className="text-right text-slate-300 text-xs">{formatNum(row.cached_tokens)}</TableCell>
+                                            <TableCell className="text-right text-primary text-xs font-bold">{formatMoney(row.cost)}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                    {!usageStats.length && (
+                                        <TableRow className="border-white/10 hover:bg-transparent">
+                                            <TableCell colSpan={7} className="py-8 text-center text-sm text-slate-500">No usage logs found for this range.</TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Dialog open={!!selectedModel} onOpenChange={open => !open && setSelectedModel(null)}>
+                <DialogContent className="bg-[#0e0e12] border-white/10 text-white rounded-3xl max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-2xl">{selectedModel?.name}</DialogTitle>
+                        <DialogDescription className="font-mono text-primary">{selectedModel?.id}</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-5">
+                        <p className="text-slate-300 text-sm">{selectedModel?.description}</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4"><Label>Context</Label><p className="text-xl font-black mt-1">{formatNum(selectedModel?.context_length)}</p></div>
+                            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4"><Label>Released</Label><p className="text-xl font-black mt-1">{selectedModel?.released || "-"}</p></div>
+                            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4"><Label>Input / 1M (BDT)</Label><p className="text-xl font-black mt-1 text-amber-200">{formatMoney(selectedModel?.pricing?.prompt)}</p></div>
+                            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4"><Label>Output / 1M (BDT)</Label><p className="text-xl font-black mt-1 text-amber-200">{formatMoney(selectedModel?.pricing?.completion)}</p></div>
+                            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4"><Label>Cached / 1M (BDT)</Label><p className="text-xl font-black mt-1 text-amber-200">{formatMoney(selectedModel?.pricing?.cached_prompt)}</p></div>
+                            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4"><Label>Upstream</Label><p className="text-xs font-mono mt-2 text-primary break-all">{selectedModel?.upstream_model}</p></div>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button onClick={() => copy(selectedModel?.id || "", "Model copied")} className="bg-primary text-black rounded-xl font-bold"><Copy className="h-4 w-4 mr-2" /> Copy model ID</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

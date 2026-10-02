@@ -231,8 +231,7 @@ class LiteEngineService {
                             { type: 'image_url', image_url: { url: imageUrl } }
                         ]
                     }
-                ],
-                max_tokens: 300
+                ]
             });
             return completion.choices[0].message.content;
         } catch (e) {
@@ -311,7 +310,6 @@ class LiteEngineService {
                     model: MODELS.TEXT,
                     messages: messages,
                     temperature: 0.7,
-                    max_tokens: 4096, 
                     stream: stream
                 });
 

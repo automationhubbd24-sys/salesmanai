@@ -4,10 +4,26 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Bot, MessageSquare, Loader2, Save, Image, MessageCircle, Lock, PackageSearch, ReplyAll, Mic, Upload, Users, MessageSquareText, Hand, StopCircle, RefreshCcw, ChevronLeft, Activity } from "lucide-react";
+import {
+  Bot,
+  MessageSquare,
+  Loader2,
+  Save,
+  Image,
+  MessageCircle,
+  Lock,
+  PackageSearch,
+  ReplyAll,
+  Mic,
+  Upload,
+  Hand,
+  StopCircle,
+  RefreshCcw,
+  ChevronLeft,
+  Activity,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
-import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
 import { useWhatsApp } from "@/context/WhatsAppContext";
 
@@ -23,18 +39,16 @@ interface WhatsAppConfig {
   lock_emojis: string;
   unlock_emojis: string;
   image_prompt: string;
-  [key: string]: boolean | string | number | undefined; // Allow index access for updates
+  [key: string]: boolean | string | number | undefined;
 }
 
 export default function WhatsAppControlPage() {
-  const { t } = useLanguage();
   const navigate = useNavigate();
   const { currentSession, loading: contextLoading } = useWhatsApp();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [verified, setVerified] = useState(true);
   const [expiryDays, setExpiryDays] = useState<number | null>(null);
-  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [config, setConfig] = useState<WhatsAppConfig>({
     reply_message: false,
     swipe_reply: false,
@@ -46,27 +60,19 @@ export default function WhatsAppControlPage() {
     group_reply: false,
     lock_emojis: "",
     unlock_emojis: "",
-    image_prompt: ""
+    image_prompt: "",
   });
-  const [stats, setStats] = useState({
-    todayTokens: 0,
-    yesterdayTokens: 0,
-    todayBotReplies: 0,
-    yesterdayBotReplies: 0,
-    todayCustomers: 0,
-    yesterdayCustomers: 0
-  });
-  const [recentChats, setRecentChats] = useState<any[]>([]);
-  
-  const activeDbId = (currentSession as any)?.wp_db_id || null;
-  const activeSessionName = currentSession?.name || null;
-  const showLegacyMetrics = false;
+
+  const activeDbId =
+    (currentSession as any)?.wp_db_id ||
+    (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0) ||
+    null;
 
   useEffect(() => {
     if (activeDbId) {
-        fetchConfig(activeDbId.toString());
+      fetchConfig(activeDbId.toString());
     } else if (!contextLoading) {
-        setLoading(false);
+      setLoading(false);
     }
   }, [activeDbId, contextLoading]);
 
@@ -75,29 +81,27 @@ export default function WhatsAppControlPage() {
     try {
       const token = localStorage.getItem("auth_token");
       if (!token) {
-        toast.error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
+        toast.error("Please login again");
         setLoading(false);
         return;
       }
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${id}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to load config (${res.status})`);
+        throw new Error(`Failed to load configuration (${res.status})`);
       }
 
       const row: any = await res.json();
+      setVerified(row.verified !== false);
 
-      setVerified(row.verified !== false); 
-      setAvailableColumns(Object.keys(row || {}));
-      
       if (row.expires_at) {
         const expires = new Date(row.expires_at);
         const now = new Date();
         const diffTime = expires.getTime() - now.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         setExpiryDays(diffDays > 0 ? diffDays : 0);
       }
 
@@ -112,75 +116,13 @@ export default function WhatsAppControlPage() {
         group_reply: row.group_reply ?? false,
         lock_emojis: row.lock_emojis ?? "",
         unlock_emojis: row.unlock_emojis ?? "",
-        image_prompt: row.image_prompt ?? ""
+        image_prompt: row.image_prompt ?? "",
       });
-
-      if (row.session_name) {
-        fetchMetrics(row.session_name);
-        fetchRecent(row.session_name);
-      }
     } catch (error) {
-      console.error('Error fetching config:', error);
-      toast.error(t("Failed to load configuration", "কনফিগারেশন লোড করতে ব্যর্থ হয়েছে"));
+      console.error("Error fetching config:", error);
+      toast.error("Failed to load configuration");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchMetrics = async (sName: string) => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) return;
-
-      const params = new URLSearchParams();
-      params.set("session_name", sName);
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/stats?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      const allTimeReplies = Number(data.allTimeBotReplies) || 0;
-      const allTimeTokens = Number(data.allTimeTokenCount) || 0;
-
-      setStats({
-        todayTokens: allTimeTokens,
-        yesterdayTokens: 0,
-        todayBotReplies: allTimeReplies,
-        yesterdayBotReplies: 0,
-        todayCustomers: 0,
-        yesterdayCustomers: 0,
-      });
-    } catch (e) {
-      console.error('Metrics error', e);
-    }
-  };
-
-  const fetchRecent = async (sName: string) => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) return;
-
-      const now = Date.now();
-      const from = now - 24 * 60 * 60 * 1000;
-
-      const params = new URLSearchParams();
-      params.set("session_name", sName);
-      params.set("from", String(from));
-      params.set("to", String(now));
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/messages?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      setRecentChats(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error('Recent fetch error', e);
     }
   };
 
@@ -189,47 +131,47 @@ export default function WhatsAppControlPage() {
     setSaving(true);
     try {
       const validColumns = [
-        'reply_message', 'swipe_reply', 'image_detection', 'image_send', 
-        'order_tracking', 'audio_detection', 'file_upload', 'group_reply',
-        'lock_emojis', 'unlock_emojis'
+        "reply_message",
+        "swipe_reply",
+        "image_detection",
+        "image_send",
+        "order_tracking",
+        "audio_detection",
+        "file_upload",
+        "group_reply",
+        "lock_emojis",
+        "unlock_emojis",
       ];
-
       const updates: any = {};
-      validColumns.forEach(key => {
+      validColumns.forEach((key) => {
         updates[key] = config[key];
       });
 
       const token = localStorage.getItem("auth_token");
       if (!token) {
-        throw new Error(t("Please login again", "অনুগ্রহ করে আবার লগইন করুন"));
+        throw new Error("Please login again");
       }
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${activeDbId}`, {
-        method: 'PUT',
+        method: "PUT",
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(updates)
+        body: JSON.stringify(updates),
       });
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        const msg = errBody.error || `Failed with status ${res.status}`;
-        throw new Error(msg);
+        throw new Error(errBody.error || `Failed with status ${res.status}`);
       }
 
-      toast.success(t("Settings saved successfully", "সেটিংস সফলভাবে সংরক্ষিত হয়েছে"));
-      
+      toast.success("Settings saved successfully");
       await fetchConfig(activeDbId.toString());
-      
-      if (activeSessionName) {
-        fetchMetrics(activeSessionName);
-        fetchRecent(activeSessionName);
-      }
     } catch (error: any) {
-      const message = error.message || (typeof error === 'string' ? error : "Unknown error");
-      toast.error(t("Failed to save settings: ", "সেটিংস সংরক্ষণ করতে ব্যর্থ হয়েছে: ") + message);
+      const message =
+        error.message || (typeof error === "string" ? error : "Unknown error");
+      toast.error("Failed to save settings: " + message);
       console.error(error);
     } finally {
       setSaving(false);
@@ -248,10 +190,10 @@ export default function WhatsAppControlPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">{t("No Database Connected", "কোন ডাটাবেস সংযুক্ত নেই")}</h2>
-        <p className="text-muted-foreground">{t("Please connect to a database to manage bot controls.", "বট কন্ট্রোল পরিচালনা করতে অনুগ্রহ করে একটি ডাটাবেস সংযুক্ত করুন।")}</p>
+        <h2 className="text-2xl font-bold">No WhatsApp Connected</h2>
+        <p className="text-muted-foreground">Please connect an official WhatsApp number to manage bot controls.</p>
         <Button asChild>
-            <Link to="/dashboard/whatsapp/database">{t("Go to Database", "ডাটাবেসে যান")}</Link>
+          <Link to="/dashboard/whatsapp/sessions">Go to WhatsApp</Link>
         </Button>
       </div>
     );
@@ -265,9 +207,9 @@ export default function WhatsAppControlPage() {
             <Lock className="w-8 h-8 text-destructive" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-destructive">{t("Account Locked", "অ্যাকাউন্ট লক করা")}</h2>
+            <h2 className="text-2xl font-bold text-destructive">Account Locked</h2>
             <p className="text-muted-foreground">
-              {t("Your session has expired or is unverified. Please reactivate your account to access bot controls.", "আপনার সেশন শেষ হয়ে গেছে বা এটি যাচাই করা হয়নি। বট কন্ট্রোল অ্যাক্সেস করতে অনুগ্রহ করে আপনার অ্যাকাউন্ট পুনরায় সক্রিয় করুন।")}
+              Your session has expired or is unverified. Please reactivate your account to access bot controls.
             </p>
           </div>
         </div>
@@ -275,310 +217,196 @@ export default function WhatsAppControlPage() {
     );
   }
 
+  const ControlCard = ({
+    icon: Icon,
+    title,
+    description,
+    checked,
+    onCheckedChange,
+  }: {
+    icon: any;
+    title: string;
+    description: string;
+    checked: boolean;
+    onCheckedChange: (c: boolean) => void;
+  }) => (
+    <Card className="bg-background border-border hover:border-primary/50 transition-colors duration-200">
+      <CardContent className="p-5 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+            <Icon size={22} />
+          </div>
+          <div className="space-y-0.5">
+            <Label className="text-base font-medium cursor-pointer">{title}</Label>
+            <p className="text-sm text-muted-foreground">{description}</p>
+          </div>
+        </div>
+        <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      </CardContent>
+    </Card>
+  );
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="max-w-6xl mx-auto space-y-8">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-foreground tracking-tight">{t("Bot Control", "বট কন্ট্রোল")}</h2>
-          <p className="text-muted-foreground">
-            {t("Manage your automation features.", "আপনার অটোমেশন ফিচারগুলো পরিচালনা করুন।")}
+          <h2 className="text-3xl font-bold text-foreground tracking-tight">Bot Control</h2>
+          <p className="text-muted-foreground mt-1">
+            Manage your automation features.
           </p>
         </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <Button variant="outline" onClick={() => navigate(-1)} className="gap-2">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <Button
+            variant="outline"
+            onClick={() => navigate(-1)}
+            className="gap-2"
+          >
             <ChevronLeft size={16} />
-            {t("Back", "পিছনে")}
+            Back
           </Button>
-          <Button onClick={handleSave} disabled={saving} size="lg" className="shadow-lg flex-1 md:flex-none">
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-            {t("Save Changes", "পরিবর্তন সংরক্ষণ করুন")}
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            size="lg"
+            className="shadow-lg flex-1 sm:flex-none"
+          >
+            {saving ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            Save Changes
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Expiry Card */}
+      <div className="space-y-6">
+        {/* Session Status */}
         {expiryDays !== null && (
-          <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 col-span-1 lg:col-span-2">
-            <CardContent className="p-6 flex items-center justify-between">
+          <Card className="bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border-emerald-500/20">
+            <CardContent className="p-6 flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-full ${expiryDays < 3 ? 'bg-red-500/10 text-red-400 border border-red-500/40' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/40'} shadow-[0_0_25px_rgba(16,185,129,0.35)]`}>
-                   <Activity size={24} />
+                <div className={`p-3 rounded-full ${expiryDays < 3 ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"}`}>
+                  <Activity size={24} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-lg font-semibold">{t("Session Status", "সেশনের স্থিতি")}</Label>
+                  <Label className="text-lg font-semibold">Session Status</Label>
                   <p className="text-sm text-muted-foreground">
-                    {t("{days} days remaining in your active plan.", "{days} দিন আপনার সক্রিয় প্ল্যানে বাকি আছে।").replace("{days}", expiryDays.toString())}
+                    {expiryDays} days remaining in your active plan.
                   </p>
                 </div>
               </div>
-              <Button variant="outline" className="cursor-default hover:bg-transparent">
-                {t("{days} Days Left", "{days} দিন বাকি").replace("{days}", expiryDays.toString())}
-              </Button>
+              <div className="text-sm font-semibold px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                {expiryDays} Days Left
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {showLegacyMetrics && (
-          <>
-            <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /> Bot Replies</CardTitle>
-                <CardDescription>Today vs Yesterday</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="text-sm text-muted-foreground">Today</div>
-                    <div className="text-2xl font-bold">{stats.todayBotReplies}</div>
-                  </div>
-                  <div className="space-y-1 text-right">
-                    <div className="text-sm text-muted-foreground">Yesterday</div>
-                    <div className="text-2xl font-bold">{stats.yesterdayBotReplies}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Bot className="h-4 w-4" /> Tokens Used</CardTitle>
-                <CardDescription>Today vs Yesterday</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="text-sm text-muted-foreground">Today</div>
-                    <div className="text-2xl font-bold">{stats.todayTokens}</div>
-                  </div>
-                  <div className="space-y-1 text-right">
-                    <div className="text-sm text-muted-foreground">Yesterday</div>
-                    <div className="text-2xl font-bold">{stats.yesterdayTokens}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Unique Customers</CardTitle>
-                <CardDescription>Today vs Yesterday</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="text-sm text-muted-foreground">Today</div>
-                    <div className="text-2xl font-bold">{stats.todayCustomers}</div>
-                  </div>
-                  <div className="space-y-1 text-right">
-                    <div className="text-sm text-muted-foreground">Yesterday</div>
-                    <div className="text-2xl font-bold">{stats.yesterdayCustomers}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-        
-        {/* Reply Message */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <MessageCircle size={24} />
+        {/* Feature Controls Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ControlCard
+            icon={MessageCircle}
+            title="Reply Message"
+            description="Auto-reply to incoming texts."
+            checked={config.reply_message}
+            onCheckedChange={(c) => setConfig({ ...config, reply_message: c })}
+          />
+          <ControlCard
+            icon={ReplyAll}
+            title="Swipe Reply"
+            description="Enable swipe-to-reply context."
+            checked={config.swipe_reply}
+            onCheckedChange={(c) => setConfig({ ...config, swipe_reply: c })}
+          />
+          <ControlCard
+            icon={Image}
+            title="Image Detection"
+            description="Analyze received images."
+            checked={config.image_detection}
+            onCheckedChange={(c) => setConfig({ ...config, image_detection: c })}
+          />
+          <ControlCard
+            icon={Image}
+            title="Image Send"
+            description="Allow bot to send images."
+            checked={config.image_send}
+            onCheckedChange={(c) => setConfig({ ...config, image_send: c })}
+          />
+          <ControlCard
+            icon={PackageSearch}
+            title="Order Tracking"
+            description="Automated order status checks."
+            checked={config.order_tracking}
+            onCheckedChange={(c) => setConfig({ ...config, order_tracking: c })}
+          />
+          <ControlCard
+            icon={MessageSquare}
+            title="Group Reply"
+            description="Reply to WhatsApp group chats."
+            checked={config.group_reply}
+            onCheckedChange={(c) => setConfig({ ...config, group_reply: c })}
+          />
+          <ControlCard
+            icon={Mic}
+            title="Audio Detection"
+            description="Transcribe and process audio messages."
+            checked={config.audio_detection}
+            onCheckedChange={(c) => setConfig({ ...config, audio_detection: c })}
+          />
+          <ControlCard
+            icon={Upload}
+            title="Direct File Upload"
+            description="Allow users to upload files directly."
+            checked={config.file_upload}
+            onCheckedChange={(c) => setConfig({ ...config, file_upload: c })}
+          />
+        </div>
+
+        {/* Human Handover */}
+        <Card className="bg-background border-border">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+                <Hand size={24} />
               </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Reply Message", "রিপ্লাই মেসেজ")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Auto-reply to incoming texts.", "আগত টেক্সটগুলোতে অটো-রিপ্লাই দিন।")}</p>
+              <div>
+                <CardTitle>Human Handover Settings</CardTitle>
+                <CardDescription>Configure how and when the AI should pause for a human agent.</CardDescription>
               </div>
             </div>
-            <Switch 
-              checked={config.reply_message}
-              onCheckedChange={(c) => setConfig({...config, reply_message: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Swipe Reply */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <ReplyAll size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Swipe Reply", "সোয়াইপ রিপ্লাই")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Enable swipe-to-reply context.", "সোয়াইপ-টু-রিপ্লাই কনটেক্সট সক্রিয় করুন।")}</p>
-              </div>
+          </CardHeader>
+          <CardContent className="grid gap-6 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2 text-sm">
+                <StopCircle className="w-4 h-4 text-red-500" />
+                Lock Emoji
+              </Label>
+              <Input
+                placeholder="e.g. 🛑,🔒,⛔"
+                value={config.lock_emojis}
+                onChange={(e) => setConfig({ ...config, lock_emojis: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                AI stops if this emoji is found in recent messages.
+              </p>
             </div>
-            <Switch 
-              checked={config.swipe_reply}
-              onCheckedChange={(c) => setConfig({...config, swipe_reply: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Image Detection */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Image size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Image Detection", "ছবি শনাক্তকরণ")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Analyze received images.", "প্রাপ্ত ছবিগুলো বিশ্লেষণ করুন।")}</p>
-              </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2 text-sm">
+                <RefreshCcw className="w-4 h-4 text-green-500" />
+                Unlock Emoji
+              </Label>
+              <Input
+                placeholder="e.g. 🟢,🔓,✅"
+                value={config.unlock_emojis}
+                onChange={(e) => setConfig({ ...config, unlock_emojis: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                AI resumes if this emoji is sent after a block.
+              </p>
             </div>
-            <Switch 
-              checked={config.image_detection}
-              onCheckedChange={(c) => setConfig({...config, image_detection: c})}
-            />
           </CardContent>
         </Card>
-
-        {/* Image Send */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Image size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Image Send", "ছবি পাঠানো")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Allow bot to send images.", "বটকে ছবি পাঠানোর অনুমতি দিন।")}</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.image_send}
-              onCheckedChange={(c) => setConfig({...config, image_send: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Order Tracking */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <PackageSearch size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Order Tracking", "অর্ডার ট্র্যাকিং")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Automated order status checks.", "অটোমেটেড অর্ডার স্ট্যাটাস চেক।")}</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.order_tracking}
-              onCheckedChange={(c) => setConfig({...config, order_tracking: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Group Reply */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <MessageSquare size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Group Reply", "গ্রুপ রিপ্লাই")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Reply to WhatsApp group chats", "হোয়াটসঅ্যাপ গ্রুপ চ্যাটে রিপ্লাই দিন")}</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.group_reply}
-              onCheckedChange={(c) => setConfig({...config, group_reply: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Audio Detection */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Mic size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Audio Detection", "অডিও শনাক্তকরণ")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Transcribe and process audio messages.", "অডিও মেসেজগুলো ট্রান্সক্রাইব এবং প্রসেস করুন।")}</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.audio_detection}
-              onCheckedChange={(c) => setConfig({...config, audio_detection: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Direct File Upload */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Upload size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">{t("Direct File Upload", "সরাসরি ফাইল আপলোড")}</Label>
-                <p className="text-sm text-muted-foreground">{t("Allow users to upload files directly.", "ব্যবহারকারীদের সরাসরি ফাইল আপলোড করতে দিন।")}</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.file_upload}
-              onCheckedChange={(c) => setConfig({...config, file_upload: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Human Handover / Block Logic Section */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 col-span-1 lg:col-span-2">
-            <CardHeader>
-                <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                        <Hand size={24} />
-                    </div>
-                    <div>
-                        <CardTitle>{t("Human Handover Settings", "হিউম্যান হ্যান্ডওভার সেটিংস")}</CardTitle>
-                        <CardDescription>{t("Configure how and when the AI should pause for a human agent.", "এআই কখন এবং কীভাবে একজন হিউম্যান এজেন্টের জন্য থামবে তা কনফিগার করুন।")}</CardDescription>
-                    </div>
-                </div>
-            </CardHeader>
-            <CardContent className="grid gap-6 md:grid-cols-3">
-                
-                <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                        <StopCircle className="w-4 h-4 text-red-500" />
-                        {t("Lock Emoji", "লক ইমোজি")}
-                    </Label>
-                    <Input 
-                        placeholder="e.g. 🛑,🔒,⛔" 
-                        value={config.lock_emojis}
-                        onChange={(e) => setConfig({...config, lock_emojis: e.target.value})}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                        {t("AI stops if this emoji is found in recent messages.", "সাম্প্রতিক মেসেজগুলোতে এই ইমোজি পাওয়া গেলে এআই থেমে যাবে।")}
-                    </p>
-                </div>
-
-                <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                        <RefreshCcw className="w-4 h-4 text-green-500" />
-                        {t("Unlock Emoji", "আনলক ইমোজি")}
-                    </Label>
-                    <Input 
-                        placeholder="e.g. 🟢,🔓,✅" 
-                        value={config.unlock_emojis}
-                        onChange={(e) => setConfig({...config, unlock_emojis: e.target.value})}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                        {t("AI resumes if this emoji is sent after a block.", "ব্লক হওয়ার পর এই ইমোজি পাঠানো হলে এআই পুনরায় শুরু হবে।")}
-                    </p>
-                </div>
-
-            </CardContent>
-        </Card>
-
       </div>
     </div>
   );

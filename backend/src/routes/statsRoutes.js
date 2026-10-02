@@ -11,10 +11,10 @@ router.get('/total-sessions', async (req, res) => {
         );
         const messengerCount = messengerResult.rows[0].count || 0;
 
-        // Count WhatsApp Sessions
+        // Count official WhatsApp connections
         const whatsappResult = await pgClient.query(
-            `SELECT COUNT(*)::int AS count FROM whatsapp_sessions 
-             WHERE status NOT IN ('stopped', 'expired')`
+            `SELECT COUNT(*)::int AS count FROM whatsapp_message_database
+             WHERE provider_type = 'official'`
         );
         const whatsappCount = whatsappResult.rows[0].count || 0;
 

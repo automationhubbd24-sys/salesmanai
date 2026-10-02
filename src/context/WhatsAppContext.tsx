@@ -2,16 +2,21 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
 
-export interface WahaSession {
+export interface WhatsAppSession {
   name: string;
   status?: string;
+  provider_type?: string;
+  waba_id?: string;
+  phone_number_id?: string;
+  is_shared?: boolean;
+  wp_db_id?: number | string;
   [key: string]: unknown;
 }
 
 export interface WhatsAppContextType {
-  sessions: WahaSession[];
-  currentSession: WahaSession | null;
-  setCurrentSession: (session: WahaSession | null) => void;
+  sessions: WhatsAppSession[];
+  currentSession: WhatsAppSession | null;
+  setCurrentSession: (session: WhatsAppSession | null) => void;
   refreshSessions: () => Promise<void>;
   loading: boolean;
   // Team Features
@@ -26,8 +31,8 @@ export interface WhatsAppContextType {
 const WhatsAppContext = createContext<WhatsAppContextType | undefined>(undefined);
 
 export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
-  const [sessions, setSessions] = useState<WahaSession[]>([]);
-  const [currentSession, setCurrentSession] = useState<WahaSession | null>(null);
+  const [sessions, setSessions] = useState<WhatsAppSession[]>([]);
+  const [currentSession, setCurrentSession] = useState<WhatsAppSession | null>(null);
   const [loading, setLoading] = useState(true);
   const currentSessionRef = React.useRef(currentSession);
   
@@ -146,10 +151,49 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const wahaSessions = await res.json();
-      const allSessions: WahaSession[] = Array.isArray(wahaSessions) ? wahaSessions : [];
 
-      setSessions(allSessions);
+      if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Server returned ${res.status}`);
+      }
+
+      const sessionResponse = await res.json();
+      const allSessions: WhatsAppSession[] = Array.isArray(sessionResponse) ? sessionResponse : [];
+      let officialSessions = allSessions.filter((session) =>
+        session.provider_type === "official" || String(session.name || "").startsWith("official_")
+      );
+
+      // CROSS-DEVICE SYNC FIX: If personal mode has no sessions, check if user has any team sessions
+      // We do this if viewMode is personal and we found nothing, OR if we just logged in (no current session)
+      if (viewMode === 'personal' && officialSessions.length === 0 && Array.isArray(teams) && teams.length > 0) {
+          console.log("Personal mode empty, checking team sessions for cross-device sync...");
+          let foundInTeam = false;
+          for (const team of teams) {
+              const teamUrl = `${BACKEND_URL}/api/whatsapp/sessions?team_owner=${encodeURIComponent(team.owner_email)}`;
+              const teamRes = await fetch(teamUrl, { headers: { Authorization: `Bearer ${token}` } });
+              if (teamRes.ok) {
+                  const teamSessionResponse = await teamRes.json();
+                  const teamOfficial = (Array.isArray(teamSessionResponse) ? teamSessionResponse : []).filter((s: any) =>
+                      s.provider_type === "official" || String(s.name || "").startsWith("official_")
+                  );
+                  if (teamOfficial.length > 0) {
+                      console.log(`Found connected session in team: ${team.owner_email}, auto-switching...`);
+                      setActiveTeam(team);
+                      switchViewMode('team');
+                      officialSessions = teamOfficial;
+                      foundInTeam = true;
+                      break; 
+                  }
+              }
+          }
+          if (!foundInTeam) {
+              setSessions([]);
+          } else {
+              setSessions(officialSessions);
+          }
+      } else {
+          setSessions(officialSessions);
+      }
       
       // Auto-select logic (Prioritize localStorage)
       const storedSessionId = localStorage.getItem("active_wa_session_id");
@@ -157,31 +201,36 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
       const current = currentSessionRef.current;
       
       if (storedSessionId && !current) {
-        const found = allSessions.find(s => s.name === storedSessionId);
+        const found = officialSessions.find(s => s.name === storedSessionId);
         if (found) {
             setCurrentSession(found);
-        } else if (allSessions.length > 0) {
+        } else if (officialSessions.length > 0) {
             if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
-                setCurrentSession(allSessions[0]);
+                setCurrentSession(officialSessions[0]);
             }
         }
       } else if (storedDbId && !current) {
         // Fallback to DB ID if Session ID is missing
-        const found = allSessions.find(s => String((s as any).wp_db_id) === String(storedDbId));
+        const found = officialSessions.find(s => String((s as any).wp_db_id) === String(storedDbId));
         if (found) {
             setCurrentSession(found);
-        } else if (allSessions.length > 0) {
-            setCurrentSession(allSessions[0]);
+        } else if (officialSessions.length > 0) {
+            setCurrentSession(officialSessions[0]);
         }
-      } else if (!current && allSessions.length > 0) {
+      } else if (!current && officialSessions.length > 0) {
         if (viewMode === 'personal' || (viewMode === 'team' && effectiveTeamOwner)) {
-            setCurrentSession(allSessions[0]);
+            setCurrentSession(officialSessions[0]);
         }
       } else if (current) {
         // Update current session object with latest data
-        const updated = allSessions.find((s) => s.name === current.name);
-        if (updated) setCurrentSession(updated);
-        else setCurrentSession(null);
+        const updated = officialSessions.find((s) => s.name === current.name);
+        if (updated) {
+          setCurrentSession(updated);
+        } else {
+          localStorage.removeItem("active_wa_session_id");
+          localStorage.removeItem("active_wp_db_id");
+          setCurrentSession(null);
+        }
       }
     } catch (error) {
       console.error("Failed to fetch sessions", error);
@@ -209,8 +258,10 @@ export function WhatsAppProvider({ children }: { children: React.ReactNode }) {
             setActiveTeam(team);
             if (team) {
                 localStorage.setItem('active_team_owner', team.owner_email);
+                localStorage.setItem('active_team_permissions', JSON.stringify(team.permissions ?? {}));
             } else {
                 localStorage.removeItem('active_team_owner');
+                localStorage.removeItem('active_team_permissions');
             }
         },
         viewMode,

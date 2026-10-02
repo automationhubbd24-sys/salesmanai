@@ -31,14 +31,14 @@ const CaseStudies = () => {
   ];
 
   return (
-    <section className="py-8 bg-background relative overflow-hidden">
+    <section id="cases" className="py-24 bg-[#050505] relative overflow-hidden border-t border-white/5">
       {/* Background Glows (Gaming Vibe) */}
       <div className="absolute top-1/2 right-[-10%] -translate-y-1/2 w-[50%] h-[70%] bg-indigo-600/5 blur-[180px] rounded-full pointer-events-none animate-pulse" />
       <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[60%] bg-purple-600/5 blur-[150px] rounded-full pointer-events-none animate-pulse" style={{ animationDelay: '1.5s' }} />
       
       {/* Grid Overlay */}
       <div 
-        className="absolute inset-0 opacity-[0.01] pointer-events-none" 
+        className="absolute inset-0 opacity-[0.02] pointer-events-none" 
         style={{ 
           backgroundImage: `linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)`,
           backgroundSize: '80px 80px'
@@ -46,16 +46,16 @@ const CaseStudies = () => {
       />
 
       <div className="container mx-auto px-4 relative z-10">
-        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-12">
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-12">
           <div className="max-w-4xl">
             <motion.h2
               initial={{ opacity: 0, x: -30 }}
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
-              className="mb-8 text-3xl md:text-5xl font-black tracking-tighter text-white leading-[1.1]"
+              className="mb-8 text-4xl md:text-6xl font-black tracking-tighter text-white leading-[1.1]"
             >
               {t("Real Results for", "আসল ফলাফল")}<br />
-              <span className="bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent drop-shadow-[0_0_30px_rgba(99,102,241,0.3)]">
+              <span className="bg-gradient-to-r from-[#00ff88] via-emerald-400 to-teal-400 bg-clip-text text-transparent drop-shadow-[0_0_30px_rgba(0,255,136,0.2)]">
                 {t("Real Businesses", "আসল ব্যবসার জন্য")}
               </span>
             </motion.h2>
@@ -74,8 +74,8 @@ const CaseStudies = () => {
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
           >
-            <Link to="/register" className="flex items-center gap-6 font-black text-white hover:text-indigo-400 transition-all group text-xs uppercase tracking-[0.3em] bg-white/5 px-10 py-6 rounded-[2rem] border border-white/10 hover:border-indigo-500/50 backdrop-blur-3xl shadow-2xl relative overflow-hidden">
-              <div className="absolute inset-0 bg-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <Link to="/register" className="flex items-center gap-6 font-black text-white hover:text-[#00ff88] transition-all group text-xs uppercase tracking-[0.3em] bg-white/5 px-10 py-6 rounded-[2.5rem] border border-white/10 hover:border-[#00ff88]/30 backdrop-blur-3xl shadow-2xl relative overflow-hidden">
+              <div className="absolute inset-0 bg-[#00ff88]/5 opacity-0 group-hover:opacity-100 transition-opacity" />
               <span className="relative z-10">{t("View all success stories", "সব সাকসেস স্টোরি দেখুন")}</span>
               <ArrowUpRight className="h-6 w-6 relative z-10 transition-transform group-hover:translate-x-1 group-hover:-translate-y-1" />
             </Link>
@@ -92,7 +92,7 @@ const CaseStudies = () => {
               transition={{ delay: index * 0.2, duration: 0.8 }}
               className="group cursor-pointer relative"
             >
-              <div className="relative mb-10 overflow-hidden rounded-[3.5rem] aspect-[4/5.5] border border-white/5 shadow-2xl transition-all duration-700 group-hover:border-indigo-500/30 group-hover:shadow-[0_40px_100px_rgba(0,0,0,0.6)]">
+              <div className="relative mb-10 overflow-hidden rounded-[3.5rem] aspect-[4/5.5] border border-white/5 shadow-2xl transition-all duration-700 group-hover:border-[#00ff88]/30 group-hover:shadow-[0_40px_100px_rgba(0,0,0,0.6)]">
                 <img
                   src={item.image}
                   alt={item.company}
@@ -111,10 +111,10 @@ const CaseStudies = () => {
                 </div>
 
                 <div className="absolute bottom-12 left-12 right-12 z-10">
-                  <h3 className="text-2xl md:text-3xl font-black text-white mb-4 tracking-tighter leading-none group-hover:text-indigo-400 transition-colors">{item.company}</h3>
-                  <div className="inline-flex items-center gap-3 px-6 py-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(99,102,241,0.3)]">
-                    <Zap className="w-5 h-5 text-indigo-400 fill-indigo-400/20" />
-                    <span className="text-indigo-400 font-black text-xl tracking-tighter leading-none">
+                  <h3 className="text-2xl md:text-3xl font-black text-white mb-4 tracking-tighter leading-none group-hover:text-[#00ff88] transition-colors">{item.company}</h3>
+                  <div className="inline-flex items-center gap-3 px-6 py-3 rounded-2xl bg-[#00ff88]/10 border border-[#00ff88]/30 backdrop-blur-xl shadow-[0_0_30px_rgba(0,255,136,0.2)]">
+                    <Zap className="w-5 h-5 text-[#00ff88] fill-[#00ff88]/20" />
+                    <span className="text-[#00ff88] font-black text-xl tracking-tighter leading-none">
                       {item.result}
                     </span>
                   </div>
@@ -122,7 +122,7 @@ const CaseStudies = () => {
               </div>
               <div className="px-8 relative">
                 {/* Accent Line */}
-                <div className="absolute left-0 top-0 w-1 h-full bg-gradient-to-b from-indigo-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute left-0 top-0 w-1 h-full bg-gradient-to-b from-[#00ff88]/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <p className="text-slate-400 font-medium text-base leading-relaxed group-hover:text-slate-200 transition-colors duration-500">
                   {item.desc}
                 </p>

@@ -369,10 +369,11 @@ exports.getEmbeddingGlobalConfig = async (req, res) => {
         const details = (row && row.text_model_details) || {};
 
         const payload = {
-            model: (row && row.text_model) || '',
-            base_url: details.base_url || '',
+            model: (row && row.text_model) || 'qwen/qwen3-embedding-8b',
+            base_url: details.base_url || 'https://openrouter.ai/api/v1',
             api_key: details.api_key || '',
-            provider: details.provider || 'openai'
+            provider: details.provider || 'openrouter',
+            access_mode: details.access_mode || 'openai_compatible'
         };
 
         res.json({ success: true, config: payload });
@@ -384,7 +385,7 @@ exports.getEmbeddingGlobalConfig = async (req, res) => {
 
 exports.saveEmbeddingGlobalConfig = async (req, res) => {
     try {
-        const { model, base_url, api_key, provider } = req.body || {};
+        const { model, base_url, api_key, provider, access_mode } = req.body || {};
         const pgClient = require('../services/pgClient');
 
         // Quick Repair
@@ -396,9 +397,11 @@ exports.saveEmbeddingGlobalConfig = async (req, res) => {
         }
 
         const details = {
-            base_url: base_url || '',
+            base_url: base_url || 'https://openrouter.ai/api/v1',
             api_key: api_key || '',
-            provider: provider || ''
+            provider: provider || 'openrouter',
+            access_mode: access_mode || 'openai_compatible',
+            prefer_direct_api: true
         };
 
         const result = await pgClient.query(
@@ -411,7 +414,7 @@ exports.saveEmbeddingGlobalConfig = async (req, res) => {
                 text_model_details = EXCLUDED.text_model_details,
                 updated_at = NOW()
              RETURNING *`,
-            ['embedding_global', model || '', details]
+            ['embedding_global', model || 'qwen/qwen3-embedding-8b', details]
         );
 
         const row = result.rows[0] || null;

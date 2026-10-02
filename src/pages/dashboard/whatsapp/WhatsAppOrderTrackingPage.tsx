@@ -18,14 +18,18 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw, Bell } from "lucide-react";
+import { Calendar as CalendarIcon, Download, ShoppingBag, Copy, Check, AlertCircle, RefreshCw, MessageSquare, Pencil, Truck } from "lucide-react";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Link } from "react-router-dom";
 import { BACKEND_URL } from "@/config";
 import { OrderNotificationModal } from "@/components/dashboard/OrderNotificationModal";
+import { ConversationDialog } from "@/components/dashboard/ConversationDialog";
 
 interface Order {
   id: string;
@@ -34,21 +38,99 @@ interface Order {
   price: string | number;
   location: string;
   number: string;
+  customer_name?: string;
   status: string;
   sender_id: string;
   created_at: string;
+  source?: string | null;
+  lead_source?: string | null;
+  ad_title?: string | null;
+  ad_name?: string | null;
+  campaign_name?: string | null;
+  ad_id?: string | number | null;
 }
+
+type OrderEditForm = Pick<Order, "product_name" | "product_quantity" | "price" | "location" | "customer_name" | "number">;
+
+const getOrderAdTitle = (order: Order) => {
+  const source = `${order.source || ""} ${order.lead_source || ""}`.toLowerCase();
+  const title = order.ad_title || order.ad_name || order.campaign_name;
+  if (!title && !order.ad_id && !source.includes("ad") && !source.includes("ads")) return null;
+  return title || "Ads Lead";
+};
+
+const getOrderEditForm = (order: Order): OrderEditForm => ({
+  product_name: order.product_name || "",
+  product_quantity: order.product_quantity || "",
+  price: order.price || "",
+  location: order.location || "",
+  customer_name: order.customer_name || "",
+  number: order.number || "",
+});
+
+const orderExportHeaders = ["ID", "Product Name", "Customer Name", "Number", "Location", "Quantity", "Price", "Date"];
+
+const getOrderExportRows = (orders: Order[]) => [
+  orderExportHeaders,
+  ...orders.map((order) => [
+    order.id,
+    order.product_name || "",
+    order.customer_name || "",
+    order.number || "",
+    order.location || "",
+    order.product_quantity || "",
+    order.price || "",
+    order.created_at || "",
+  ]),
+];
+
+const escapeCsvCell = (value: string | number) => {
+  const text = String(value ?? "");
+  const escaped = text.replace(/"/g, '""');
+  return /[",\r\n]/.test(text) ? `"${escaped}"` : escaped;
+};
+
+const escapeSheetCell = (value: string | number) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const downloadBlob = (content: string, type: string, fileName: string) => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", fileName);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
 export default function WhatsAppOrderTrackingPage() {
   const { currentSession, loading: contextLoading } = useWhatsApp();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [dateFilter, setDateFilter] = useState<'today' | 'yesterday' | 'custom' | 'all'>('today');
+  const [orderView, setOrderView] = useState<'active' | 'draft'>('active');
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editForm, setEditForm] = useState<OrderEditForm | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [sendingCourierId, setSendingCourierId] = useState<string | null>(null);
+  const [sendingCourierBulk, setSendingCourierBulk] = useState(false);
 
-  const activeSessionName = currentSession?.name || null;
+  const activeSessionName = currentSession?.name
+    || (typeof window !== "undefined" ? localStorage.getItem("active_wa_session_id") : null)
+    || null;
   const activeDbId = (currentSession as any)?.wp_db_id || (typeof window !== "undefined" ? Number(localStorage.getItem("active_wp_db_id") || 0) : 0);
+  const draftOrders = orders.filter((order) => order.status === "pending" || order.status === "draft");
+  const activeOrders = orders.filter((order) => order.status !== "pending" && order.status !== "draft");
+  const visibleOrders = orderView === "draft" ? draftOrders : activeOrders;
 
   const fetchOrders = useCallback(async (showLoading = true) => {
     if (!activeSessionName) return;
@@ -135,8 +217,50 @@ export default function WhatsAppOrderTrackingPage() {
     }
   };
 
+  const openEditOrder = (order: Order) => {
+    setEditingOrder(order);
+    setEditForm(getOrderEditForm(order));
+  };
+
+  const updateEditField = (field: keyof OrderEditForm, value: string) => {
+    setEditForm((current) => current ? { ...current, [field]: value } : current);
+  };
+
+  const saveOrderEdit = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token || !editingOrder || !editForm) return;
+
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/orders/${editingOrder.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(editForm),
+      });
+
+      if (!res.ok) throw new Error("Failed to update order");
+
+      const data = await res.json();
+      const updatedOrder = data.order || { ...editingOrder, ...editForm };
+      setOrders((current) => current.map((order) => order.id === editingOrder.id ? { ...order, ...updatedOrder } : order));
+      setEditingOrder(null);
+      setEditForm(null);
+      toast.success("Order updated successfully");
+      fetchOrders(false);
+    } catch (error) {
+      console.error("Error updating order:", error);
+      toast.error("Failed to update order");
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+
   const handleCopy = (order: Order) => {
-    const textToCopy = `Product: ${order.product_name || 'N/A'}
+    const textToCopy = `Customer Name: ${order.customer_name || 'N/A'}
+Product: ${order.product_name || 'N/A'}
 Qty: ${order.product_quantity || '1'}
 Price: ${order.price || 'N/A'}
 Location: ${order.location || 'N/A'}
@@ -147,6 +271,72 @@ Phone: ${order.number || 'N/A'}`;
       toast.success("Order details copied to clipboard");
       setTimeout(() => setCopiedId(null), 2000);
     });
+  };
+
+  const handleOpenConversion = (order: Order) => {
+    if (!order.sender_id) {
+      toast.error("No sender found for this order");
+      return;
+    }
+
+    setSelectedOrder(order);
+  };
+
+  const sendToCourier = async (order: Order) => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+
+    setSendingCourierId(order.id);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/courier/shipments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ platform: "whatsapp", provider: "steadfast", order }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 404) {
+        toast.error("Courier API is not connected yet. Setup first from Courier Integration.");
+        return;
+      }
+      if (!response.ok) throw new Error(data.error || "Courier booking failed");
+
+      toast.success(data.tracking_code ? `Sent to courier: ${data.tracking_code}` : "Order sent to courier");
+      fetchOrders(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Courier booking failed");
+    } finally {
+      setSendingCourierId(null);
+    }
+  };
+
+  const sendBulkToCourier = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token || !activeOrders.length) return;
+
+    setSendingCourierBulk(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/courier/shipments/bulk`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ platform: "whatsapp", orders: activeOrders }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 404) throw new Error("Courier API is not connected yet. Setup first from Courier Integration.");
+      if (!response.ok) throw new Error(data.error || "Bulk courier booking failed");
+      toast.success(`${data.sent || 0} orders sent, ${data.failed || 0} failed`);
+      fetchOrders(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk courier booking failed");
+    } finally {
+      setSendingCourierBulk(false);
+    }
   };
 
   useEffect(() => {
@@ -165,8 +355,8 @@ Phone: ${order.number || 'N/A'}`;
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <AlertCircle className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">No Session Selected</h2>
-        <p className="text-muted-foreground">Please select a WhatsApp session to view orders.</p>
+        <h2 className="text-2xl font-bold">No Official WhatsApp Selected</h2>
+        <p className="text-muted-foreground">Please select or reconnect an official WhatsApp number to view orders.</p>
         <Button asChild>
             <Link to="/dashboard/whatsapp/sessions">Go to Sessions</Link>
         </Button>
@@ -175,33 +365,38 @@ Phone: ${order.number || 'N/A'}`;
   }
 
   const downloadCSV = () => {
-    if (!orders.length) {
+    if (!visibleOrders.length) {
       toast.error("No orders to export");
       return;
     }
-    
-    const headers = ["ID", "Product Name", "Number", "Location", "Quantity", "Price", "Date"];
-    const csvContent = [
-      headers.join(","),
-      ...orders.map(order => [
-        order.id,
-        `"${order.product_name || ''}"`,
-        order.number,
-        `"${order.location || ''}"`,
-        order.product_quantity,
-        order.price,
-        order.created_at
-      ].join(","))
-    ].join("\n");
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `orders_${dateFilter}_${format(new Date(), 'yyyy-MM-dd')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const csvContent = getOrderExportRows(visibleOrders)
+      .map((row) => row.map(escapeCsvCell).join(","))
+      .join("\r\n");
+
+    downloadBlob(
+      `\uFEFF${csvContent}`,
+      "text/csv;charset=utf-8;",
+      `orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.csv`
+    );
+  };
+
+  const downloadGoogleSheet = () => {
+    if (!visibleOrders.length) {
+      toast.error("No orders to export");
+      return;
+    }
+
+    const tableRows = getOrderExportRows(visibleOrders)
+      .map((row) => `<tr>${row.map((cell) => `<td>${escapeSheetCell(cell)}</td>`).join("")}</tr>`)
+      .join("");
+    const sheetContent = `<!DOCTYPE html><html><head><meta charset="UTF-8" /></head><body><table>${tableRows}</table></body></html>`;
+
+    downloadBlob(
+      sheetContent,
+      "application/vnd.ms-excel;charset=utf-8;",
+      `orders_${dateFilter}_${format(new Date(), "yyyy-MM-dd")}.xls`
+    );
   };
 
   return (
@@ -221,12 +416,20 @@ Phone: ${order.number || 'N/A'}`;
       <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.35)] border-l-4 border-l-[#00ff88]">
         <CardHeader>
            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                  <CardTitle className="flex items-center gap-2">
-                      <ShoppingBag className="h-5 w-5" />
-                      Order List
-                  </CardTitle>
-                  <CardDescription>All orders within the selected period.</CardDescription>
+              <div className="space-y-4">
+                  <div>
+                      <CardTitle className="flex items-center gap-2">
+                          <ShoppingBag className="h-5 w-5" />
+                          Order List
+                      </CardTitle>
+                      <CardDescription>Active orders and draft orders are separated for faster review.</CardDescription>
+                  </div>
+                  <Tabs value={orderView} onValueChange={(value) => setOrderView(value as 'active' | 'draft')}>
+                      <TabsList className="grid w-full grid-cols-2 bg-muted/40 sm:w-[360px]">
+                          <TabsTrigger value="active">Active Orders ({activeOrders.length})</TabsTrigger>
+                          <TabsTrigger value="draft">Draft Orders ({draftOrders.length})</TabsTrigger>
+                      </TabsList>
+                  </Tabs>
               </div>
               <div className="flex flex-wrap items-center gap-6">
                   <Select value={dateFilter} onValueChange={(val: 'today' | 'yesterday' | 'custom' | 'all') => setDateFilter(val)}>
@@ -270,6 +473,22 @@ Phone: ${order.number || 'N/A'}`;
                       <Download className="mr-2 h-4 w-4" />
                       CSV
                   </Button>
+                  <Button variant="outline" onClick={downloadGoogleSheet}>
+                      <Download className="mr-2 h-4 w-4" />
+                      Google Sheet
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="gap-2 border-[#00ff88]/30 bg-[#00ff88]/5 text-[#00ff88] hover:bg-[#00ff88]/10"
+                    disabled={orderView === "draft" || !activeOrders.length || sendingCourierBulk}
+                    onClick={sendBulkToCourier}
+                  >
+                    {sendingCourierBulk ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                    Send Active to Courier
+                  </Button>
+                  <Button asChild variant="ghost" className="text-[#00ff88]">
+                    <Link to="/dashboard/courier">Courier Setup</Link>
+                  </Button>
               </div>
            </div>
         </CardHeader>
@@ -283,6 +502,11 @@ Phone: ${order.number || 'N/A'}`;
                   <ShoppingBag className="mx-auto h-12 w-12 opacity-20 mb-3" />
                   <p>No orders found for the selected period.</p>
               </div>
+          ) : visibleOrders.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground border-2 border-dashed rounded-lg">
+                  <ShoppingBag className="mx-auto h-12 w-12 opacity-20 mb-3" />
+                  <p>No {orderView} orders found for the selected period.</p>
+              </div>
           ) : (
               <div className="rounded-md border overflow-hidden">
                   <Table>
@@ -294,18 +518,32 @@ Phone: ${order.number || 'N/A'}`;
                               <TableHead>Price</TableHead>
                               <TableHead>Location</TableHead>
                               <TableHead>Customer</TableHead>
+                              <TableHead>Phone</TableHead>
                               <TableHead>Status</TableHead>
                               <TableHead>Sender ID</TableHead>
-                              <TableHead className="w-[50px]"></TableHead>
+                              <TableHead>Courier</TableHead>
+                              <TableHead className="w-[180px] text-right">Actions</TableHead>
                           </TableRow>
                       </TableHeader>
                       <TableBody>
-                          {orders.map((order) => (
-                              <TableRow key={order.id} className="hover:bg-muted/50">
+                          {visibleOrders.map((order) => (
+                              <TableRow
+                                key={order.id}
+                                className={cn("hover:bg-muted/50", getOrderAdTitle(order) && "border-l-4 border-l-[#00ff88]/70")}
+                              >
                                   <TableCell className="font-medium whitespace-nowrap">
                                       {format(new Date(order.created_at), "MMM d, HH:mm")}
                                   </TableCell>
-                                  <TableCell className="font-medium">{order.product_name}</TableCell>
+                                  <TableCell className="font-medium">
+                                    <div className="space-y-1">
+                                      <div>{order.product_name}</div>
+                                      {getOrderAdTitle(order) && (
+                                        <div className="inline-flex max-w-[260px] items-center rounded-full border border-[#00ff88]/30 bg-[#00ff88]/10 px-2 py-0.5 text-[10px] font-bold text-[#8effc4]">
+                                          <span className="truncate">Ads Lead: {getOrderAdTitle(order)}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </TableCell>
                                   <TableCell>{order.product_quantity}</TableCell>
                                   <TableCell>{order.price}</TableCell>
                                   <TableCell className="max-w-[200px]">
@@ -323,7 +561,12 @@ Phone: ${order.number || 'N/A'}`;
                                       </PopoverContent>
                                     </Popover>
                                   </TableCell>
-                                  <TableCell>{order.number}</TableCell>
+                                  <TableCell>
+                                    {order.customer_name || '-'}
+                                  </TableCell>
+                                  <TableCell>
+                                    {order.number || '-'}
+                                  </TableCell>
                                   <TableCell>
                                     <Select 
                                       value={order.status || 'pending'} 
@@ -331,7 +574,7 @@ Phone: ${order.number || 'N/A'}`;
                                     >
                                       <SelectTrigger className={cn(
                                         "w-[110px] h-8 text-xs font-medium border-none",
-                                        (order.status === 'pending' || !order.status) && "bg-orange-500/10 text-orange-500 hover:bg-orange-500/20",
+                                        (order.status === 'pending' || order.status === 'draft' || !order.status) && "bg-orange-500/10 text-orange-500 hover:bg-orange-500/20",
                                         order.status === 'ongoing' && "bg-[#00ff88]/10 text-[#00ff88] hover:bg-[#00ff88]/20",
                                         order.status === 'delivered' && "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20",
                                         order.status === 'locked' && "bg-red-500/10 text-red-500 hover:bg-red-500/20",
@@ -340,7 +583,7 @@ Phone: ${order.number || 'N/A'}`;
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="pending">Draft</SelectItem>
                                         <SelectItem value="ongoing">Ongoing</SelectItem>
                                         <SelectItem value="delivered">Delivered</SelectItem>
                                         <SelectItem value="locked">Locked</SelectItem>
@@ -351,17 +594,48 @@ Phone: ${order.number || 'N/A'}`;
                                   <TableCell>{order.sender_id}</TableCell>
                                   <TableCell>
                                     <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => handleCopy(order)}
-                                      title="Copy Order Details"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 gap-1 border-[#00ff88]/30 bg-[#00ff88]/5 text-xs text-[#00ff88] hover:bg-[#00ff88]/10"
+                                      disabled={orderView === "draft" || sendingCourierId === order.id}
+                                      onClick={() => sendToCourier(order)}
+                                      title={orderView === "draft" ? "Only active orders can be sent" : "Send to Steadfast courier"}
                                     >
-                                      {copiedId === order.id ? (
-                                        <Check className="h-4 w-4 text-[#00ff88]" />
-                                      ) : (
-                                        <Copy className="h-4 w-4 text-muted-foreground" />
-                                      )}
+                                      {sendingCourierId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}
+                                      Courier
                                     </Button>
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="grid grid-cols-2 gap-1 sm:flex sm:items-center sm:justify-end sm:gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => handleOpenConversion(order)}
+                                        title="Open Conversation"
+                                      >
+                                        <MessageSquare className="h-4 w-4 text-primary" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => openEditOrder(order)}
+                                        title="Edit Order"
+                                      >
+                                        <Pencil className="h-4 w-4 text-[#00ff88]" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => handleCopy(order)}
+                                        title="Copy Order Details"
+                                      >
+                                        {copiedId === order.id ? (
+                                          <Check className="h-4 w-4 text-[#00ff88]" />
+                                        ) : (
+                                          <Copy className="h-4 w-4 text-muted-foreground" />
+                                        )}
+                                      </Button>
+                                    </div>
                                   </TableCell>
                               </TableRow>
                           ))}
@@ -371,6 +645,60 @@ Phone: ${order.number || 'N/A'}`;
           )}
         </CardContent>
       </Card>
+      <Dialog open={editingOrder !== null} onOpenChange={(open) => {
+        if (!open) {
+          setEditingOrder(null);
+          setEditForm(null);
+        }
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit order</DialogTitle>
+            <DialogDescription>Update product, customer, phone, price, quantity and delivery location.</DialogDescription>
+          </DialogHeader>
+          {editForm && (
+            <div className="grid gap-4 py-2 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="whatsapp-product-name">Product name</Label>
+                <Input id="whatsapp-product-name" value={String(editForm.product_name)} onChange={(event) => updateEditField("product_name", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatsapp-qty">Qty</Label>
+                <Input id="whatsapp-qty" value={String(editForm.product_quantity)} onChange={(event) => updateEditField("product_quantity", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatsapp-price">Price</Label>
+                <Input id="whatsapp-price" value={String(editForm.price)} onChange={(event) => updateEditField("price", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatsapp-customer">Customer name</Label>
+                <Input id="whatsapp-customer" value={String(editForm.customer_name || "")} onChange={(event) => updateEditField("customer_name", event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatsapp-phone">Phone</Label>
+                <Input id="whatsapp-phone" value={String(editForm.number)} onChange={(event) => updateEditField("number", event.target.value)} />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="whatsapp-location">Location</Label>
+                <Input id="whatsapp-location" value={String(editForm.location)} onChange={(event) => updateEditField("location", event.target.value)} />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditingOrder(null)} disabled={savingOrder}>Cancel</Button>
+            <Button onClick={saveOrderEdit} disabled={savingOrder}>{savingOrder ? "Saving..." : "Save changes"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConversationDialog
+        open={selectedOrder !== null}
+        onOpenChange={(open) => !open && setSelectedOrder(null)}
+        platform="whatsapp"
+        resourceId={activeSessionName}
+        senderId={selectedOrder?.sender_id || null}
+        customerName={selectedOrder?.customer_name}
+        order={selectedOrder}
+      />
     </div>
   );
 }

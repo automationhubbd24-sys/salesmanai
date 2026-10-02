@@ -1,5 +1,24 @@
 const dbService = require('./dbService');
 const emailService = require('./emailService');
+const fs = require('fs');
+const path = require('path');
+
+// #region debug-point order-total-tracking
+function reportOrderTotalDebug(hypothesisId, location, msg, data = {}) {
+    try {
+        const envPath = path.resolve(__dirname, '../../../.dbg/order-total-tracking.env');
+        const envContent = fs.readFileSync(envPath, 'utf8');
+        const debugUrl = envContent.match(/^DEBUG_SERVER_URL=(.+)$/m)?.[1]?.trim();
+        const sessionId = envContent.match(/^DEBUG_SESSION_ID=(.+)$/m)?.[1]?.trim();
+        if (!debugUrl || !sessionId) return;
+        fetch(debugUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, runId: 'pre-fix', hypothesisId, location, msg, data, ts: Date.now() })
+        }).catch(() => {});
+    } catch (_) {}
+}
+// #endregion
 
 /**
  * Normalizes a Bangladeshi phone number to 01XXXXXXXXX format.
@@ -32,6 +51,29 @@ function parsePrice(value) {
     const cleanValue = String(value).replace(/[^\d.]/g, '');
     const num = parseFloat(cleanValue);
     return isFinite(num) ? num : 0;
+}
+
+function resolveOrderAction({ intent, data, rawText }) {
+    const explicitAction = String(data.order_action || data.action || intent || '').toLowerCase();
+    const text = normalizeBanglaDigits(String(rawText || data.intent || '').toLowerCase());
+    const decide = (action, reason) => {
+        console.log(`[OrderEngine] Action resolved: ${action} (${reason})`);
+        return action;
+    };
+
+    if (/create_new_order|new_order|repeat_order|reorder/.test(explicitAction)) return decide('create_new_order', 'explicit_ai_intent');
+    if (/update_existing_order|confirm_pending_order|correction|edit_order|modify_order/.test(explicitAction)) return decide('update_existing_order', 'explicit_ai_intent');
+    if (/answer_only|status_check|none/.test(explicitAction)) return decide('answer_only', 'explicit_ai_intent');
+
+    if (/\b(again|another|new order|separate order|different order|reorder|repeat|same again|eta new|this is new|ager ta alada|previous one separate|aro\s*(1|one|ek|akta|ekta)|arekta|arekti|abar|abaro)\b|আরেকটা|আরও\s*(একটা|১টা|1টা)|আবার|নতুন\s*অর্ডার|আলাদা\s*অর্ডার|আগেরটা\s*আলাদা|একইটা\s*আবার/i.test(text)) {
+        return decide('create_new_order', 'customer_requested_new_or_repeat_order');
+    }
+
+    if (/\b(wrong|vul|bhul|change|correct|correction|edit|update|replace|not this|eta na|eta vul|number ta vul|phone ta vul|address ta vul|name ta vul)\b|ভুল|ভূল|চেঞ্জ|পরিবর্তন|সংশোধন|আপডেট|এটা\s*না|ঠিকানা\s*(চেঞ্জ|পরিবর্তন|ভুল)|নাম্বার\s*(চেঞ্জ|ভুল)|নম্বর\s*(চেঞ্জ|ভুল)|নাম\s*(চেঞ্জ|ভুল)/i.test(text)) {
+        return decide('update_existing_order', 'customer_corrected_order_data');
+    }
+
+    return decide('auto', 'no_explicit_action');
 }
 
 /**
@@ -104,28 +146,52 @@ async function orchestrateOrder(params) {
 
     // Handle Intent: Upsert (Create or Update)
     if (intent === 'upsert' || intent === 'order_create_or_update') {
-        const hasPhone = extracted.phone && extracted.phone.length >= 8;
-        const hasCriticalInfo = hasPhone || extracted.address || extracted.location || extracted.product_name || extracted.customer_name || extracted.name;
-        
-        if (!hasCriticalInfo) return { status: 'NO_ACTION' };
+        let resolvedProductName = extracted.product_name || 'Recovered Lead';
+        try {
+            if ((!resolvedProductName || resolvedProductName === 'Recovered Lead') && extracted.product_id) {
+                const product = await dbService.getProductById(extracted.product_id);
+                if (product?.name) resolvedProductName = product.name;
+            }
+        } catch (e) {}
+
+        const skuRef = extracted.sku_code || extracted.sku_id || extracted.last_variant_key || null;
+        if (skuRef && !String(resolvedProductName).includes('[SKU:')) {
+            resolvedProductName = `${resolvedProductName} [SKU:${skuRef}]`;
+        }
+
+        const orderAction = resolveOrderAction({ intent, data: extracted, rawText });
 
         // Persistence via dbService (which already handles the smart merge internally)
-        // dbService now strictly enforces that a NEW order MUST have a phone number.
+        // New orders require a valid phone number; reminders are handled from conversation history.
         const savePayload = {
             page_id: pageId,
             sender_id: senderId,
             platform: platform,
-            product_name: extracted.product_name || 'Recovered Lead',
+            product_name: resolvedProductName,
             phone: extracted.phone || null,
             address: extracted.address || extracted.location || 'Pending',
             quantity: extracted.quantity || '1',
             price: extracted.price ? parsePrice(extracted.price) : null,
             customer_name: extracted.customer_name || extracted.name || 'Pending',
-            customer_email: extracted.email || null
+            customer_email: extracted.email || null,
+            sender_number: extracted.phone || null,
+            order_action: orderAction
         };
+
+        // #region debug-point order-total-tracking
+        reportOrderTotalDebug('H2', 'orderService.orchestrateOrder.savePayload', 'Order payload prepared for dbService.saveOrder', {
+            platform,
+            intent,
+            orderAction,
+            rawData: data,
+            extracted,
+            savePayload
+        });
+        // #endregion
 
         try {
             const result = await dbService.saveOrder(savePayload);
+            const isNewOrder = Boolean(result?.isNew);
             
             // --- NEW: Email Notifications ---
             if (result) {
@@ -145,8 +211,8 @@ async function orchestrateOrder(params) {
                             await emailService.sendOrderConfirmation(orderData);
                         }
 
-                        // Send to Admin if email is configured
-                        if (config.admin_notification_email) {
+                        // Admin notification should fire only for a newly created order.
+                        if (isNewOrder && config.admin_notification_email) {
                             await emailService.sendAdminOrderNotification(config.admin_notification_email, orderData);
                         }
                     }
@@ -158,7 +224,7 @@ async function orchestrateOrder(params) {
             return {
                 status: 'SUCCESS',
                 orderId: result?.id,
-                isNew: result?.status !== 'updated',
+                isNew: Boolean(result?.isNew),
                 capturedFields: Object.keys(extracted).filter(k => extracted[k])
             };
         } catch (err) {

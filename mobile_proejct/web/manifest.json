@@ -1,0 +1,12 @@
+{
+  "name": "SalesmanAI Mobile",
+  "short_name": "SalesmanAI",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0B0B0B",
+  "theme_color": "#00FF88",
+  "description": "Unified inbox for Messenger, WhatsApp, and Instagram.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": []
+}

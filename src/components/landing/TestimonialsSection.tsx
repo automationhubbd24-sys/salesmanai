@@ -36,20 +36,20 @@ const TestimonialsSection = () => {
   ];
 
   return (
-    <section className="py-24 bg-background relative overflow-hidden">
+    <section id="testimonials" className="py-24 bg-[#050505] relative overflow-hidden border-t border-white/5">
       {/* Glow Effects */}
-      <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-blue-500/5 blur-[100px] rounded-full" />
-      <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-indigo-500/5 blur-[100px] rounded-full" />
+      <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-[#00ff88]/5 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-purple-600/5 blur-[120px] rounded-full pointer-events-none" />
 
       <div className="container mx-auto px-4 relative z-10">
-        <div className="text-center max-w-3xl mx-auto mb-16">
+        <div className="text-center max-w-3xl mx-auto mb-20">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold mb-6 uppercase tracking-wider"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-slate-400 text-xs font-black uppercase tracking-[0.3em] mb-6 backdrop-blur-xl"
           >
-            <Star className="w-3 h-3 fill-current" />
+            <Star className="w-3 h-3 fill-[#00ff88] text-[#00ff88]" />
             {t("Testimonials", "গ্রাহকদের মতামত")}
           </motion.div>
           <motion.h2
@@ -57,10 +57,10 @@ const TestimonialsSection = () => {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.1 }}
-            className="text-4xl md:text-5xl font-black text-white mb-6"
+            className="text-4xl md:text-6xl font-black text-white mb-6 tracking-tight"
           >
             {t("Loved by", "পছন্দ করেছেন")} <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00ff88] to-emerald-400">
               {t("hundreds of businesses", "শত শত উদ্যোক্তা")}
             </span>
           </motion.h2>
@@ -74,29 +74,29 @@ const TestimonialsSection = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.1 }}
-              className="relative p-8 rounded-3xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all duration-300 flex flex-col"
+              className="relative p-8 md:p-10 rounded-[2.5rem] bg-white/[0.02] border border-white/5 hover:border-[#00ff88]/30 transition-all duration-500 flex flex-col group"
             >
-              <div className="absolute top-6 right-8 text-white/5">
-                <Quote className="w-12 h-12" />
+              <div className="absolute top-8 right-10 text-white/[0.03] group-hover:text-[#00ff88]/5 transition-colors">
+                <Quote className="w-16 h-16" />
               </div>
               
-              <div className="flex gap-1 mb-6">
+              <div className="flex gap-1 mb-8">
                 {[...Array(testimonial.rating)].map((_, i) => (
-                  <Star key={i} className="w-4 h-4 fill-yellow-500 text-yellow-500" />
+                  <Star key={i} className="w-4 h-4 fill-yellow-500 text-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)]" />
                 ))}
               </div>
 
-              <p className="text-slate-300 text-lg font-medium leading-relaxed mb-8 flex-1 italic">
+              <p className="text-slate-300 text-lg font-medium leading-relaxed mb-10 flex-1 italic relative z-10">
                 "{testimonial.content}"
               </p>
 
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
-                  <User className="w-6 h-6 text-white" />
+              <div className="flex items-center gap-5 pt-8 border-t border-white/5">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center group-hover:border-[#00ff88]/30 transition-colors">
+                  <User className="w-7 h-7 text-white/70" />
                 </div>
                 <div>
                   <h4 className="text-white font-black text-sm uppercase tracking-wider">{testimonial.name}</h4>
-                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-0.5">{testimonial.role}</p>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">{testimonial.role}</p>
                 </div>
               </div>
             </motion.div>

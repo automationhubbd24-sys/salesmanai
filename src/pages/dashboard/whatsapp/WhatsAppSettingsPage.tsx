@@ -6,7 +6,7 @@ import { secureFetch } from "@/lib/api";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { Save, Bot, Sparkles, Key, Check, Image, Clock, Infinity as InfinityIcon, Loader2, Star } from "lucide-react";
+import { Save, Bot, Sparkles, Key, Check, Image, Clock, Infinity as InfinityIcon, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -39,14 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 const formSchema = z.object({
   provider: z.string().min(1, "Please select a provider"),
@@ -57,6 +50,7 @@ const formSchema = z.object({
 });
 
 const MANAGED_MODEL = import.meta.env.VITE_MANAGED_MODEL || "salesmanchatbot-pro";
+const PRO_PLUS_MANAGED_MODEL = "salesmanchatbot-pro-plus";
 
 type PromptProduct = {
   id: string | number;
@@ -72,6 +66,8 @@ export default function WhatsAppSettingsPage() {
   const [dbId, setDbId] = useState<string | null>(null);
   const [mode, setMode] = useState<"own" | "managed" | null>(null);
   const [activeMode, setActiveMode] = useState<"own" | "managed" | null>(null);
+  const [proPlusMode, setProPlusMode] = useState(false);
+  const [activeProPlusMode, setActiveProPlusMode] = useState(false);
   
   const [isPromptOpen, setIsPromptOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("text");
@@ -88,16 +84,9 @@ export default function WhatsAppSettingsPage() {
   // Behavior Settings
   const [wait, setWait] = useState<number>(8);
   const [historyLimit, setHistoryLimit] = useState<number>(10);
-  const [behaviorSaving, setBehaviorSaving] = useState(false);
-  const [semanticCacheEnabled, setSemanticCacheEnabled] = useState<boolean>(false);
-  const [embedEnabled, setEmbedEnabled] = useState<boolean>(false);
-  const [semanticThreshold, setSemanticThreshold] = useState<number>(0.96);
+  const [behaviorSaving, setBehaviorSaving] = useState<boolean>(false);
   const [temperature, setTemperature] = useState<number>(0.5);
   const [topP, setTopP] = useState<number>(0.9);
-  
-  // Order Notification Settings
-  const [orderEmailEnabled, setOrderEmailEnabled] = useState<boolean>(false);
-  const [adminNotificationEmail, setAdminNotificationEmail] = useState<string>("");
   
   // Optimization
   const [optimizing, setOptimizing] = useState(false);
@@ -110,7 +99,7 @@ export default function WhatsAppSettingsPage() {
   // Credits (Shared)
   const [messageCredit, setMessageCredit] = useState(0);
   const [planActive, setPlanActive] = useState(false);
-  const [isOwner, setIsOwner] = useState(true); // Assuming true for now as we don't have shared/team logic fully exposed in frontend yet for this page
+  const [isOwner, setIsOwner] = useState(true);
 
   const textPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const imagePromptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -127,7 +116,6 @@ export default function WhatsAppSettingsPage() {
   });
 
   const handleApplyCoupon = () => {
-    // Simple validation for demo - in production this would verify with backend
     if (couponCode.toUpperCase() === "FREE500" || couponCode.toUpperCase() === "START500") {
         setAppliedCoupon(couponCode.toUpperCase());
         setSelectedPlan("500_free");
@@ -141,6 +129,30 @@ export default function WhatsAppSettingsPage() {
   const [purchasing, setPurchasing] = useState(false);
   const [detailedCredits, setDetailedCredits] = useState<any>(null);
   const [isTeamView, setIsTeamView] = useState(false);
+  const getSubscriptionExpiryMeta = () => {
+    if (!detailedCredits?.monthly_expires_at) return null;
+    const expires = new Date(detailedCredits.monthly_expires_at);
+    const now = new Date();
+    const diffTime = expires.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      return {
+        text: `আর ${diffDays} দিন বাকি`,
+        className: "text-[11px] text-green-600 dark:text-green-400 font-bold"
+      };
+    }
+    if (diffDays === 0) {
+      return {
+        text: "আজ expire হবে",
+        className: "text-[11px] text-yellow-500 font-bold"
+      };
+    }
+    return {
+      text: "Expired",
+      className: "text-[11px] text-red-500 font-bold"
+    };
+  };
 
   const fetchUserBalance = async () => {
     try {
@@ -171,12 +183,12 @@ export default function WhatsAppSettingsPage() {
             bonus_credit: data.bonus_credit || 0,
             permanent_credit: data.permanent_credit || 0,
             subscription_plan: plan,
+            monthly_expires_at: data.monthly_expires_at || null,
             is_team_view: data.is_team_view
         });
         setMessageCredit(data.message_credit || 0);
         setPlanActive(plan !== 'none');
         
-        // Sync selectedPlan with active plan for UI consistency
         if (plan === 'starter') setSelectedPlan('m1000');
         else if (plan === 'pro') setSelectedPlan('m3000');
         else if (plan === 'enterprise') setSelectedPlan('m7500');
@@ -190,9 +202,9 @@ export default function WhatsAppSettingsPage() {
   const handlePurchaseCredits = async () => {
     const monthlyPlans = new Set(['m1000', 'm3000', 'm7500']);
     const creditPacks: Record<string, { price: number, credits: number }> = {
-      'p150': { price: 150, credits: 1000 },
-      'p700': { price: 700, credits: 5000 },
-      'p1350': { price: 1350, credits: 10000 },
+      'p300': { price: 300, credits: 1000 },
+      'p1200': { price: 1200, credits: 5000 },
+      'p2000': { price: 2000, credits: 10000 },
       '500_free': { price: 0, credits: 500 }
     };
 
@@ -223,7 +235,8 @@ export default function WhatsAppSettingsPage() {
             daily_used: data.daily_used || 0,
             bonus_credit: data.bonus_credit || 0,
             permanent_credit: data.permanent_credit || 0,
-            subscription_plan: data.subscription_plan || 'none'
+            subscription_plan: data.subscription_plan || 'none',
+            monthly_expires_at: data.monthly_expires_at || null
         });
         setMessageCredit(data.message_credit || 0);
         setPlanActive(data.subscription_plan !== 'none');
@@ -250,7 +263,8 @@ export default function WhatsAppSettingsPage() {
             daily_used: data.daily_used || 0,
             bonus_credit: data.bonus_credit || 0,
             permanent_credit: data.permanent_credit || 0,
-            subscription_plan: data.subscription_plan || 'none'
+            subscription_plan: data.subscription_plan || 'none',
+            monthly_expires_at: data.monthly_expires_at || null
         });
         setMessageCredit(data.message_credit || 0);
         setIsPricingOpen(false);
@@ -285,7 +299,6 @@ export default function WhatsAppSettingsPage() {
       setInitialTextPrompt(dbRow.text_prompt || "");
       setInitialImagePrompt(dbRow.image_prompt || "");
       
-      // Determine Mode
       const dbApiKey = dbRow.api_key || "";
       let isManaged = false;
       const cheapEngine = dbRow.cheap_engine !== undefined ? dbRow.cheap_engine : null;
@@ -300,11 +313,13 @@ export default function WhatsAppSettingsPage() {
 
       setMode(isManaged ? "managed" : "own");
       setActiveMode(isManaged ? "managed" : "own");
+      const isProPlusActive = Boolean(dbRow.pro_plus_mode);
+      setProPlusMode(isManaged ? isProPlusActive : false);
+      setActiveProPlusMode(isManaged ? isProPlusActive : false);
 
       const rawModel = dbRow.chat_model || dbRow.chatmodel || "openrouter/auto";
       const displayModel = rawModel.replace(":free", "");
 
-      // AI Settings
       form.reset({
         provider: dbRow.ai || dbRow.ai_provider || "openrouter",
         api_key: isManaged ? "" : dbApiKey,
@@ -313,22 +328,12 @@ export default function WhatsAppSettingsPage() {
         base_url: dbRow.custom_base_url || "",
       });
 
-      // Behavior
       setWait(dbRow.wait !== undefined && dbRow.wait !== null ? Number(dbRow.wait) : 8);
       setHistoryLimit(dbRow.check_conversion ?? 10);
-      setSemanticCacheEnabled(Boolean(dbRow.semantic_cache_enabled));
-      setEmbedEnabled(Boolean(dbRow.embed_enabled));
-      setSemanticThreshold(dbRow.semantic_cache_threshold ? Number(dbRow.semantic_cache_threshold) : 0.96);
       setTemperature(dbRow.temperature !== undefined && dbRow.temperature !== null ? Number(dbRow.temperature) : 0.5);
       setTopP(dbRow.top_p !== undefined && dbRow.top_p !== null ? Number(dbRow.top_p) : 0.9);
 
-      setOrderEmailEnabled(Boolean(dbRow.order_email_confirmation_enabled));
-      setAdminNotificationEmail(dbRow.admin_notification_email || "");
-
-      // Credits (Joined from user_configs) - Integrated with fetchUserBalance for real-time consistency
       await fetchUserBalance();
-
-      // Check ownership/permissions if needed (simplified for now)
       setIsOwner(true); 
 
     } catch (error) {
@@ -352,15 +357,7 @@ export default function WhatsAppSettingsPage() {
     }
   }, [id, fetchConfig, currentSession]);
 
-  // fetchUserBalance is now called inside fetchConfig or the connection effect
-  /*
-  useEffect(() => {
-    fetchUserBalance();
-  }, []);
-  */
-
   const fetchProductsForPrompt = async () => {
-    // FIX: currentSession has 'name', not 'session_name'
     const sessionName = String(currentSession?.name || localStorage.getItem("active_wa_session_id") || "");
     if (!sessionName) {
       toast.error("Active session missing. Please select a session.");
@@ -391,7 +388,6 @@ export default function WhatsAppSettingsPage() {
         headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
       });
 
-      // Handle non-ok but also empty/null gracefully
       let items: PromptProduct[] = [];
       if (res.ok) {
           const data = await res.json();
@@ -406,7 +402,6 @@ export default function WhatsAppSettingsPage() {
       setProductList(items);
     } catch (error) {
       console.error("Failed to load products for prompt (Non-fatal):", error);
-      // Don't show toast error to user, just log and show empty list
       setProductList([]);
     } finally {
       setProductLoading(false);
@@ -416,7 +411,6 @@ export default function WhatsAppSettingsPage() {
   const handleOpenPrompt = (tab: "text" | "image") => {
     setActiveTab(tab);
     setIsPromptOpen(true);
-    // Always fetch products fresh to ensure latest list
     fetchProductsForPrompt();
   };
 
@@ -511,13 +505,8 @@ export default function WhatsAppSettingsPage() {
         body: JSON.stringify({
           wait: wait,
           check_conversion: historyLimit,
-          semantic_cache_enabled: semanticCacheEnabled,
-          semantic_cache_threshold: semanticThreshold,
           temperature: temperature,
-          top_p: topP,
-          embed_enabled: embedEnabled,
-          order_email_confirmation_enabled: orderEmailEnabled,
-          admin_notification_email: adminNotificationEmail
+          top_p: topP
         })
       });
 
@@ -531,7 +520,6 @@ export default function WhatsAppSettingsPage() {
     }
   };
 
-
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     if (!dbId) return;
     setLoading(true);
@@ -539,7 +527,7 @@ export default function WhatsAppSettingsPage() {
     if (mode === "managed") {
         values.provider = "salesmanchatbot"; 
         values.api_key = MANAGED_SECRET_KEY;
-        values.chatmodel = "salesmanchatbot-pro";
+        values.chatmodel = proPlusMode ? PRO_PLUS_MANAGED_MODEL : "salesmanchatbot-pro";
     } else {
         if (!values.api_key) {
             toast.error("API Key is required for own provider");
@@ -557,28 +545,47 @@ export default function WhatsAppSettingsPage() {
       const token = localStorage.getItem("auth_token");
       if (!token) throw new Error("Please login again");
 
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
+      const teamOwner = localStorage.getItem("active_team_owner");
+      const headers: Record<string, string> = { 
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}` 
+      };
+      
+      if (teamOwner) {
+        headers['x-team-owner'] = teamOwner;
+      }
+
+      const payload: any = {
+        text_prompt: values.text_prompt,
+        ai: values.provider,
+        api_key: values.api_key,
+        chat_model: values.chatmodel,
+        vision_model: null,
+        voice_model: values.chatmodel,
+        custom_base_url: values.provider === 'custom' ? values.base_url : null,
+        cheap_engine: mode === "managed",
+        pro_plus_mode: mode === "managed" ? proPlusMode : false
+      };
+
+      console.log("Saving AI settings:", payload);
+
+      const resUpdate = await fetch(`${BACKEND_URL}/api/whatsapp/config/${dbId}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          ai_provider: values.provider,
-          api_key: values.api_key,
-          chat_model: values.chatmodel,
-          text_prompt: values.text_prompt,
-          base_url: values.base_url,
-          cheap_engine: mode === "managed"
-        }),
+        headers: headers,
+        body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("Failed to save AI settings");
+      if (!resUpdate.ok) {
+        const body = await resUpdate.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save settings");
+      }
 
       setActiveMode(mode);
-      toast.success("AI Settings updated successfully");
+      setActiveProPlusMode(mode === "managed" ? proPlusMode : false);
+      toast.success("AI settings saved successfully");
     } catch (error: any) {
-      toast.error(error.message);
+      console.error("Save settings error:", error);
+      toast.error("Failed to save settings: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -615,19 +622,18 @@ export default function WhatsAppSettingsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-           <h2 className="text-3xl font-bold tracking-tight">WhatsApp AI Settings</h2>
-           <p className="text-muted-foreground">
-             Configure your AI Assistant for WhatsApp
+           <h2 className="text-3xl font-bold tracking-tight">WhatsApp AI Intelligence</h2>
+           <p className="text-muted-foreground mt-1">
+             Connect your preferred AI brain for WhatsApp.
            </p>
         </div>
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+        <div className="flex gap-2">
             <Button 
                 onClick={() => handleOpenPrompt("text")} 
                 variant="outline"
-                className="flex-1 md:flex-none border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10 h-9 text-xs"
             >
                 <Bot className="mr-2 h-4 w-4" />
                 Edit System Prompt
@@ -635,7 +641,6 @@ export default function WhatsAppSettingsPage() {
             <Button 
                 onClick={() => handleOpenPrompt("image")} 
                 variant="outline"
-                className="flex-1 md:flex-none border-[#00ff88]/40 text-[#00ff88] hover:bg-[#00ff88]/10 h-9 text-xs"
             >
                 <Image className="mr-2 h-4 w-4" />
                 Edit Image Prompt
@@ -643,21 +648,21 @@ export default function WhatsAppSettingsPage() {
         </div>
       </div>
 
-      <div className="grid gap-6">
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+      <div className="space-y-6">
+        <Card className="bg-background border-border">
           <CardHeader>
-            <CardTitle className="flex justify-between items-center">
+            <CardTitle className="flex justify-between items-center flex-wrap gap-2">
                 AI Provider Configuration
                 {activeMode && (
                     <Badge
                       variant="outline"
                       className={
                         activeMode === 'managed'
-                          ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/60'
-                          : 'border-white/30 text-white/70'
+                          ? 'bg-primary/10 text-primary border-primary/60'
+                          : 'border-border text-muted-foreground'
                       }
                     >
-                        Status: {activeMode === 'managed' ? "User Cloud API" : "Own API"}
+                        Status: {activeMode === 'managed' ? (activeProPlusMode ? PRO_PLUS_MANAGED_MODEL : "User Cloud API") : "Own API"}
                     </Badge>
                 )}
             </CardTitle>
@@ -668,12 +673,12 @@ export default function WhatsAppSettingsPage() {
           <CardContent>
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-10 space-y-4">
-                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#00ff88] border-t-transparent" />
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground animate-pulse">Detecting AI Configuration...</p>
                 </div>
             ) : (
                 <>
-                    <div className="mb-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                    <div className="mb-4 rounded-xl border border-border bg-secondary/30 p-3">
                         <RadioGroup 
                             value={mode || ""} 
                             onValueChange={(v) => {
@@ -685,11 +690,11 @@ export default function WhatsAppSettingsPage() {
                     <RadioGroupItem value="own" id="own" className="peer sr-only" />
                     <Label
                       htmlFor="own"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/40 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Key className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">Use Own API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Use your own API Key (Gemini, GPT)
                       </span>
                     </Label>
@@ -698,11 +703,11 @@ export default function WhatsAppSettingsPage() {
                     <RadioGroupItem value="managed" id="managed" className="peer sr-only" />
                     <Label
                       htmlFor="managed"
-                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-white/10 bg-black/40 p-3 text-sm transition-all hover:border-[#00ff88]/50 hover:bg-[#00ff88]/5 peer-data-[state=checked]:border-[#00ff88] peer-data-[state=checked]:bg-[#00ff88]/10 peer-data-[state=checked]:text-[#00ff88] cursor-pointer"
+                      className="flex h-full min-h-[80px] flex-col items-start justify-center gap-1 rounded-lg border border-border bg-secondary/40 p-3 text-sm transition-all hover:border-primary/50 hover:bg-primary/5 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 peer-data-[state=checked]:text-primary cursor-pointer"
                     >
-                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-[#00ff88]" />
+                      <Sparkles className="mb-1 h-5 w-5 transition-colors peer-data-[state=checked]:text-primary" />
                       <span className="font-semibold">User Cloud API</span>
-                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-[#00ff88]">
+                      <span className="text-[11px] text-muted-foreground peer-data-[state=checked]:text-primary">
                         Hassle-free, High Speed Engine
                       </span>
                     </Label>
@@ -806,9 +811,9 @@ export default function WhatsAppSettingsPage() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot 2.0 Pro</SelectItem>
-                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot 2.0 Flash</SelectItem>
-                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot 2.0 Lite</SelectItem>
+                                <SelectItem value="salesmanchatbot-pro">SalesmanChatbot 2.0 Pro (Fast & Accurate)</SelectItem>
+                                <SelectItem value="salesmanchatbot-flash">SalesmanChatbot 2.0 Flash (Ultra Fast)</SelectItem>
+                                <SelectItem value="salesmanchatbot-lite">SalesmanChatbot 2.0 Lite (Simple Tasks)</SelectItem>
                               </SelectContent>
                             </Select>
                           ) : (
@@ -822,11 +827,28 @@ export default function WhatsAppSettingsPage() {
                       </FormItem>
                     )}
                   />
+
                     </>
                 ) : (
                     <div className="space-y-6">
-                        {/* Compact Managed Mode Banner */}
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 dark:border-emerald-800/30 dark:bg-emerald-900/10 shadow-sm transition-all hover:shadow-md">
+                            <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-500/20 bg-secondary/40 p-3">
+                                <div>
+                                    <div className="text-sm font-semibold">Switch Pro Plus Mode</div>
+                                    <p className="text-xs text-muted-foreground">
+                                        Enabling this uses AI Studio endpoints for smart text, audio, and image fallbacks.
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <Badge
+                                        variant="outline"
+                                        className={proPlusMode ? "border-primary/60 text-primary" : "border-border text-muted-foreground"}
+                                    >
+                                        {proPlusMode ? PRO_PLUS_MANAGED_MODEL : "Standard Cloud"}
+                                    </Badge>
+                                    <Switch checked={proPlusMode} onCheckedChange={setProPlusMode} />
+                                </div>
+                            </div>
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-4">
                                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/50">
@@ -835,64 +857,84 @@ export default function WhatsAppSettingsPage() {
                                     <div>
                                         <h3 className="font-bold text-emerald-900 dark:text-emerald-100">User Cloud API</h3>
                                         <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
-                                            High-speed engine. No setup required.
+                                            {proPlusMode ? "SalesmanChatbot Pro Plus routing with smart fallback." : "High-speed engine. No setup required."}
                                         </p>
                                     </div>
                                 </div>
 
                                 {(detailedCredits?.subscription_plan !== 'none' || detailedCredits?.permanent_credit > 0 || messageCredit > 0) ? (
-                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-white to-purple-50/20 p-3 shadow-sm border border-purple-100 dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
+                                    <div className="flex items-center gap-4 rounded-xl bg-gradient-to-br from-secondary/80 to-purple-500/5 p-4 shadow-lg border border-border dark:from-purple-900/20 dark:to-purple-950/20 dark:border-purple-800/30">
                                         <div className="text-right flex-1">
-                                            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Current Plan</p>
-                                            <div className="text-sm font-black text-purple-700 dark:text-purple-400 leading-none">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-2">Current Status</p>
+                                            <div className="text-base font-black text-foreground leading-none tracking-tight flex items-center justify-end gap-2">
+                                                <Sparkles className="h-4 w-4 text-[#00ff88]" />
                                                 {isTeamView ? (
                                                   <span className="text-amber-500 font-bold">Managed by Owner</span>
                                                 ) : (
                                                   <>
-                                                    {(selectedPlan === '500_free' || (detailedCredits?.daily_limit === 0 && messageCredit <= 100)) && "Free Credits"}
+                                                    {selectedPlan === '500_free' && "Free Credits"}
                                                     {(selectedPlan === '1000' || selectedPlan === 'm1000' || selectedPlan === 'starter') && "Starter Plan"}
                                                     {(selectedPlan === '5000' || selectedPlan === 'm3000' || selectedPlan === 'pro') && (detailedCredits?.daily_limit > 0 ? "Pro Plan" : "Free Credits")}
                                                     {(selectedPlan === '10000' || selectedPlan === 'm7500' || selectedPlan === 'enterprise') && (detailedCredits?.daily_limit > 0 ? "Enterprise Plan" : "Free Credits")}
-                                                    {selectedPlan === 'p150' && "Basic Pack"}
-                                                    {selectedPlan === 'p700' && "Value Pack"}
-                                                    {selectedPlan === 'p1350' && "Bulk Saver"}
+                                                    {selectedPlan === 'p300' && "Basic Pack"}
+                                                    {selectedPlan === 'p1200' && "Value Pack"}
+                                                    {selectedPlan === 'p2000' && "Bulk Saver"}
                                                     {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan !== 'none' && (
                                                       <span className="capitalize">{detailedCredits?.subscription_plan} Plan</span>
                                                     )}
                                                     {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan === 'none' && (detailedCredits?.permanent_credit > 0 || messageCredit > 0) && (
                                                       <span>Permanent Packages</span>
                                                     )}
+                                                    {(!selectedPlan || selectedPlan === 'none') && detailedCredits?.subscription_plan === 'none' && detailedCredits?.permanent_credit === 0 && messageCredit <= 100 && (
+                                                      <span>Free Credits</span>
+                                                    )}
                                                   </>
                                                 )}
                                             </div>
+                                            {!isTeamView && getSubscriptionExpiryMeta() && (
+                                                <div className="mt-2 flex justify-end">
+                                                    <div className="rounded-md bg-green-500/10 border border-green-500/20 px-2 py-1">
+                                                        <span className={getSubscriptionExpiryMeta()?.className}>
+                                                            {getSubscriptionExpiryMeta()?.text}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
                                             
-                                            <div className="mt-1.5 space-y-1.5">
-                                                <div className="flex items-center justify-end gap-1.5">
-                                                    <div className="h-1 w-1 rounded-full bg-green-500 animate-pulse" />
-                                                    <span className="text-[11px] font-bold text-green-600 dark:text-green-400">
-                                                        {messageCredit.toLocaleString()} Credits
+                                            <div className="mt-3 space-y-2">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <div className="h-1.5 w-1.5 rounded-full bg-[#00ff88] shadow-[0_0_8px_rgba(0,255,136,0.5)] animate-pulse" />
+                                                    <span className="text-sm font-black text-[#00ff88]">
+                                                        {messageCredit.toLocaleString()} <span className="text-[10px] uppercase opacity-60">Credits</span>
                                                     </span>
                                                 </div>
                                                 
-                                                {detailedCredits && (
-                                                    <div className="flex flex-wrap justify-end gap-1.5">
-                                                        {detailedCredits.daily_limit > 0 && (
-                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-500/5 border border-blue-500/10 text-[9px] text-blue-600 dark:text-blue-400 font-bold">
-                                                                D: {detailedCredits.daily_used}/{detailedCredits.daily_limit}
-                                                            </div>
-                                                        )}
-                                                        {detailedCredits.bonus_credit > 0 && (
-                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/5 border border-amber-500/10 text-[9px] text-amber-600 dark:text-amber-400 font-bold">
-                                                                B: {detailedCredits.bonus_credit.toLocaleString()}
-                                                            </div>
-                                                        )}
-                                                        {detailedCredits.permanent_credit > 0 && (
-                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/5 border border-emerald-500/10 text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">
-                                                                P: {detailedCredits.permanent_credit.toLocaleString()}
-                                                            </div>
-                                                        )}
+                                                {detailedCredits && detailedCredits.daily_limit > 0 && (
+                                                    <div className="flex flex-col items-end gap-1">
+                                                        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-600 dark:text-blue-400 font-bold">
+                                                            Daily: {detailedCredits.daily_used.toLocaleString()} / {detailedCredits.daily_limit.toLocaleString()}
+                                                        </div>
+                                                        <div className="w-24 h-1 bg-secondary rounded-full overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                                style={{ width: `${Math.min(100, (detailedCredits.daily_used / detailedCredits.daily_limit) * 100)}%` }}
+                                                            />
+                                                        </div>
                                                     </div>
                                                 )}
+
+                                                <div className="flex flex-wrap justify-end gap-2 mt-2">
+                                                    {detailedCredits?.bonus_credit > 0 && (
+                                                        <div className="px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] text-amber-600 dark:text-amber-500 font-black shadow-sm">
+                                                            BONUS: {detailedCredits.bonus_credit.toLocaleString()}
+                                                        </div>
+                                                    )}
+                                                    {detailedCredits?.permanent_credit > 0 && (
+                                                        <div className="px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[12px] text-emerald-600 dark:text-emerald-500 font-black shadow-sm">
+                                                            PERMANENT: {detailedCredits.permanent_credit.toLocaleString()}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                         {!isTeamView && (
@@ -901,7 +943,7 @@ export default function WhatsAppSettingsPage() {
                                               variant="outline"  
                                               size="sm"
                                               onClick={() => setIsPricingOpen(true)} 
-                                              className="border-purple-200 hover:bg-purple-100/50 text-purple-700 font-bold h-8 text-[11px] shadow-sm px-3"
+                                              className="border-border hover:bg-secondary text-foreground font-black h-10 text-[11px] shadow-sm px-4 rounded-xl ml-2"
                                           >
                                               Upgrade
                                           </Button>
@@ -937,20 +979,18 @@ export default function WhatsAppSettingsPage() {
                             </div>
                         </div>
 
-                        {/* Pricing Modal */}
                         <Dialog open={isPricingOpen} onOpenChange={setIsPricingOpen}>
-                            <DialogContent className="max-w-4xl bg-[#0b0b0b] border-white/10 text-white">
+                            <DialogContent className="max-w-4xl bg-card border-border text-foreground">
                                 <DialogHeader>
-                                    <DialogTitle className="text-2xl font-black text-[#00ff88]">Select Your AI Plan</DialogTitle>
-                                    <DialogDescription className="text-gray-400">
+                                    <DialogTitle className="text-2xl font-black text-primary">Select Your AI Plan</DialogTitle>
+                                    <DialogDescription className="text-muted-foreground">
                                         Choose the message capacity that fits your needs. Starter/Pro have no expiry; Enterprise is valid for 30 days.
                                     </DialogDescription>
                                 </DialogHeader>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6">
-                                    {/* Monthly Packages */}
                                     <div className="space-y-4">
-                                        <h4 className="text-[#00ff88] font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                                        <h4 className="text-primary font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <Clock className="h-4 w-4" />
                                             Monthly Packages
                                         </h4>
@@ -962,84 +1002,82 @@ export default function WhatsAppSettingsPage() {
                                             ].map((plan) => (
                                                 <div 
                                                     key={plan.id}
-                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-[#00ff88]/60 ${selectedPlan === plan.id ? 'border-[#00ff88] bg-[#00ff88]/10' : 'border-white/10 bg-white/5'}`}
+                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-primary/60 ${selectedPlan === plan.id ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50'}`}
                                                     onClick={() => setSelectedPlan(plan.id)}
                                                 >
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <h3 className="font-bold text-lg">{plan.name}</h3>
-                                                                {plan.popular && <Badge className="bg-[#00ff88] text-black text-[8px] h-4">POPULAR</Badge>}
+                                                                {plan.popular && <Badge className="bg-primary text-primary-foreground text-[8px] h-4">POPULAR</Badge>}
                                                             </div>
-                                                            <p className="text-xs text-gray-400">{plan.msg} • {plan.bonus}</p>
+                                                            <p className="text-xs text-muted-foreground">{plan.msg} • {plan.bonus}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <div className="text-xl font-black text-[#00ff88]">৳{plan.price}</div>
-                                                            <p className="text-[10px] text-gray-500">/ month</p>
+                                                            <div className="text-xl font-black text-primary">৳{plan.price}</div>
+                                                            <p className="text-[10px] text-muted-foreground">/ month</p>
                                                         </div>
                                                     </div>
-                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-[#00ff88] rounded-full p-1 text-black shadow-lg"><Check className="h-3 w-3" /></div>}
+                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-primary rounded-full p-1 text-primary-foreground shadow-lg"><Check className="h-3 w-3" /></div>}
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
 
-                                    {/* Permanent Packages */}
                                     <div className="space-y-4">
-                                        <h4 className="text-emerald-400 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                                        <h4 className="text-emerald-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                                             <InfinityIcon className="h-4 w-4" />
                                             Permanent Packages
                                         </h4>
                                         <div className="space-y-3">
                                             {[
-                                                { id: 'p150', name: 'Basic Pack', price: '300', msg: '1,000 Messages' },
-                                                { id: 'p700', name: 'Value Pack', price: '1,200', msg: '5,000 Messages', popular: true },
-                                                { id: 'p1350', name: 'Bulk Saver', price: '2,000', msg: '10,000 Messages' }
+                                                { id: 'p300', name: 'Basic Pack', price: '300', msg: '1,000 Messages' },
+                                                { id: 'p1200', name: 'Value Pack', price: '1,200', msg: '5,000 Messages', popular: true },
+                                                { id: 'p2000', name: 'Bulk Saver', price: '2,000', msg: '10,000 Messages' }
                                             ].map((plan) => (
                                                 <div 
                                                     key={plan.id}
-                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-emerald-400/60 ${selectedPlan === plan.id ? 'border-emerald-400 bg-emerald-400/10' : 'border-white/10 bg-white/5'}`}
+                                                    className={`cursor-pointer relative rounded-2xl border-2 p-4 transition-all hover:border-emerald-500/60 ${selectedPlan === plan.id ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-secondary/50'}`}
                                                     onClick={() => setSelectedPlan(plan.id)}
                                                 >
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <h3 className="font-bold text-lg">{plan.name}</h3>
-                                                                {plan.popular && <Badge className="bg-emerald-400 text-black text-[8px] h-4">BEST VALUE</Badge>}
+                                                                {plan.popular && <Badge className="bg-emerald-500 text-white text-[8px] h-4">BEST VALUE</Badge>}
                                                             </div>
-                                                            <p className="text-xs text-gray-400">{plan.msg}</p>
+                                                            <p className="text-xs text-muted-foreground">{plan.msg}</p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <div className="text-xl font-black text-emerald-400">৳{plan.price}</div>
-                                                            <p className="text-[10px] text-gray-500">No Expiry</p>
+                                                            <div className="text-xl font-black text-emerald-500">৳{plan.price}</div>
+                                                            <p className="text-[10px] text-muted-foreground">No Expiry</p>
                                                         </div>
                                                     </div>
-                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-emerald-400 rounded-full p-1 text-black shadow-lg"><Check className="h-3 w-3" /></div>}
+                                                    {selectedPlan === plan.id && <div className="absolute -right-2 -top-2 bg-emerald-500 rounded-full p-1 text-white shadow-lg"><Check className="h-3 w-3" /></div>}
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Coupon Section in Modal */}
-                                <div className="space-y-4 pt-6 border-t border-dashed border-white/10">
+                                <div className="space-y-4 pt-6 border-t border-dashed border-border">
                                      <div className="flex items-end gap-3">
                                          <div className="grid gap-2 flex-1 max-w-xs">
-                                             <Label htmlFor="coupon" className="text-gray-400 font-bold uppercase tracking-wider text-xs">Have a Coupon?</Label>
+                                             <Label htmlFor="coupon" className="text-muted-foreground font-bold uppercase tracking-wider text-xs">Have a Coupon?</Label>
                                              <Input 
                                                  id="coupon" 
                                                  placeholder="ENTER CODE (E.G. FREE500)" 
                                                  value={couponCode}
                                                  onChange={(e) => setCouponCode(e.target.value)}
                                                  disabled={!!appliedCoupon}
-                                                 className="uppercase bg-white/5 border-white/10 focus:border-[#00ff88]/60 font-mono text-white"
+                                                 className="uppercase bg-secondary border-border focus:border-primary/60 font-mono text-foreground"
                                              />
                                          </div>
                                          <Button 
                                              type="button" 
                                              onClick={handleApplyCoupon}
                                              disabled={!!appliedCoupon || !couponCode}
-                                             className="bg-white/10 hover:bg-white/20 text-white font-bold"
+                                             className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
                                          >
                                              {appliedCoupon ? "Applied" : "Apply Code"}
                                          </Button>
@@ -1047,23 +1085,23 @@ export default function WhatsAppSettingsPage() {
  
                                      {appliedCoupon && (
                                          <div 
-                                             className={`cursor-pointer relative rounded-xl border-2 p-4 shadow-sm transition-all border-[#00ff88] bg-[#00ff88]/10 animate-in fade-in zoom-in duration-300`}
+                                             className={`cursor-pointer relative rounded-xl border-2 p-4 shadow-sm transition-all border-primary bg-primary/10 animate-in fade-in zoom-in duration-300`}
                                              onClick={() => setSelectedPlan('500_free')}
                                          >
                                              <div className="flex flex-col items-center justify-center space-y-2">
-                                                 <Badge className="bg-[#00ff88] text-black font-black mb-2">Coupon Applied</Badge>
-                                                 <h3 className="font-bold text-xl text-[#00ff88]">Trial Pack</h3>
-                                                 <div className="text-4xl font-black text-white">FREE</div>
-                                                 <p className="text-sm text-gray-400 font-medium">500 Messages Credit</p>
-                                                 {selectedPlan === '500_free' && <div className="absolute top-3 right-3 text-[#00ff88]"><Check className="h-7 w-7" /></div>}
+                                                 <Badge className="bg-primary text-primary-foreground font-black mb-2">Coupon Applied</Badge>
+                                                 <h3 className="font-bold text-xl text-primary">Trial Pack</h3>
+                                                 <div className="text-4xl font-black text-foreground">FREE</div>
+                                                 <p className="text-sm text-muted-foreground font-medium">500 Messages Credit</p>
+                                                 {selectedPlan === '500_free' && <div className="absolute top-3 right-3 text-primary"><Check className="h-7 w-7" /></div>}
                                              </div>
                                          </div>
                                      )}
                                 </div>
 
                                 <DialogFooter className="mt-6">
-                                    <Button variant="ghost" onClick={() => setIsPricingOpen(false)} className="text-gray-400 hover:text-white" disabled={purchasing}>Cancel</Button>
-                                    <Button onClick={handlePurchaseCredits} disabled={purchasing} className="bg-[#00ff88] text-black font-black px-8 hover:bg-[#00e67a] shadow-[0_10px_30px_rgba(0,255,136,0.25)]">
+                                    <Button variant="ghost" onClick={() => setIsPricingOpen(false)} className="text-muted-foreground hover:text-foreground" disabled={purchasing}>Cancel</Button>
+                                    <Button onClick={handlePurchaseCredits} disabled={purchasing} className="bg-primary text-primary-foreground font-black px-8 hover:bg-primary/90">
                                         {purchasing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                                         Confirm & Pay
                                     </Button>
@@ -1091,7 +1129,7 @@ export default function WhatsAppSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
+        <Card className="bg-background border-border">
             <CardHeader>
                 <CardTitle>Response Behavior</CardTitle>
                 <CardDescription>Control how and when the AI replies.</CardDescription>
@@ -1188,103 +1226,34 @@ export default function WhatsAppSettingsPage() {
                         </p>
                     </div>
 
-                    <div className="border-t border-white/5 pt-6 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-1">
-                                <Label className="text-base">Order Email Notifications</Label>
-                                <p className="text-sm text-muted-foreground">
-                                    Send order confirmation emails to customers and notifications to you.
-                                </p>
-                            </div>
-                            <Switch 
-                                checked={orderEmailEnabled}
-                                onCheckedChange={setOrderEmailEnabled}
-                            />
-                        </div>
 
-                        {orderEmailEnabled && (
-                            <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="admin-email">Your Notification Email</Label>
-                                    <Input 
-                                        id="admin-email"
-                                        placeholder="admin@example.com"
-                                        value={adminNotificationEmail}
-                                        onChange={(e) => setAdminNotificationEmail(e.target.value)}
-                                        className="max-w-md"
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        We will send a copy of every new order to this email.
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-                    </div>
 
-                    <Button 
-                        onClick={handleSaveBehavior} 
-                        disabled={behaviorSaving}
-                        className="w-full md:w-auto"
-                        variant="secondary"
-                    >
-                        {behaviorSaving ? "Saving..." : "Update Behavior"}
-                    </Button>
-                    
-                    {/* Semantic Cache Controls - Removed from User View (Admin Only) */}
-                    {/*
-                    <div className="pt-4 border-t border-white/10 grid gap-4">
-                      <h3 className="text-lg font-semibold">Semantic Caching</h3>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm">Enable Semantic Cache</p>
-                          <p className="text-xs text-muted-foreground">Fast reply for repeated questions</p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={semanticCacheEnabled}
-                          onChange={(e) => setSemanticCacheEnabled(e.target.checked)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm">Use Embedding (Advanced)</p>
-                          <p className="text-xs text-muted-foreground">Turn off to use fuzzy matching</p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={embedEnabled}
-                          onChange={(e) => setEmbedEnabled(e.target.checked)}
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">Threshold</span>
-                        <Input 
-                          type="number" 
-                          value={semanticThreshold} 
-                          onChange={(e) => setSemanticThreshold(Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.96)))} 
-                          className="w-24 font-mono"
-                        />
-                        <span className="text-sm text-muted-foreground">0.50 - 0.99 (Default: 0.96)</span>
-                      </div>
+                    <div className="pt-4">
+                        <Button 
+                            onClick={handleSaveBehavior} 
+                            disabled={behaviorSaving}
+                            className="w-full md:w-auto"
+                            variant="secondary"
+                        >
+                            {behaviorSaving ? "Saving..." : "Update Behavior"}
+                        </Button>
                     </div>
-                    */}
                 </div>
             </CardContent>
         </Card>
       </div>
 
-      {/* System Prompt Full Screen Dialog */}
       <Dialog open={isPromptOpen} onOpenChange={setIsPromptOpen}>
-        <DialogContent className="max-w-5xl h-[90vh] flex flex-col">
+        <DialogContent className="max-w-5xl h-[90vh] flex flex-col bg-card border-border text-foreground">
             <DialogHeader>
                 <DialogTitle>Edit AI Instructions</DialogTitle>
-                <DialogDescription>
+                <DialogDescription className="text-muted-foreground">
                     Define your AI's persona and how it handles images.
                 </DialogDescription>
             </DialogHeader>
             <div className="flex-1 py-4 overflow-hidden">
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-                    <TabsList>
+                    <TabsList className="bg-secondary border-border">
                         <TabsTrigger value="text">System Prompt (Text)</TabsTrigger>
                         <TabsTrigger value="image">Image Detection Prompt</TabsTrigger>
                     </TabsList>
@@ -1300,10 +1269,10 @@ export default function WhatsAppSettingsPage() {
                                 placeholder="Search product..."
                                 value={productSearch}
                                 onChange={(e) => setProductSearch(e.target.value)}
-                                className="h-7 max-w-[180px] text-xs bg-black/40 border-white/10"
+                                className="h-7 max-w-[180px] text-xs bg-secondary/60 border-border"
                               />
                             </div>
-                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-white/10 rounded-md bg-black/20 p-2">
+                            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border border-border rounded-md bg-secondary/40 p-2">
                               {productLoading && (
                                 <span className="text-xs text-muted-foreground">
                                   Loading products...
@@ -1329,7 +1298,7 @@ export default function WhatsAppSettingsPage() {
                                       key={p.id}
                                       type="button"
                                       onClick={() => handleInsertProductIntoPrompt(p)}
-                                      className="text-xs px-2 py-1 rounded-full border border-[#00ff88]/30 bg-[#00ff88]/5 hover:bg-[#00ff88]/15 hover:border-[#00ff88] transition-colors"
+                                      className="text-xs px-2 py-1 rounded-full border border-primary/30 bg-primary/5 hover:bg-primary/15 hover:border-primary transition-colors text-foreground"
                                     >
                                       {p.name || "Untitled"}
                                     </button>
@@ -1340,7 +1309,7 @@ export default function WhatsAppSettingsPage() {
                             <Textarea 
                               ref={textPromptRef}
                               defaultValue={initialTextPrompt}
-                              className="w-full flex-1 h-full font-mono text-sm leading-relaxed p-4 resize-none"
+                              className="w-full flex-1 h-full font-mono text-sm leading-relaxed p-4 resize-none bg-background border-border"
                               placeholder="You are a helpful assistant..."
                             />
                           </div>
@@ -1349,15 +1318,15 @@ export default function WhatsAppSettingsPage() {
                     
                     <TabsContent value="image" className="flex-1 mt-4 h-full">
                          <div className="space-y-2 h-full flex flex-col">
-                            <div className="bg-muted/50 p-4 rounded-lg text-sm text-muted-foreground">
-                                <p className="font-semibold mb-1">How Image Detection Works:</p>
+                            <div className="bg-secondary/40 p-4 rounded-lg text-sm text-muted-foreground border border-border">
+                                <p className="font-semibold mb-1 text-foreground">How Image Detection Works:</p>
                                 <p>When a user sends an image, the AI will first "see" it using this prompt. The result is then passed to the main chat AI.</p>
                                 <p className="mt-2 italic">Example: "Analyze this image. If it's a product, identify the name, price, and color. If it's a payment screenshot, extract the transaction ID."</p>
                             </div>
                             <Textarea 
                                 ref={imagePromptRef}
                                 defaultValue={initialImagePrompt}
-                                className="w-full flex-1 font-mono text-sm leading-relaxed p-4 resize-none"
+                                className="w-full flex-1 font-mono text-sm leading-relaxed p-4 resize-none bg-background border-border"
                                 placeholder="Describe how the AI should analyze images..."
                             />
                         </div>
@@ -1370,14 +1339,13 @@ export default function WhatsAppSettingsPage() {
                         variant="secondary" 
                         onClick={handleOptimizePrompt} 
                         disabled={optimizing || promptSaving}
-                        className="bg-[#00ff88]/10 hover:bg-[#00ff88]/20 text-[#00ff88]"
                     >
                         {optimizing ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" />
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
                             <Sparkles className="mr-2 h-4 w-4" />
                         )}
-                        Auto-Format for Zero Cost
+                        Auto-Format Prompt
                     </Button>
                 </div>
                 <div className="flex gap-2">
@@ -1385,13 +1353,14 @@ export default function WhatsAppSettingsPage() {
                       Cancel
                     </Button>
                     <Button onClick={handleSavePrompt} disabled={promptSaving || optimizing}>
-                        {promptSaving ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent mr-2" /> : <Save className="mr-2 h-4 w-4" />}
+                        {promptSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                         Save Prompts
                     </Button>
                 </div>
             </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }

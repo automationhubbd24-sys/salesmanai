@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS products (
     description TEXT,
     keywords TEXT,
     image_url TEXT,
+    video_url TEXT,
     is_active BOOLEAN DEFAULT TRUE,
     price NUMERIC DEFAULT 0,
     stock INTEGER DEFAULT 0,

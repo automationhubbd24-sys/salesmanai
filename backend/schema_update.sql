@@ -127,19 +127,6 @@ BEGIN
     WHERE email = v_user_email;
 
     IF v_user_id IS NULL THEN
-        -- Fallback: Try to find in whatsapp_sessions if auth lookup fails
-        -- (This handles cases where email casing might differ or auth table is restricted)
-        BEGIN
-            SELECT user_id::uuid INTO v_user_id
-            FROM public.whatsapp_sessions
-            WHERE user_email = v_user_email
-            LIMIT 1;
-        EXCEPTION WHEN OTHERS THEN
-            v_user_id := NULL;
-        END;
-    END IF;
-
-    IF v_user_id IS NULL THEN
         RAISE EXCEPTION 'User ID not found for email: %. User must be registered.', v_user_email;
     END IF;
 
@@ -190,9 +177,8 @@ WITH CHECK (auth.uid()::text = user_id);
 
 
 -- ==========================================
---  6. WhatsApp Sessions Updates (Expiry)
+--  6. WhatsApp Message Database Updates (Expiry)
 -- ==========================================
--- NOTE: Table name is 'whatsapp_message_database', NOT 'whatsapp_sessions'
 ALTER TABLE public.whatsapp_message_database 
 ADD COLUMN IF NOT EXISTS expires_at timestamp with time zone,
 ADD COLUMN IF NOT EXISTS plan_days integer DEFAULT 30;
@@ -243,3 +229,55 @@ DROP POLICY IF EXISTS "Users can delete own sessions" ON public.whatsapp_message
 CREATE POLICY "Users can delete own sessions" 
 ON public.whatsapp_message_database FOR DELETE
 USING (auth.uid()::text = user_id);
+
+-- ==========================================
+--  9. Team Management Order Allocation
+-- ==========================================
+-- Additive storage. Existing orders are not altered or reassigned.
+CREATE TABLE IF NOT EXISTS public.team_order_settings (
+  owner_email TEXT PRIMARY KEY,
+  mode TEXT NOT NULL DEFAULT 'manual' CHECK (mode IN ('manual', 'equal_share')),
+  batch_size INTEGER NOT NULL DEFAULT 1 CHECK (batch_size > 0),
+  overflow BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.team_order_assignments (
+  owner_email TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('fb', 'whatsapp')),
+  resource_id TEXT NOT NULL,
+  order_identity TEXT NOT NULL,
+  member_email TEXT,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (owner_email, source, resource_id, order_identity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_order_assignments_owner_member
+  ON public.team_order_assignments (owner_email, member_email, assigned_at DESC);
+
+-- ==========================================
+--  10. Team Management Human Reply Attribution
+-- ==========================================
+ALTER TABLE public.fb_chats
+  ADD COLUMN IF NOT EXISTS admin_user_id UUID,
+  ADD COLUMN IF NOT EXISTS admin_email TEXT;
+
+ALTER TABLE public.whatsapp_chats
+  ADD COLUMN IF NOT EXISTS admin_user_id UUID,
+  ADD COLUMN IF NOT EXISTS admin_email TEXT;
+
+-- Supports per-admin human-reply analytics within a Facebook page.
+CREATE INDEX IF NOT EXISTS idx_fb_chats_human_admin_analytics
+  ON public.fb_chats (page_id, admin_user_id, created_at DESC)
+  WHERE admin_user_id IS NOT NULL;
+
+-- Supports per-admin human-reply analytics within a WhatsApp session.
+CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_human_admin_analytics
+  ON public.whatsapp_chats (session_name, admin_user_id, created_at DESC)
+  WHERE admin_user_id IS NOT NULL;
+
+-- Supports efficient workload counts for allocated team members.
+CREATE INDEX IF NOT EXISTS idx_team_order_assignments_workload
+  ON public.team_order_assignments (owner_email, member_email)
+  WHERE member_email IS NOT NULL;

@@ -150,12 +150,67 @@ interface CacheConfig {
   created_at?: string;
 }
 
+type DiagnosticConfig = {
+  page_id: string;
+  platform: string;
+  trace_enabled: boolean;
+  trace_level: string;
+  trace_reason?: string | null;
+  trace_expires_at?: string | null;
+  updated_at?: string;
+};
+
+type DiagnosticReport = {
+  id: number;
+  page_id: string;
+  platform: string;
+  message_id: string;
+  trace_id?: string | null;
+  report_type?: string;
+  report_note?: string | null;
+  status: string;
+  root_cause?: string | null;
+  created_at: string;
+  trace_summary?: any;
+};
+
 type EngineTestResult = {
   model: string;
   success: boolean;
   latency: number | null;
   error: string | null;
   preview: string | null;
+};
+
+type DeveloperModelConfig = {
+  id: string;
+  name: string;
+  upstream_model: string;
+  upstream_type: string;
+  input_price?: number;
+  output_price?: number;
+  cached_input_price?: number;
+  context_length?: number;
+  max_tokens?: number;
+  max_requests_per_day?: number;
+  max_tokens_per_day?: number;
+  released?: string;
+  cache_enabled?: boolean;
+  status?: string;
+};
+
+type DeveloperServerConfig = {
+  id: string;
+  name: string;
+  provider: string;
+  base_url: string;
+  supported_models: string[];
+  max_tokens?: number;
+  max_requests_per_minute?: number;
+  max_requests_per_hour?: number;
+  max_requests_per_day?: number;
+  max_tokens_per_day?: number;
+  status?: string;
 };
 
 interface ModelListEditorProps {
@@ -279,9 +334,37 @@ export default function AdminPage() {
   const [topupAmount, setTopupAmount] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
 
-  // Developer State
-  const [developerRequests, setDeveloperRequests] = useState<any[]>([]);
+  // Developer API Control State
+  const [developerModels, setDeveloperModels] = useState<DeveloperModelConfig[]>([]);
+  const [developerServers, setDeveloperServers] = useState<DeveloperServerConfig[]>([]);
   const [loadingDevelopers, setLoadingDevelopers] = useState(false);
+  const [developerModelForm, setDeveloperModelForm] = useState({
+    id: "",
+    name: "",
+    upstream_model: "",
+    upstream_type: "gemini",
+    input_price: "",
+    output_price: "",
+    cached_input_price: "",
+    context_length: "",
+    max_tokens: "",
+    max_requests_per_day: "",
+    max_tokens_per_day: "",
+    released: "",
+    cache_enabled: true
+  });
+  const [developerServerForm, setDeveloperServerForm] = useState({
+    name: "",
+    provider: "gemini",
+    base_url: "",
+    api_key: "",
+    supported_models: "",
+    max_tokens: "",
+    max_requests_per_minute: "",
+    max_requests_per_hour: "",
+    max_requests_per_day: "",
+    max_tokens_per_day: ""
+  });
 
   // API Engine State
   const [engineStats, setEngineStats] = useState<EngineStats | null>(null);
@@ -466,6 +549,19 @@ export default function AdminPage() {
     base_url: "",
     api_key: ""
   });
+  const [diagnosticConfigs, setDiagnosticConfigs] = useState<DiagnosticConfig[]>([]);
+  const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReport[]>([]);
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
+  const [diagnosticPageId, setDiagnosticPageId] = useState("");
+  const [diagnosticPlatform, setDiagnosticPlatform] = useState("all");
+  const [diagnosticLevel, setDiagnosticLevel] = useState("full");
+  const [diagnosticHours, setDiagnosticHours] = useState("48");
+  const [diagnosticReason, setDiagnosticReason] = useState("");
+  const [selectedDiagnosticConfig, setSelectedDiagnosticConfig] = useState<DiagnosticConfig | null>(null);
+  const [selectedDiagnosticDetail, setSelectedDiagnosticDetail] = useState<any | null>(null);
+  const [diagnosticStatus, setDiagnosticStatus] = useState("pending");
+  const [diagnosticRootCause, setDiagnosticRootCause] = useState("");
+  const [diagnosticResolutionNote, setDiagnosticResolutionNote] = useState("");
 
   const getAdminToken = () => {
     return localStorage.getItem("admin_token") || localStorage.getItem("auth_token") || "";
@@ -485,8 +581,162 @@ export default function AdminPage() {
       fetchEngineData();
       fetchCacheConfigs();
       fetchEmbeddingConfig();
+      fetchDiagnosticData();
     }
   }, [isAuthenticated]);
+
+  const diagnosticRequest = async (endpoint: string, options: RequestInit = {}) => {
+    const token = getAdminToken();
+    const res = await fetch(`${BACKEND_URL}/api/diagnostic${endpoint}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Diagnostic request failed");
+    return data;
+  };
+
+  const fetchDiagnosticData = async (config = selectedDiagnosticConfig) => {
+    try {
+      setDiagnosticLoading(true);
+      const configsData = await diagnosticRequest('/admin/configs');
+      let reportsData = { reports: [] };
+      if (config) {
+        const reportsQuery = `?page_id=${encodeURIComponent(config.page_id)}&platform=${encodeURIComponent(config.platform)}`;
+        reportsData = await diagnosticRequest(`/admin/reports${reportsQuery}`);
+      }
+      setDiagnosticConfigs(configsData.configs || []);
+      setDiagnosticReports(reportsData.reports || []);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to load diagnostic data");
+    } finally {
+      setDiagnosticLoading(false);
+    }
+  };
+
+  const enableDiagnosticTrace = async () => {
+    if (!diagnosticPageId.trim()) {
+      toast.error("Page ID / Session name required");
+      return;
+    }
+    try {
+      const data = await diagnosticRequest('/admin/enable', {
+        method: 'POST',
+        body: JSON.stringify({
+          page_id: diagnosticPageId.trim(),
+          platform: diagnosticPlatform,
+          trace_level: diagnosticLevel,
+          expires_in_hours: Number(diagnosticHours) || 48,
+          reason: diagnosticReason || null
+        })
+      });
+      toast.success("Diagnostic trace enabled");
+      setSelectedDiagnosticConfig(data.config || null);
+      fetchDiagnosticData(data.config || null);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to enable trace");
+    }
+  };
+
+  const disableDiagnosticTrace = async (pageId = diagnosticPageId, platform = diagnosticPlatform) => {
+    if (!pageId.trim()) {
+      toast.error("Page ID / Session name required");
+      return;
+    }
+    try {
+      await diagnosticRequest('/admin/disable', {
+        method: 'POST',
+        body: JSON.stringify({ page_id: pageId.trim(), platform })
+      });
+      toast.success("Diagnostic trace disabled");
+      fetchDiagnosticData();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to disable trace");
+    }
+  };
+
+  const selectDiagnosticConfig = (config: DiagnosticConfig) => {
+    setSelectedDiagnosticConfig(config);
+    setDiagnosticPageId(config.page_id);
+    setDiagnosticPlatform(config.platform);
+    setDiagnosticLevel(config.trace_level || "full");
+    fetchDiagnosticData(config);
+  };
+
+  const toggleDiagnosticConfig = async (config: DiagnosticConfig) => {
+    if (config.trace_enabled) {
+      await disableDiagnosticTrace(config.page_id, config.platform);
+      return;
+    }
+    try {
+      await diagnosticRequest('/admin/enable', {
+        method: 'POST',
+        body: JSON.stringify({
+          page_id: config.page_id,
+          platform: config.platform,
+          trace_level: config.trace_level || 'full',
+          expires_in_hours: Number(diagnosticHours) || 48,
+          reason: config.trace_reason || diagnosticReason || null
+        })
+      });
+      toast.success("Diagnostic trace enabled");
+      fetchDiagnosticData(config);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to enable trace");
+    }
+  };
+
+  const deleteDiagnosticConfig = async (config: DiagnosticConfig) => {
+    if (!confirm(`Delete diagnostic config and reports for ${config.page_id} (${config.platform})?`)) return;
+    try {
+      await diagnosticRequest(`/admin/configs/${encodeURIComponent(config.page_id)}?platform=${encodeURIComponent(config.platform)}`, {
+        method: 'DELETE'
+      });
+      toast.success("Diagnostic config and reports deleted");
+      if (selectedDiagnosticConfig?.page_id === config.page_id && selectedDiagnosticConfig?.platform === config.platform) {
+        setSelectedDiagnosticConfig(null);
+        setDiagnosticReports([]);
+      }
+      fetchDiagnosticData(null);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete diagnostic config");
+    }
+  };
+
+  const openDiagnosticReport = async (report: DiagnosticReport) => {
+    try {
+      const data = await diagnosticRequest(`/admin/reports/${report.id}`);
+      setSelectedDiagnosticDetail(data.report);
+      setDiagnosticStatus(data.report?.status || "pending");
+      setDiagnosticRootCause(data.report?.root_cause || "");
+      setDiagnosticResolutionNote(data.report?.resolution_note || "");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to open report");
+    }
+  };
+
+  const updateDiagnosticReport = async () => {
+    if (!selectedDiagnosticDetail?.id) return;
+    try {
+      const data = await diagnosticRequest(`/admin/reports/${selectedDiagnosticDetail.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: diagnosticStatus,
+          root_cause: diagnosticRootCause || null,
+          resolution_note: diagnosticResolutionNote || null
+        })
+      });
+      setSelectedDiagnosticDetail({ ...selectedDiagnosticDetail, ...data.report });
+      toast.success("Diagnostic report updated");
+      fetchDiagnosticData();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update report");
+    }
+  };
 
   const fetchCacheConfigs = async () => {
     try {
@@ -1544,44 +1794,83 @@ export default function AdminPage() {
     try {
       setLoadingDevelopers(true);
       const token = getAdminToken();
-      const res = await fetch(`${BACKEND_URL}/api/auth/admin/developer/requests`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.requests)) {
-        setDeveloperRequests(data.requests);
-      }
+      const [modelsRes, serversRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/external/admin/models`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${BACKEND_URL}/api/external/admin/servers`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      const modelsData = await modelsRes.json();
+      const serversData = await serversRes.json();
+      if (modelsRes.ok) setDeveloperModels(modelsData.models || []);
+      if (serversRes.ok) setDeveloperServers(serversData.servers || []);
     } finally {
       setLoadingDevelopers(false);
     }
   };
 
-  const handleApproveDeveloper = async (requestId: string) => {
-    const devId = prompt("Enter Developer ID for this user:");
-    const devPass = prompt("Enter Developer Password for this user:");
-    
-    if (!devId || !devPass) {
-      toast.error("Developer ID and Password are required");
-      return;
-    }
-
+  const saveDeveloperModel = async () => {
     try {
       const token = getAdminToken();
-      const res = await fetch(`${BACKEND_URL}/api/auth/admin/developer/requests/${requestId}/approve`, {
+      const res = await fetch(`${BACKEND_URL}/api/external/admin/models`, {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}` 
-        },
-        body: JSON.stringify({ devId, devPass })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          ...developerModelForm,
+          input_price: Number(developerModelForm.input_price),
+          output_price: Number(developerModelForm.output_price),
+          cached_input_price: Number(developerModelForm.cached_input_price),
+          context_length: Number(developerModelForm.context_length),
+          max_tokens: Number(developerModelForm.max_tokens),
+          max_requests_per_day: Number(developerModelForm.max_requests_per_day),
+          max_tokens_per_day: Number(developerModelForm.max_tokens_per_day),
+          released: developerModelForm.released,
+          modalities_in: ["text"],
+          modalities_out: ["text"]
+        })
       });
-      if (res.ok) {
-        toast.success("Developer approved with credentials");
-        fetchDeveloperRequests();
-      }
-    } catch (err) {
-      toast.error("Failed to approve developer");
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save model");
+      toast.success("Developer model published");
+      setDeveloperModelForm(prev => ({ ...prev, id: "", name: "", upstream_model: "", released: "" }));
+      fetchDeveloperRequests();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save model");
     }
+  };
+
+  const saveDeveloperServer = async () => {
+    try {
+      const token = getAdminToken();
+      const res = await fetch(`${BACKEND_URL}/api/external/admin/servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          ...developerServerForm,
+          supported_models: developerServerForm.supported_models.split(',').map(v => v.trim()).filter(Boolean),
+          max_tokens: Number(developerServerForm.max_tokens),
+          max_requests_per_minute: Number(developerServerForm.max_requests_per_minute),
+          max_requests_per_hour: Number(developerServerForm.max_requests_per_hour),
+          max_requests_per_day: Number(developerServerForm.max_requests_per_day),
+          max_tokens_per_day: Number(developerServerForm.max_tokens_per_day)
+        })
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save server");
+      toast.success("Developer server saved");
+      setDeveloperServerForm(prev => ({ ...prev, name: "", base_url: "", api_key: "", supported_models: "" }));
+      fetchDeveloperRequests();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save server");
+    }
+  };
+
+  const deleteDeveloperModel = async (modelId: string) => {
+    const token = getAdminToken();
+    await fetch(`${BACKEND_URL}/api/external/admin/models/${encodeURIComponent(modelId)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    fetchDeveloperRequests();
+  };
+
+  const deleteDeveloperServer = async (serverId: string) => {
+    const token = getAdminToken();
+    await fetch(`${BACKEND_URL}/api/external/admin/servers/${serverId}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    fetchDeveloperRequests();
   };
 
   const fetchCoupons = async () => {
@@ -2032,6 +2321,7 @@ export default function AdminPage() {
           <TabsTrigger value="gemini" className="text-red-400 font-bold data-[state=active]:bg-red-500 data-[state=active]:text-white transition-all">INVALID API TEST</TabsTrigger>
           <TabsTrigger value="cache" className="text-blue-400 font-bold data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all">Semantic Cache</TabsTrigger>
           <TabsTrigger value="db" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Database Admin</TabsTrigger>
+          <TabsTrigger value="diagnostic" className="data-[state=active]:bg-orange-500 data-[state=active]:text-black transition-all font-bold">Diagnostic</TabsTrigger>
           <TabsTrigger value="openrouter" className="data-[state=active]:bg-primary data-[state=active]:text-black transition-all">OpenRouter Config</TabsTrigger>
           <TabsTrigger value="developers" className="data-[state=active]:bg-[#00ff88] data-[state=active]:text-black transition-all font-bold">Developers</TabsTrigger>
         </TabsList>
@@ -3894,9 +4184,9 @@ export default function AdminPage() {
                   <ShieldCheck className="h-6 w-6" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-lg font-bold text-white">Internal Brain Engine Active</h3>
+                  <h3 className="text-lg font-bold text-white">OpenRouter Embedding Active</h3>
                   <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                    All semantic lookups and embeddings are now automatically routed through our internal <strong>salesmanchatbot-brain</strong> infrastructure with proxy and key rotation. Manual API configuration is no longer required.
+                    All semantic lookups and embeddings are routed through the configured <strong>OpenRouter-compatible embedding model</strong>. Keep the embedding model dimension aligned with stored vectors.
                   </p>
                 </div>
               </div>
@@ -4642,70 +4932,297 @@ export default function AdminPage() {
           </Dialog>
         </TabsContent>
 
+        <TabsContent value="diagnostic" className="space-y-6">
+          <Card className="bg-card/40 backdrop-blur-md border-white/5">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-orange-400">
+                    <Activity className="h-5 w-5" /> Diagnostic Mode
+                  </CardTitle>
+                  <CardDescription>Enable temporary AI tracing for one page/session when an owner reports a problem.</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => fetchDiagnosticData()} disabled={diagnosticLoading}>
+                  <RefreshCw className={`mr-2 h-4 w-4 ${diagnosticLoading ? 'animate-spin' : ''}`} /> Refresh
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-5">
+                <div className="md:col-span-2 space-y-2">
+                  <Label>Page ID / WhatsApp Session</Label>
+                  <Input value={diagnosticPageId} onChange={(e) => setDiagnosticPageId(e.target.value)} placeholder="page id or session name" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Platform</Label>
+                  <Select value={diagnosticPlatform} onValueChange={setDiagnosticPlatform}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="messenger">Messenger</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Level</Label>
+                  <Select value={diagnosticLevel} onValueChange={setDiagnosticLevel}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="full">Full</SelectItem>
+                      <SelectItem value="light">Light</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Hours</Label>
+                  <Input value={diagnosticHours} onChange={(e) => setDiagnosticHours(e.target.value)} />
+                </div>
+              </div>
+              <Textarea value={diagnosticReason} onChange={(e) => setDiagnosticReason(e.target.value)} placeholder="Reason: pricing wrong, unavailable color picked, order issue..." />
+              <div className="flex gap-2">
+                <Button onClick={enableDiagnosticTrace} className="bg-orange-500 hover:bg-orange-600 text-black font-bold">Enable / Update Trace</Button>
+                <Button variant="destructive" onClick={() => disableDiagnosticTrace()}>Turn Off</Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Active / Recent Trace Configs</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Page</TableHead><TableHead>Platform</TableHead><TableHead>Status</TableHead><TableHead>Expires</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {diagnosticConfigs.map((cfg) => {
+                        const selected = selectedDiagnosticConfig?.page_id === cfg.page_id && selectedDiagnosticConfig?.platform === cfg.platform;
+                        return (
+                          <TableRow key={`${cfg.page_id}_${cfg.platform}`} className={selected ? "bg-orange-500/10" : ""}>
+                            <TableCell className="font-mono text-xs cursor-pointer" onClick={() => selectDiagnosticConfig(cfg)}>{cfg.page_id}</TableCell>
+                            <TableCell className="cursor-pointer" onClick={() => selectDiagnosticConfig(cfg)}>{cfg.platform}</TableCell>
+                            <TableCell><Badge variant={cfg.trace_enabled ? "default" : "secondary"}>{cfg.trace_enabled ? cfg.trace_level : 'off'}</Badge></TableCell>
+                            <TableCell className="text-xs">{cfg.trace_expires_at ? new Date(cfg.trace_expires_at).toLocaleString() : 'manual'}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button size="sm" variant={cfg.trace_enabled ? "destructive" : "outline"} onClick={() => toggleDiagnosticConfig(cfg)}>{cfg.trace_enabled ? 'Off' : 'On'}</Button>
+                                <Button size="sm" variant="outline" onClick={() => deleteDiagnosticConfig(cfg)}><Trash2 className="h-4 w-4" /></Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {diagnosticConfigs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No diagnostic configs</TableCell></TableRow>}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Owner Reports</CardTitle>
+                <CardDescription>{selectedDiagnosticConfig ? `${selectedDiagnosticConfig.page_id} (${selectedDiagnosticConfig.platform}) reports` : 'Select a trace config page to filter reports.'}</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>ID</TableHead><TableHead>Page</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Trace</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {diagnosticReports.map((report) => (
+                        <TableRow key={report.id}>
+                          <TableCell>#{report.id}</TableCell>
+                          <TableCell className="font-mono text-xs">{report.page_id}</TableCell>
+                          <TableCell>{report.report_type || 'other'}</TableCell>
+                          <TableCell><Badge variant={report.status === 'pending' ? 'destructive' : 'secondary'}>{report.status}</Badge></TableCell>
+                          <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => openDiagnosticReport(report)} disabled={!report.trace_id}>View</Button></TableCell>
+                        </TableRow>
+                      ))}
+                      {diagnosticReports.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No reports yet</TableCell></TableRow>}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         {/* OpenRouter Config Tab (Embedded) */}
         <TabsContent value="openrouter">
           <OpenRouterConfigPage />
         </TabsContent>
 
-        <TabsContent value="developers">
+        <TabsContent value="developers" className="space-y-6">
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Publish Available Model</CardTitle>
+                <CardDescription>Only ekhane publish kora model-i Developer page-e available hobe. Optional limit field empty thakle unlimited.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Public model ID</Label>
+                    <p className="text-xs text-muted-foreground">User-ra API call-e ei model name use korbe.</p>
+                    <Input placeholder="example: salesman-gemini-pro" value={developerModelForm.id} onChange={e => setDeveloperModelForm({ ...developerModelForm, id: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Display name</Label>
+                    <p className="text-xs text-muted-foreground">Developer page-e readable model name.</p>
+                    <Input placeholder="example: Gemini Pro" value={developerModelForm.name} onChange={e => setDeveloperModelForm({ ...developerModelForm, name: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Upstream model</Label>
+                    <p className="text-xs text-muted-foreground">Internal server-e real model id.</p>
+                    <Input placeholder="example: gemini-1.5-pro" value={developerModelForm.upstream_model} onChange={e => setDeveloperModelForm({ ...developerModelForm, upstream_model: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Provider type</Label>
+                    <p className="text-xs text-muted-foreground">Kon server group use hobe.</p>
+                    <Select value={developerModelForm.upstream_type} onValueChange={v => setDeveloperModelForm({ ...developerModelForm, upstream_type: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Input price / 1M tokens</Label>
+                    <p className="text-xs text-muted-foreground">Prompt token cost. Empty/0 = free.</p>
+                    <Input type="number" placeholder="0" value={developerModelForm.input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, input_price: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Output price / 1M tokens (BDT)</Label>
+                    <p className="text-xs text-muted-foreground">Response token cost. Empty/0 = free.</p>
+                    <Input type="number" placeholder="0" value={developerModelForm.output_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, output_price: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Cached input price / 1M</Label>
+                    <p className="text-xs text-muted-foreground">Cache hit prompt token cost. Empty/0 = free.</p>
+                    <Input type="number" placeholder="0" value={developerModelForm.cached_input_price} onChange={e => setDeveloperModelForm({ ...developerModelForm, cached_input_price: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Context window</Label>
+                    <p className="text-xs text-muted-foreground">Model total token capacity.</p>
+                    <Input type="number" placeholder="example: 128000" value={developerModelForm.context_length} onChange={e => setDeveloperModelForm({ ...developerModelForm, context_length: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max output tokens/request</Label>
+                    <p className="text-xs text-muted-foreground">Per request output limit. Empty = unlimited.</p>
+                    <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_tokens} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max requests/day</Label>
+                    <p className="text-xs text-muted-foreground">Per user daily request limit. Empty = unlimited.</p>
+                    <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_requests_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_requests_per_day: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max tokens/day</Label>
+                    <p className="text-xs text-muted-foreground">Per user daily token quota. Empty = unlimited.</p>
+                    <Input type="number" placeholder="empty = unlimited" value={developerModelForm.max_tokens_per_day} onChange={e => setDeveloperModelForm({ ...developerModelForm, max_tokens_per_day: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label>Release note</Label>
+                    <p className="text-xs text-muted-foreground">Model card-e short update/status note show hobe.</p>
+                    <Input placeholder="example: Stable for automation, supports text chat" value={developerModelForm.released} onChange={e => setDeveloperModelForm({ ...developerModelForm, released: e.target.value })} />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
+                  <div><Label>Backend cache support</Label><p className="text-xs text-muted-foreground">Repeated same prompt response cache kore cached token bill korbe.</p></div>
+                  <Switch checked={developerModelForm.cache_enabled} onCheckedChange={v => setDeveloperModelForm({ ...developerModelForm, cache_enabled: Boolean(v) })} />
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-muted-foreground">
+                  <b className="text-foreground">Note:</b> Price fields are BDT per 1M tokens. Context window means model total context. Max output/request and requests/day empty thakle unlimited.
+                </div>
+                <Button onClick={saveDeveloperModel} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Publish / Update Model</Button>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/40 backdrop-blur-md border-white/5">
+              <CardHeader>
+                <CardTitle>Internal Base URL & API Key Server</CardTitle>
+                <CardDescription>Each server = one base URL + API key. Limit fields empty thakle unlimited.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input placeholder="Server name" value={developerServerForm.name} onChange={e => setDeveloperServerForm({ ...developerServerForm, name: e.target.value })} />
+                  <Select value={developerServerForm.provider} onValueChange={v => setDeveloperServerForm({ ...developerServerForm, provider: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="gemini">Gemini</SelectItem><SelectItem value="gpt">GPT</SelectItem><SelectItem value="aistudio">AIStudio</SelectItem><SelectItem value="codex">Codex</SelectItem><SelectItem value="custom">Custom</SelectItem></SelectContent>
+                  </Select>
+                  <Input placeholder="Base URL" value={developerServerForm.base_url} onChange={e => setDeveloperServerForm({ ...developerServerForm, base_url: e.target.value })} />
+                  <Input placeholder="Internal API key" type="password" value={developerServerForm.api_key} onChange={e => setDeveloperServerForm({ ...developerServerForm, api_key: e.target.value })} />
+                  <Input className="md:col-span-2" placeholder="Supported models comma separated, blank = all" value={developerServerForm.supported_models} onChange={e => setDeveloperServerForm({ ...developerServerForm, supported_models: e.target.value })} />
+                  <Input type="number" placeholder="Max tokens/request (empty = unlimited)" value={developerServerForm.max_tokens} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/minute (empty = unlimited)" value={developerServerForm.max_requests_per_minute} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_minute: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/hour (empty = unlimited)" value={developerServerForm.max_requests_per_hour} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_hour: e.target.value })} />
+                  <Input type="number" placeholder="Max requests/day (empty = unlimited)" value={developerServerForm.max_requests_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_requests_per_day: e.target.value })} />
+                  <Input type="number" placeholder="Max tokens/day (empty = unlimited)" value={developerServerForm.max_tokens_per_day} onChange={e => setDeveloperServerForm({ ...developerServerForm, max_tokens_per_day: e.target.value })} />
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-muted-foreground">
+                  <b className="text-foreground">Note:</b> Supported models blank thakle server sob model handle korbe. Rate/token limits empty thakle unlimited. API key table-e show hobe na.
+                </div>
+                <Button onClick={saveDeveloperServer} className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80">Add Server</Button>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card className="bg-card/40 backdrop-blur-md border-white/5">
-            <CardHeader>
-              <CardTitle>Developer API Registration Requests</CardTitle>
-              <CardDescription>Approve users who paid 5,000 BDT for developer access.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Method</TableHead>
-                    <TableHead>TrxID</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loadingDevelopers ? (
-                    <TableRow><TableCell colSpan={7} className="text-center">Loading...</TableCell></TableRow>
-                  ) : developerRequests.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="text-center">No pending requests</TableCell></TableRow>
-                  ) : developerRequests.map((req) => (
-                    <TableRow key={req.id}>
-                      <TableCell>
-                        <div className="font-bold">{req.full_name || 'N/A'}</div>
-                        <div className="text-xs text-muted-foreground">{req.email}</div>
-                      </TableCell>
-                      <TableCell className="uppercase">{req.payment_method}</TableCell>
-                      <TableCell className="font-mono">{req.transaction_id}</TableCell>
-                      <TableCell>{req.amount} BDT</TableCell>
-                      <TableCell>
-                        <Badge variant={req.status === 'approved' ? 'default' : 'secondary'}>
-                          {req.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{new Date(req.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
-                        {req.status === 'pending' && (
-                          <Button 
-                            size="sm" 
-                            className="bg-[#00ff88] text-black hover:bg-[#00ff88]/80"
-                            onClick={() => handleApproveDeveloper(req.id)}
-                          >
-                            Approve
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
+            <CardHeader><CardTitle>Published Models</CardTitle><CardDescription>Developer API users only active published models dekhbe.</CardDescription></CardHeader>
+            <CardContent><Table><TableHeader><TableRow><TableHead>Model</TableHead><TableHead>Provider</TableHead><TableHead>Limits</TableHead><TableHead>Cache</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>
+              {loadingDevelopers ? <TableRow><TableCell colSpan={5}>Loading...</TableCell></TableRow> : developerModels.map(model => <TableRow key={model.id}><TableCell><div className="font-mono text-xs">{model.id}</div><div className="text-xs text-muted-foreground">{model.upstream_model}</div></TableCell><TableCell>{model.upstream_type}</TableCell><TableCell className="text-xs">{model.max_tokens || 0} tokens / {model.max_requests_per_day || 0} req-day</TableCell><TableCell><Badge>{model.cache_enabled ? 'Enabled' : 'Off'}</Badge></TableCell><TableCell><Button size="sm" variant="ghost" onClick={() => deleteDeveloperModel(model.id)}><Trash2 className="h-4 w-4" /></Button></TableCell></TableRow>)}
+            </TableBody></Table></CardContent>
+          </Card>
+
+          <Card className="bg-card/40 backdrop-blur-md border-white/5">
+            <CardHeader><CardTitle>Internal Servers</CardTitle><CardDescription>API keys masked thakbe; edit korte same server abar add/update korte parben.</CardDescription></CardHeader>
+            <CardContent><Table><TableHeader><TableRow><TableHead>Server</TableHead><TableHead>Provider</TableHead><TableHead>Base URL</TableHead><TableHead>Models</TableHead><TableHead>Limits</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>
+              {developerServers.map(server => <TableRow key={server.id}><TableCell>{server.name}</TableCell><TableCell>{server.provider}</TableCell><TableCell className="font-mono text-xs">{server.base_url}</TableCell><TableCell className="text-xs">{server.supported_models?.length ? server.supported_models.join(', ') : 'All'}</TableCell><TableCell className="text-xs">{server.max_requests_per_minute || 0}/min, {server.max_requests_per_day || 0}/day, {server.max_tokens_per_day || 0} tok/day</TableCell><TableCell><Button size="sm" variant="ghost" onClick={() => deleteDeveloperServer(server.id)}><Trash2 className="h-4 w-4" /></Button></TableCell></TableRow>)}
+            </TableBody></Table></CardContent>
           </Card>
         </TabsContent>
 
       </Tabs>
+
+      <Dialog open={!!selectedDiagnosticDetail} onOpenChange={(open) => !open && setSelectedDiagnosticDetail(null)}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto bg-[#0f0f0f] border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle>Diagnostic Report Detail</DialogTitle>
+            <DialogDescription>Trace, AI data, product/order context and VPS snapshot.</DialogDescription>
+          </DialogHeader>
+          {selectedDiagnosticDetail && (
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={diagnosticStatus} onValueChange={setDiagnosticStatus}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="investigating">Investigating</SelectItem>
+                    <SelectItem value="fixed">Fixed</SelectItem>
+                    <SelectItem value="ignored">Ignored</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Root Cause</Label>
+                <Input value={diagnosticRootCause} onChange={(e) => setDiagnosticRootCause(e.target.value)} placeholder="pricing | sku_unavailable | prompt | image | order" />
+              </div>
+              <div className="space-y-2 md:col-span-3">
+                <Label>Resolution Note</Label>
+                <Textarea value={diagnosticResolutionNote} onChange={(e) => setDiagnosticResolutionNote(e.target.value)} placeholder="What was fixed / next action" />
+              </div>
+              <div className="md:col-span-3">
+                <Button onClick={updateDiagnosticReport} className="bg-orange-500 hover:bg-orange-600 text-black font-bold">Update Report</Button>
+              </div>
+            </div>
+          )}
+          <pre className="text-xs whitespace-pre-wrap bg-black/60 border border-white/10 rounded-lg p-4 overflow-x-auto">
+            {selectedDiagnosticDetail ? JSON.stringify(selectedDiagnosticDetail, null, 2) : ''}
+          </pre>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isCacheDialogOpen} onOpenChange={setIsCacheDialogOpen}>
         <DialogContent className="max-w-md bg-[#0f0f0f] border-white/10 text-white">

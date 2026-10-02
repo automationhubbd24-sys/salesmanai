@@ -19,11 +19,11 @@ import { useWhatsApp, type WhatsAppContextType } from "@/context/WhatsAppContext
 import { useState } from "react";
 
 interface WorkspaceSwitcherProps {
-  platform?: 'messenger' | 'whatsapp';
+  platform?: 'messenger' | 'whatsapp' | 'instagram';
 }
 
 export function WorkspaceSwitcher({ platform = 'messenger' }: WorkspaceSwitcherProps) {
-    if (platform === 'messenger') return <MessengerSwitcher />;
+    if (platform === 'messenger' || platform === 'instagram') return <MessengerSwitcher />;
     if (platform === 'whatsapp') return <WhatsAppSwitcher />;
     return null;
 }

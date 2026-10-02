@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import logoImage from "@/assets/logo.png";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BACKEND_URL } from "@/config";
+import SEO from "@/components/SEO";
 
 const Register = () => {
   const navigate = useNavigate();
@@ -57,6 +58,7 @@ const Register = () => {
     setLoading(true);
 
     try {
+      const normalizedEmail = formData.email.trim().toLowerCase();
       const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
         method: "POST",
         headers: {
@@ -65,7 +67,7 @@ const Register = () => {
         body: JSON.stringify({
           fullName: formData.fullName,
           phone: formData.phone,
-          email: formData.email,
+          email: normalizedEmail,
           password: formData.password,
         }),
       });
@@ -79,7 +81,7 @@ const Register = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: formData.email,
+          email: normalizedEmail,
         }),
       });
       const otpBody = await otpRes.json().catch(() => ({}));
@@ -91,8 +93,8 @@ const Register = () => {
       }
       toast.success(
         t(
-          "Account created. We sent a verification code to your email.",
-          "অ্যাকাউন্ট তৈরি হয়েছে। আপনার ইমেইলে একটি ভেরিফিকেশন কোড পাঠানো হয়েছে।"
+          "Account created. We sent a verification code to your email. If needed, check Spam/Junk too.",
+          "অ্যাকাউন্ট তৈরি হয়েছে। আপনার ইমেইলে একটি ভেরিফিকেশন কোড পাঠানো হয়েছে। প্রয়োজনে Spam/Junk ফোল্ডারও চেক করুন।"
         )
       );
       setOtpStep(true);
@@ -174,6 +176,7 @@ const Register = () => {
 
   return (
     <div className="flex min-h-screen bg-[#0b0b0b] text-white">
+      <SEO title="Create a SalesmanChatbot account" noindex />
       {/* Left Panel - Decorative */}
       <div className="relative hidden w-0 flex-1 lg:block">
         <div className="absolute inset-0 bg-[#0b0b0b]">
@@ -362,6 +365,9 @@ const Register = () => {
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleVerifyOtp} className="space-y-4 mt-2">
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-100">
+                  নোট: ইনবক্সে কোড না পেলে Spam/Junk ফোল্ডারও চেক করুন।
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="otp" className="text-sm font-medium">
                     {t("Verification Code", "ভেরিফিকেশন কোড")}

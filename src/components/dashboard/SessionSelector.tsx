@@ -1,4 +1,4 @@
-import { useWhatsApp, type WahaSession } from "@/context/WhatsAppContext";
+import { useWhatsApp, type WhatsAppSession } from "@/context/WhatsAppContext";
 import { useEffect } from "react";
 import {
   Select,
@@ -7,14 +7,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MessageSquare, PlusCircle, AlertCircle } from "lucide-react";
+import { MessageSquare, PlusCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export function SessionSelector() {
   const context = useWhatsApp();
   const navigate = useNavigate();
   const { sessions, currentSession, setCurrentSession } = context;
-  const getWpDbId = (session: WahaSession | null) => {
+  const getWpDbId = (session: WhatsAppSession | null) => {
     const value = session?.wp_db_id;
     if (typeof value === "string" || typeof value === "number") return value;
     return null;
@@ -88,7 +88,7 @@ export function SessionSelector() {
          onClick={() => navigate("/dashboard/whatsapp/sessions")}
        >
          <PlusCircle size={16} />
-         <span>Create Session</span>
+         <span>Connect WhatsApp</span>
        </div>
     );
   }
@@ -96,7 +96,7 @@ export function SessionSelector() {
   return (
     <div className="px-2 mb-4">
       <label className="text-xs font-medium text-muted-foreground mb-1.5 block px-1">
-        Active Session
+        Active Integration
       </label>
       <Select
         value={currentSession?.name || ""}
@@ -105,7 +105,7 @@ export function SessionSelector() {
         <SelectTrigger className="w-full bg-sidebar-accent border-sidebar-border text-sidebar-foreground h-9">
           <div className="flex items-center gap-2 overflow-hidden">
             <MessageSquare size={14} className="shrink-0" />
-            <SelectValue placeholder="Select Session" />
+            <SelectValue placeholder="Select Integration" />
           </div>
         </SelectTrigger>
         <SelectContent>
@@ -121,7 +121,7 @@ export function SessionSelector() {
           <SelectItem value="add_new" className="text-primary focus:text-primary cursor-pointer">
             <div className="flex items-center gap-2">
               <PlusCircle size={14} />
-              Manage Sessions
+              Manage Integrations
             </div>
           </SelectItem>
         </SelectContent>

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { CreditCard, Wallet, Plus, History, CheckCircle, Clock, XCircle, Loader2, Gift, Copy, Zap } from "lucide-react";
+import { CreditCard, Wallet, Plus, History, CheckCircle, Clock, XCircle, Loader2, Gift, Copy, Zap, Package } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
@@ -26,6 +26,10 @@ const topupAmounts = [300, 1200, 2000, 5000, 10000];
 
 export default function PaymentPage() {
   const [balance, setBalance] = useState(0);
+  const [subscription, setSubscription] = useState({
+    plan: 'none',
+    expires_at: null as string | null
+  });
   const [credits, setCredits] = useState({
     daily_limit: 0,
     daily_used: 0,
@@ -70,17 +74,21 @@ export default function PaymentPage() {
       }
 
       const data = await res.json();
-      console.log("Payment Data:", data); // Debug log
-      setBalance(Number(data.balance) || 0);
-      setCredits({
-        daily_limit: Number(data.daily_limit) || 0,
-        daily_used: Number(data.daily_used) || 0,
-        bonus_credit: Number(data.bonus_credit) || 0,
-        permanent_credit: Number(data.permanent_credit) || 0,
-        monthly_limit: Number(data.monthly_limit) || 0,
-        monthly_used: Number(data.monthly_used) || 0,
-        message_credit: Number(data.message_credit) || 0
-      });
+        console.log("Payment Data:", data); // Debug log
+        setBalance(Number(data.balance) || 0);
+        setSubscription({
+            plan: data.subscription_plan || 'none',
+            expires_at: data.monthly_expires_at || null
+        });
+        setCredits({
+            daily_limit: Number(data.daily_limit) || 0,
+            daily_used: Number(data.daily_used) || 0,
+            bonus_credit: Number(data.bonus_credit) || 0,
+            permanent_credit: Number(data.permanent_credit) || 0,
+            monthly_limit: Number(data.monthly_limit) || 0,
+            monthly_used: Number(data.monthly_used) || 0,
+            message_credit: Number(data.message_credit) || 0
+        });
 
       if (Array.isArray(data.transactions)) {
         setTransactions(data.transactions);
@@ -221,6 +229,40 @@ export default function PaymentPage() {
     }
   };
 
+  const getPlanLabel = (plan: string) => {
+    if (plan === "m1000" || plan === "starter") return "Starter";
+    if (plan === "m3000" || plan === "pro") return "Pro";
+    if (plan === "m7500" || plan === "enterprise") return "Enterprise";
+    return "No Plan";
+  };
+
+  const getPlanExpiryText = () => {
+    if (!subscription.expires_at) return null;
+    const expires = new Date(subscription.expires_at);
+    const now = new Date();
+    const diffTime = expires.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      return {
+        text: `আর ${diffDays} দিন বাকি (${expires.toLocaleDateString()})`,
+        className: "text-[10px] opacity-60 mt-1"
+      };
+    }
+    if (diffDays === 0) {
+      return {
+        text: "আজকেই expire হবে",
+        className: "text-[10px] text-yellow-400 mt-1"
+      };
+    }
+    return {
+      text: "Expired",
+      className: "text-[10px] text-red-400 mt-1"
+    };
+  };
+
+  const expiryMeta = getPlanExpiryText();
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Header */}
@@ -234,7 +276,7 @@ export default function PaymentPage() {
       </div>
 
       {/* Balance Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <Card className="bg-[#00ff88] text-black border border-[#00ff88]/40 rounded-2xl shadow-[0_10px_30px_rgba(0,255,136,0.25)]">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
@@ -256,6 +298,22 @@ export default function PaymentPage() {
                 <p className="text-[10px] opacity-60 mt-1">Total: {credits.daily_limit.toLocaleString()}</p>
               </div>
               <Clock className="h-8 w-8 opacity-40" />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Subscription Card */}
+        <Card className={`rounded-2xl ${subscription.plan !== 'none' && subscription.expires_at ? 'bg-gradient-to-br from-green-900/20 to-emerald-900/20 border border-green-500/30' : 'bg-[#0f0f0f] border border-white/10'}`}>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs opacity-80 font-medium">Subscription Plan</p>
+                <p className="text-2xl font-bold mt-1">
+                  {getPlanLabel(subscription.plan)}
+                </p>
+                {expiryMeta && <p className={expiryMeta.className}>{expiryMeta.text}</p>}
+              </div>
+              <Package className={`h-8 w-8 ${subscription.plan !== 'none' ? 'opacity-80 text-green-400' : 'opacity-40'}`} />
             </div>
           </CardContent>
         </Card>

@@ -48,7 +48,7 @@ const Logo = ({ className, showText = true, animated = true, size = "md", accent
         )}>
           <img 
             src={logoImage} 
-            alt="SalesmanChatbot Logo" 
+            alt="SalesmanChatbot" 
             className="object-contain w-full h-full brightness-0 invert opacity-100 scale-125"
             width={size === 'lg' ? 104 : size === 'md' ? 80 : 56}
             height={size === 'lg' ? 96 : size === 'md' ? 60 : 48}

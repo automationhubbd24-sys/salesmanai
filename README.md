@@ -1,55 +1,126 @@
-# SalesmanChatbot project
+# SalesmanAI Monorepo
 
-## Local development
+Ei repository-te ekhon root level-e tin ta alada deployable source ache:
 
-The only requirement is having Node.js and npm installed – for example using [nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+- `root app`: React + Vite dashboard frontend
+- `backend/`: SalesmanAI backend API, webhook, Messenger/WhatsApp logic
+- `AIStudioToAPI/`: full AI Studio to API project source
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+Erokom kore rakhle ek jaigai code thakbe, kintu VPS-e chaile alada port, alada process, ar alada deploy target diye run kora jabe.
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## Project Structure
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server.
-npm run dev
+```text
+salesmanai-salesmanai-v2/
+|-- backend/
+|-- AIStudioToAPI/
+|-- src/
+|-- public/
+|-- package.json
+`-- README.md
 ```
 
-**Edit a file directly in GitHub**
+## Local Setup
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+Requirement:
 
-**Use GitHub Codespaces**
+- Node.js 22+
+- npm
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+Initial install:
 
-## What technologies are used for this project?
+```sh
+npm run install:all
+```
 
-This project is built with:
+## Run Commands
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Frontend:
 
-## Deployment
+```sh
+npm run dev:frontend
+```
 
-You can deploy the built `dist` folder to any static hosting provider (for example Vercel, Netlify, Cloudflare Pages or your own server).
+Backend:
+
+```sh
+npm run dev:backend
+```
+
+AI Studio proxy:
+
+```sh
+npm run dev:aistudio
+```
+
+Production mode:
+
+```sh
+npm run start:backend
+npm run start:aistudio
+```
+
+AI Studio auth setup:
+
+```sh
+npm run setup:aistudio-auth
+```
+
+## AIStudioToAPI Integration
+
+`AIStudioToAPI` ke root-level folder hisebe full source shoho add kora hoyeche:
+
+- `AIStudioToAPI/`
+
+Eitar advantage:
+
+- backend-er moto alada full project hisebe thakbe
+- VPS-e alada bhabe deploy kora jabe
+- source mix hoye jabe na
+- future-te upstream source compare/update kora shohoj hobe
+
+Default proxy env example:
+
+- `AIStudioToAPI/.env.example`
+
+Typical local port layout:
+
+- Frontend: `5173`
+- Backend: backend app-er nijer port
+- AI Studio proxy: `7860`
+
+## Recommended VPS Deployment
+
+Same repo theke alada deploy:
+
+- `app.example.com` -> root frontend
+- `api.example.com` -> `backend/`
+- `gemini.example.com` -> `AIStudioToAPI/`
+
+Recommended:
+
+- frontend static build hisebe deploy korun
+- backend alada Node process hisebe run korun
+- `AIStudioToAPI` alada Node process hisebe run korun
+- Nginx/Coolify/PM2 diye route/manage korun
+
+## Build Commands
+
+Frontend build:
 
 ```sh
 npm run build
 ```
 
-## Deployment status
+AI Studio UI build:
 
-Manual update applied to trigger a new deployment via Coolify.
+```sh
+npm run build:aistudio
+```
+
+## Notes
+
+- `AIStudioToAPI/.env` git ignore kora ache
+- `AIStudioToAPI/configs/auth/` git ignore kora ache
+- `AIStudioToAPI/data/` git ignore kora ache
+- AI Studio proxy-r nijer docs, env example, ar Dockerfile intact rakha hoyeche jate alada deploy kora jai

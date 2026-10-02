@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { BACKEND_URL } from "@/config";
+import { secureFetch } from "@/lib/api";
 
 export interface MessengerPage {
   page_id: string;
@@ -116,7 +117,13 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       let url = `${BACKEND_URL}/api/messenger/pages`;
       
       // FIX: Ensure team_owner is used even on initial mount if stored in localStorage
-      const storedTeamOwner = localStorage.getItem('active_team_owner');
+      let storedTeamOwner = localStorage.getItem('active_team_owner');
+      // SANITIZE: Prevent string "null" or "undefined" from corrupting the state
+      if (storedTeamOwner === 'null' || storedTeamOwner === 'undefined') {
+          storedTeamOwner = null;
+          localStorage.removeItem('active_team_owner');
+      }
+
       let effectiveTeamOwner = (viewMode === 'team') ? (activeTeam?.owner_email || storedTeamOwner) : null;
 
       // If in team mode but no owner found, default back to personal to avoid empty dashboard
@@ -131,7 +138,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
           url += `?team_owner=${encodeURIComponent(effectiveTeamOwner)}`;
       }
 
-      const res = await fetch(url, {
+      const res = await secureFetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -235,8 +242,10 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
             setActiveTeam(team);
             if (team) {
                 localStorage.setItem('active_team_owner', team.owner_email);
+                localStorage.setItem('active_team_permissions', JSON.stringify(team.permissions ?? {}));
             } else {
                 localStorage.removeItem('active_team_owner');
+                localStorage.removeItem('active_team_permissions');
             }
         },
         viewMode,

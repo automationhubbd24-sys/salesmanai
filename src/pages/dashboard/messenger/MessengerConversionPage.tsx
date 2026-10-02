@@ -31,9 +31,15 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { BACKEND_URL } from "@/config";
+import { useSearchParams } from "react-router-dom";
 
 export default function MessengerConversionPage() {
+  const platform = window.location.pathname.includes("/dashboard/instagram") ? "instagram" : "messenger";
+  const isInstagram = platform === "instagram";
+  const accountLabel = isInstagram ? "Instagram Account" : "Page";
+  const databasePath = isInstagram ? "/dashboard/instagram/database" : "/dashboard/messenger/database";
   const { currentPage, loading: contextLoading } = useMessenger();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<any[]>([]);
   const [groupedMessages, setGroupedMessages] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(false);
@@ -54,6 +60,7 @@ export default function MessengerConversionPage() {
   const [filterType, setFilterType] = useState("today");
 
   const activePageId = currentPage?.page_id || null;
+  const targetSenderId = searchParams.get("sender_id")?.trim() || "";
 
   useEffect(() => {
     if (activePageId) {
@@ -66,12 +73,16 @@ export default function MessengerConversionPage() {
     if (activePageId && date?.from && date?.to) {
         fetchMessages(activePageId, date.from, date.to, currentPageNum);
     }
-  }, [activePageId, date, currentPageNum]);
+  }, [activePageId, date, currentPageNum, targetSenderId]);
 
   // Reset page when date changes
   useEffect(() => {
     setCurrentPageNum(1);
   }, [date]);
+
+  useEffect(() => {
+    setCurrentPageNum(1);
+  }, [targetSenderId]);
 
   // Separate function for All Time Stats (Optimized)
   const fetchStats = async (pageId: string) => {
@@ -117,6 +128,9 @@ export default function MessengerConversionPage() {
       params.set("to", to.toISOString());
       params.set("page", String(page));
       params.set("limit", String(LIMIT));
+      if (targetSenderId) {
+        params.set("sender_id", targetSenderId);
+      }
 
       const res = await fetch(`${BACKEND_URL}/api/messenger/chats?${params.toString()}`, {
         headers: {
@@ -180,13 +194,13 @@ export default function MessengerConversionPage() {
              fetchStats(activePageId);
         }
     } else {
-        toast.error("No active page found. Please connect a database.");
+        toast.error(`No active ${accountLabel.toLowerCase()} found. Please connect a database.`);
     }
   };
 
   const handleDownload = async () => {
     if (!activePageId || !date?.from || !date?.to) {
-      toast.error("Please select a page and a date range.");
+      toast.error(`Please select an ${accountLabel} and a date range.`);
       return;
     }
 
@@ -221,6 +235,12 @@ export default function MessengerConversionPage() {
     }
   };
 
+  const clearSenderFilter = () => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("sender_id");
+    setSearchParams(nextParams);
+  };
+
   if (contextLoading && !activePageId) {
       return (
           <div className="flex items-center justify-center min-h-[400px]">
@@ -242,7 +262,7 @@ export default function MessengerConversionPage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>No Database Connected</AlertTitle>
                 <AlertDescription>
-                    Please connect a database in the <Link to="/dashboard/messenger/database" className="underline font-bold">Database Connect</Link> page to view conversions.
+                    Please connect a database in the <Link to={databasePath} className="underline font-bold">Database Connect</Link> page to view conversions.
                 </AlertDescription>
             </Alert>
           </div>
@@ -250,13 +270,25 @@ export default function MessengerConversionPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
       <div className="flex flex-col gap-4">
+        {targetSenderId && (
+          <Alert>
+            <MessageSquare className="h-4 w-4" />
+            <AlertTitle>Focused Conversation</AlertTitle>
+            <AlertDescription className="flex items-center justify-between gap-3">
+              <span>Showing messages for customer: <span className="font-mono">{targetSenderId}</span></span>
+              <Button variant="outline" size="sm" onClick={clearSenderFilter}>
+                Clear
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
                 <h1 className="text-3xl font-bold tracking-tight">Conversion</h1>
                 <p className="text-muted-foreground">
-                Track user messages and bot automated replies for Page ID: <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">{activePageId}</span>
+                Track user messages and bot automated replies for {accountLabel} ID: <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">{activePageId}</span>
                 </p>
             </div>
             
@@ -320,7 +352,7 @@ export default function MessengerConversionPage() {
                 </Button>
                 
                 {activePageId && (
-                  <BulkCampaignModal pageId={activePageId} platform="messenger" />
+                  <BulkCampaignModal pageId={activePageId} platform={platform as any} />
                 )}
             </div>
         </div>
@@ -411,6 +443,7 @@ export default function MessengerConversionPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>
+                <TableHead>Contacts</TableHead>
                 <TableHead>Message</TableHead>
                 <TableHead>Reply By</TableHead>
                 <TableHead>Tokens</TableHead>
@@ -421,11 +454,11 @@ export default function MessengerConversionPage() {
             <TableBody>
               {loading && messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
+                  <TableCell colSpan={7} className="text-center">Loading...</TableCell>
                 </TableRow>
               ) : messages.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">No messages found for this page</TableCell>
+                  <TableCell colSpan={7} className="text-center">No messages found for this {accountLabel.toLowerCase()}</TableCell>
                 </TableRow>
               ) : (
                 messages.map((msg) => (
@@ -463,11 +496,17 @@ export default function MessengerConversionPage() {
                         className={`px-2 py-1 rounded-full text-xs border ${
                           msg.status === 'sent'
                             ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/40'
-                            : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
+                            : msg.status === 'transcribed'
+                              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40'
+                              : msg.status === 'analyzed'
+                                ? 'bg-violet-500/10 text-violet-300 border-violet-500/40'
+                                : 'bg-yellow-500/10 text-yellow-300 border-yellow-500/40'
                         }`}
                       >
                         {msg.status}
                       </span>
+                    </TableCell>
+                    <TableCell className="text-right">
                     </TableCell>
                   </TableRow>
                 ))

@@ -149,9 +149,9 @@ const FeatureGrid = () => {
   ];
 
   return (
-    <section id="features" className="py-24 bg-background relative overflow-hidden">
+    <section id="features" className="py-24 bg-[#050505] relative overflow-hidden border-y border-white/5">
       {/* Background Grid Pattern */}
-      <div className="absolute inset-0 z-0 opacity-[0.03] bg-grid-pattern" />
+      <div className="absolute inset-0 z-0 opacity-[0.03] bg-grid-pattern invert dark:invert-0" />
       
       {/* Background Glows */}
       <div className="absolute top-0 left-[-10%] w-[50%] h-[50%] bg-indigo-600/5 blur-[150px] rounded-full pointer-events-none" />
@@ -163,7 +163,7 @@ const FeatureGrid = () => {
             initial={{ opacity: 0, scale: 0.9 }}
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/30 px-6 py-2.5 text-[10px] font-black tracking-[0.3em] text-muted-foreground mb-8 uppercase backdrop-blur-xl"
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-[10px] font-black tracking-[0.3em] text-slate-400 mb-8 uppercase backdrop-blur-xl"
           >
             <Zap className="w-4 h-4 text-purple-500 fill-purple-500" /> {t("Superpowers", "সুপারপাওয়ার")}
           </motion.div>
@@ -171,7 +171,7 @@ const FeatureGrid = () => {
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-3xl md:text-5xl lg:text-6xl font-black tracking-tighter text-foreground leading-[1.1] mb-8"
+            className="text-3xl md:text-5xl lg:text-6xl font-black tracking-tighter text-white leading-[1.1] mb-8"
           >
             {t("Engineered for", "তৈরি করা হয়েছে")}<br />
             <span className="bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
@@ -188,24 +188,24 @@ const FeatureGrid = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.1, duration: 0.8 }}
-              className={`group relative overflow-hidden rounded-[2rem] border border-border bg-card p-8 md:p-10 backdrop-blur-3xl transition-all duration-500 hover:shadow-[0_20px_40px_rgba(0,0,0,0.2)] flex flex-col ${feature.className}`}
+              className={`group relative overflow-hidden rounded-[2rem] border border-white/5 bg-white/[0.02] p-8 md:p-10 backdrop-blur-3xl transition-all duration-500 hover:shadow-[0_20px_40px_rgba(0,0,0,0.4)] flex flex-col ${feature.className}`}
             >
               {/* Corner Accents */}
-              <div className="absolute top-6 left-6 w-6 h-6 border-t border-l border-border/30 group-hover:border-border transition-colors" />
-              <div className="absolute bottom-6 right-6 w-6 h-6 border-b border-r border-border/30 group-hover:border-border transition-colors" />
+              <div className="absolute top-6 left-6 w-6 h-6 border-t border-l border-white/10 group-hover:border-white/20 transition-colors" />
+              <div className="absolute bottom-6 right-6 w-6 h-6 border-b border-r border-white/10 group-hover:border-white/20 transition-colors" />
               
               <div className="relative z-10 h-full flex flex-col">
                 {/* Icon Container */}
-                <div className={`mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/20 border border-border transition-all duration-500 group-hover:scale-110 group-hover:bg-muted/30 ${feature.iconColor} shadow-2xl relative`}>
+                <div className={`mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 border border-white/10 transition-all duration-500 group-hover:scale-110 group-hover:bg-white/10 ${feature.iconColor} shadow-2xl relative`}>
                   <div className={`absolute inset-0 opacity-10 blur-xl ${feature.glowColor}`} />
                   <feature.icon className="h-6 w-6 relative z-10" />
                 </div>
 
                 <div className="flex-1">
-                  <h3 className="mb-2 text-xl font-black text-foreground tracking-tight transition-colors duration-300">
+                  <h3 className="mb-2 text-xl font-black text-white tracking-tight transition-colors duration-300">
                     {feature.title}
                   </h3>
-                  <p className="text-muted-foreground font-medium text-sm leading-relaxed transition-colors duration-300 max-w-[280px]">
+                  <p className="text-slate-400 font-medium text-sm leading-relaxed transition-colors duration-300 max-w-[280px]">
                     {feature.desc}
                   </p>
                 </div>
@@ -213,9 +213,6 @@ const FeatureGrid = () => {
                 {/* Preview Element */}
                 {feature.preview}
               </div>
-              
-              {/* Subtle Gradient Hover Effect */}
-              <div className={`absolute inset-0 bg-gradient-to-br from-background/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
             </motion.div>
           ))}
         </div>

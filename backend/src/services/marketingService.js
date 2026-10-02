@@ -1,7 +1,6 @@
 const dbService = require('./dbService');
 const aiService = require('./aiService');
 const facebookService = require('./facebookService');
-const whatsappService = require('./whatsappService');
 const { query } = require('./pgClient');
 
 class MarketingService {
@@ -46,6 +45,10 @@ class MarketingService {
             `);
         } catch (e) {
             console.warn("[Marketing] Migration failed:", e.message);
+        }
+
+        if (platform === 'whatsapp') {
+            return { success: false, unsupported: true, message: 'WhatsApp marketing campaigns are not supported.' };
         }
 
         // 1. Create campaign record
@@ -180,23 +183,10 @@ class MarketingService {
                     await facebookService.sendImageUpload(pageId, recipientId, imageUrl, config.page_access_token);
                 }
                 await facebookService.sendMessage(pageId, recipientId, finalMessage, config.page_access_token);
-            } else if (platform === 'whatsapp') {
-                await whatsappService.sendTyping(pageId, recipientId);
-                await new Promise(r => setTimeout(r, 2000));
-
-                if (imageUrl) {
-                    await whatsappService.sendImage(pageId, recipientId, imageUrl, finalMessage);
-                } else {
-                    await whatsappService.sendMessage(pageId, recipientId, finalMessage);
-                }
             }
 
             // 4. Deduct Credit
-            if (platform === 'whatsapp') {
-                await dbService.deductWhatsAppCredit(pageId);
-            } else {
-                await dbService.deductCredit(pageId);
-            }
+            await dbService.deductCredit(pageId);
 
             // 5. Update Status
             await query(

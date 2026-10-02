@@ -37,7 +37,7 @@ const Footer = () => {
   };
 
   return (
-    <footer id="footer" className="border-t border-white/5 bg-[#000000] relative overflow-hidden pt-12 pb-12">
+    <footer id="footer" className="border-t border-white/5 bg-[#050505] relative overflow-hidden pt-12 pb-12">
       {/* Background Glows (Gaming Vibe) */}
       <div className="absolute top-0 right-[-10%] w-[40%] h-[60%] bg-indigo-600/5 blur-[150px] rounded-full pointer-events-none animate-pulse" />
       <div className="absolute bottom-0 left-[-10%] w-[40%] h-[60%] bg-purple-600/5 blur-[150px] rounded-full pointer-events-none animate-pulse" style={{ animationDelay: '2s' }} />

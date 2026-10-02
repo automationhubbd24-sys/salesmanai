@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Facebook, Instagram, ArrowRight, Zap, Activity, ShieldCheck } from "lucide-react";
+import { MessageSquare, Facebook, Instagram, ArrowRight, Zap, Activity, ShieldCheck, ShoppingBag } from "lucide-react";
 import { BACKEND_URL } from "@/config";
 
 export default function PlatformSelection() {
@@ -67,10 +67,19 @@ export default function PlatformSelection() {
     {
       id: "instagram",
       name: "Instagram Direct",
-      description: "Handle DM inquiries, story replies, and boost engagement automatically.",
+      description: "Handle DM inquiries, story replies, and customer support from Instagram.",
       icon: Instagram,
       color: "bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500",
-      stats: "Coming Soon",
+      stats: "Active",
+      action: "Manage"
+    },
+    {
+      id: "shopify",
+      name: "Shopify Catalog",
+      description: "Connect a Shopify store to read products and inventory manually.",
+      icon: ShoppingBag,
+      color: "bg-green-700",
+      stats: "Optional",
       action: "Connect"
     },
   ];
@@ -154,19 +163,13 @@ export default function PlatformSelection() {
                   <div className={`p-3 rounded-xl text-white shadow-md ${platform.color}`}>
                     <platform.icon size={24} />
                   </div>
-                  {['whatsapp', 'messenger'].includes(platform.id) ? (
-                     <div className="flex items-center gap-1.5 rounded-full bg-[#00ff88]/10 px-2.5 py-0.5 text-xs font-medium text-[#00ff88]">
-                       <span className="relative flex h-2 w-2">
-                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00ff88] opacity-75"></span>
-                         <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00ff88]"></span>
-                       </span>
-                       Active
-                     </div>
-                  ) : (
-                    <div className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                      Coming Soon
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 rounded-full bg-[#00ff88]/10 px-2.5 py-0.5 text-xs font-medium text-[#00ff88]">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00ff88] opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00ff88]"></span>
+                    </span>
+                    Active
+                  </div>
                 </div>
                 <CardTitle className="text-xl">{platform.name}</CardTitle>
                 <CardDescription className="line-clamp-2 mt-2">
@@ -176,22 +179,16 @@ export default function PlatformSelection() {
               
               <CardFooter className="pt-2">
                 <Button 
-                  className={`w-full rounded-full shadow-[0_8px_24px_rgba(0,255,136,0.1)] transition-colors
-                    ${['whatsapp', 'messenger'].includes(platform.id) 
-                      ? 'bg-[#00ff88] text-black hover:bg-[#00f07f]' 
-                      : 'border-[#00ff88] text-[#00ff88] hover:bg-[#00ff88]/10'} 
-                    group-hover:bg-[#00ff88] group-hover:text-black`
-                  } 
-                  variant={['whatsapp', 'messenger'].includes(platform.id) ? "default" : "outline"}
+                  className="w-full rounded-full bg-[#00ff88] text-black hover:bg-[#00f07f] shadow-[0_8px_24px_rgba(0,255,136,0.1)] transition-colors group-hover:bg-[#00ff88] group-hover:text-black"
                   onClick={() => {
                     if (platform.id === 'whatsapp') navigate('/dashboard/whatsapp/sessions');
                     else if (platform.id === 'messenger') navigate('/dashboard/messenger/integration');
+                    else if (platform.id === 'instagram') navigate('/dashboard/instagram/integration');
                     else navigate(`/dashboard/${platform.id}`);
                   }}
-                  disabled={!['whatsapp', 'messenger'].includes(platform.id)}
                 >
                   {platform.action}
-                  {['whatsapp', 'messenger'].includes(platform.id) && <ArrowRight className="ml-2 h-4 w-4" />}
+                  <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </CardFooter>
             </Card>

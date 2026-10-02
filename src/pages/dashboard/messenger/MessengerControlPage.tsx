@@ -7,16 +7,21 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, CheckCircle2, RefreshCcw, Edit, Mic } from "lucide-react";
+import { Bot, MessageSquare, Loader2, Save, Image, Sparkles, MessageCircle, Lock, PackageSearch, ReplyAll, LayoutTemplate, Hand, StopCircle, CheckCircle2, RefreshCcw, Edit, Mic, ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMessenger } from "@/context/MessengerContext";
 
 export default function MessengerControlPage() {
+  const { platform } = useParams();
+  const platformName = platform === 'instagram' ? 'Instagram' : 'Messenger';
+  const accountLabel = platform === 'instagram' ? 'Instagram Account' : 'Facebook Page';
+  const integrationPath = platform === 'instagram' ? '/dashboard/instagram/integration' : '/dashboard/messenger/integration';
   const { currentPage, loading: contextLoading } = useMessenger();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [verified, setVerified] = useState(true);
+  const navigate = useNavigate();
   
   // Prompt State
   const [isPromptOpen, setIsPromptOpen] = useState(false);
@@ -43,9 +48,9 @@ export default function MessengerControlPage() {
 
   useEffect(() => {
     if (activeDbId) {
-        fetchConfig(activeDbId.toString());
+      fetchConfig(activeDbId.toString());
     } else if (!contextLoading) {
-        setLoading(false);
+      setLoading(false);
     }
   }, [activeDbId, contextLoading]);
 
@@ -157,10 +162,10 @@ export default function MessengerControlPage() {
 
         setIsPromptOpen(false);
     } catch (error: any) {
-        console.error("Error saving prompt:", error);
-        toast.error("Failed to save prompt: " + error.message);
+      console.error("Error saving prompt:", error);
+      toast.error("Failed to save prompt: " + error.message);
     } finally {
-        setPromptSaving(false);
+      setPromptSaving(false);
     }
   };
 
@@ -174,21 +179,20 @@ export default function MessengerControlPage() {
         body: JSON.stringify({ promptText: tempPrompt })
       });
         
-        const data = await response.json();
-        if (data.success && data.optimizedPrompt) {
-            setTempPrompt(data.optimizedPrompt);
-            toast.success("Prompt optimized successfully!");
-        } else {
-            throw new Error(data.error || "Optimization failed");
-        }
+      const data = await response.json();
+      if (data.success && data.optimizedPrompt) {
+          setTempPrompt(data.optimizedPrompt);
+          toast.success("Prompt optimized successfully!");
+      } else {
+          throw new Error(data.error || "Optimization failed");
+      }
     } catch (error: any) {
-        console.error("Optimization error:", error);
-        toast.error("Failed to optimize: " + error.message);
+      console.error("Optimization error:", error);
+      toast.error("Failed to optimize: " + error.message);
     } finally {
-        setOptimizing(false);
+      setOptimizing(false);
     }
   };
-
 
   if (loading || contextLoading) {
     return (
@@ -202,10 +206,10 @@ export default function MessengerControlPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
         <Bot className="h-16 w-16 text-muted-foreground" />
-        <h2 className="text-2xl font-bold">No Page Connected</h2>
-        <p className="text-muted-foreground">Please select a Facebook page to manage.</p>
+        <h2 className="text-2xl font-bold">No {accountLabel} Connected</h2>
+        <p className="text-muted-foreground">Please select an {accountLabel} to manage.</p>
         <Button asChild>
-            <Link to="/dashboard/messenger/integration">Go to Pages</Link>
+            <Link to={integrationPath}>Go to Accounts</Link>
         </Button>
       </div>
     );
@@ -229,207 +233,155 @@ export default function MessengerControlPage() {
     );
   }
 
+  const ControlCard = ({
+    icon: Icon,
+    title,
+    description,
+    checked,
+    onCheckedChange,
+  }: {
+    icon: any;
+    title: string;
+    description: string;
+    checked: boolean;
+    onCheckedChange: (c: boolean) => void;
+  }) => (
+    <Card className="bg-background border-border hover:border-primary/50 transition-colors duration-200">
+      <CardContent className="p-5 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+            <Icon size={22} />
+          </div>
+          <div className="space-y-0.5">
+            <Label className="text-base font-medium cursor-pointer">{title}</Label>
+            <p className="text-sm text-muted-foreground">{description}</p>
+          </div>
+        </div>
+        <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      </CardContent>
+    </Card>
+  );
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="space-y-8 -m-4 md:-m-6 lg:-m-6 p-4 md:p-6 lg:p-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-foreground tracking-tight">Messenger Bot Control</h2>
-          <p className="text-muted-foreground">
-            Manage your Facebook Messenger automation features.
+          <h2 className="text-3xl font-bold text-foreground tracking-tight">{platformName} Bot Control</h2>
+          <p className="text-muted-foreground mt-1">
+            Manage your {platformName} automation features.
           </p>
         </div>
-        <div className="flex gap-2">
-            <Button onClick={handleSave} disabled={saving} size="lg" className="shadow-lg">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <Button variant="outline" onClick={() => navigate(-1)} className="gap-2">
+            <ChevronLeft size={16} />
+            Back
+          </Button>
+          <Button onClick={handleSave} disabled={saving} size="lg" className="shadow-lg flex-1 sm:flex-none">
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save Changes
-            </Button>
+          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Reply Message */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <MessageCircle size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Reply Message</Label>
-                <p className="text-sm text-muted-foreground">Auto-reply to incoming texts.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.reply_message}
-              onCheckedChange={(c) => setConfig({...config, reply_message: c})}
-            />
-          </CardContent>
-        </Card>
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ControlCard
+            icon={MessageCircle}
+            title="Reply Message"
+            description="Auto-reply to incoming texts."
+            checked={config.reply_message}
+            onCheckedChange={(c) => setConfig({ ...config, reply_message: c })}
+          />
+          <ControlCard
+            icon={ReplyAll}
+            title="Swipe Reply"
+            description="Enable swipe-to-reply context."
+            checked={config.swipe_reply}
+            onCheckedChange={(c) => setConfig({ ...config, swipe_reply: c })}
+          />
+          <ControlCard
+            icon={Image}
+            title="Image Detection"
+            description="Analyze received images with AI."
+            checked={config.image_detection}
+            onCheckedChange={(c) => setConfig({ ...config, image_detection: c })}
+          />
+          <ControlCard
+            icon={Sparkles}
+            title="Image Send"
+            description="Allow bot to send generated images."
+            checked={config.image_send}
+            onCheckedChange={(c) => setConfig({ ...config, image_send: c })}
+          />
+          <ControlCard
+            icon={LayoutTemplate}
+            title="Template"
+            description="Use templates for structured messages."
+            checked={config.template}
+            onCheckedChange={(c) => setConfig({ ...config, template: c })}
+          />
+          <ControlCard
+            icon={PackageSearch}
+            title="Order Tracking"
+            description="Track and manage orders automatically."
+            checked={config.order_tracking}
+            onCheckedChange={(c) => setConfig({ ...config, order_tracking: c })}
+          />
+          <ControlCard
+            icon={Mic}
+            title="Audio Detection"
+            description="Enable voice message transcription."
+            checked={config.audio_detection}
+            onCheckedChange={(c) => setConfig({ ...config, audio_detection: c })}
+          />
+        </div>
 
-        {/* Swipe Reply */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <ReplyAll size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Swipe Reply</Label>
-                <p className="text-sm text-muted-foreground">Enable swipe-to-reply context.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.swipe_reply}
-              onCheckedChange={(c) => setConfig({...config, swipe_reply: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Image Send */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Image size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Image Detection</Label>
-                <p className="text-sm text-muted-foreground">Analyze received images with AI.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.image_detection}
-              onCheckedChange={(c) => setConfig({...config, image_detection: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Image Send */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Sparkles size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Image Send</Label>
-                <p className="text-sm text-muted-foreground">Allow bot to send generated images.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.image_send}
-              onCheckedChange={(c) => setConfig({...config, image_send: c})}
-            />
-          </CardContent>
-        </Card>
-
-         {/* Template */}
-         <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <LayoutTemplate size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Template</Label>
-                <p className="text-sm text-muted-foreground">Use templates for structured messages.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.template}
-              onCheckedChange={(c) => setConfig({...config, template: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Order Tracking */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88]">
-                 <PackageSearch size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Order Tracking</Label>
-                <p className="text-sm text-muted-foreground">Track and manage orders automatically.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.order_tracking}
-              onCheckedChange={(c) => setConfig({...config, order_tracking: c})}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Audio Detection */}
-        <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-          <CardContent className="p-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                 <Mic size={24} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-lg font-semibold cursor-pointer">Audio Detection</Label>
-                <p className="text-sm text-muted-foreground">Enable voice message transcription.</p>
-              </div>
-            </div>
-            <Switch 
-              checked={config.audio_detection}
-              onCheckedChange={(c) => setConfig({...config, audio_detection: c})}
-            />
-          </CardContent>
-        </Card>
-
-      </div>
-
-      {/* Human Handover / Block Logic Section */}
-      <Card className="bg-[#0f0f0f]/80 backdrop-blur-sm border border-white/10">
-        <CardHeader>
+        {/* Human Handover / Block Logic Section */}
+        <Card className="bg-background border-border">
+          <CardHeader>
             <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl border border-[#00ff88]/40 bg-[#00ff88]/10 text-[#00ff88] shadow-[0_0_25px_rgba(0,255,136,0.25)]">
-                    <Hand size={24} />
-                </div>
-                <div>
-                    <CardTitle>Human Handover Settings</CardTitle>
-                    <CardDescription>Configure how and when the AI should pause for a human agent.</CardDescription>
-                </div>
+              <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+                <Hand size={24} />
+              </div>
+              <div>
+                <CardTitle>Human Handover Settings</CardTitle>
+                <CardDescription>Configure how and when the AI should pause for a human agent.</CardDescription>
+              </div>
             </div>
-        </CardHeader>
-        <CardContent className="grid gap-6 md:grid-cols-2">
-            
+          </CardHeader>
+          <CardContent className="grid gap-6 md:grid-cols-2">
             <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                    <StopCircle className="w-4 h-4 text-red-500" />
-                    Block Emoji
-                </Label>
-                <Input 
-                    placeholder="e.g. 🛑" 
-                    value={config.block_emoji} 
-                    onChange={(e) => setConfig({...config, block_emoji: e.target.value})}
-                />
-                <p className="text-xs text-muted-foreground">
-                    Admin sending this emoji will permanently pause the AI.
-                </p>
+              <Label className="flex items-center gap-2">
+                <StopCircle className="w-4 h-4 text-red-500" />
+                Block Emoji
+              </Label>
+              <Input
+                placeholder="e.g. 🛑"
+                value={config.block_emoji}
+                onChange={(e) => setConfig({ ...config, block_emoji: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Admin sending this emoji will permanently pause the AI.
+              </p>
             </div>
 
             <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-[#00ff88]" />
-                    Unblock Emoji
-                </Label>
-                <Input 
-                    placeholder="e.g. ✅" 
-                    value={config.unblock_emoji} 
-                    onChange={(e) => setConfig({...config, unblock_emoji: e.target.value})}
-                />
-                <p className="text-xs text-muted-foreground">
-                    Admin sending this emoji will resume the AI.
-                </p>
+              <Label className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                Unblock Emoji
+              </Label>
+              <Input
+                placeholder="e.g. ✅"
+                value={config.unblock_emoji}
+                onChange={(e) => setConfig({ ...config, unblock_emoji: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Admin sending this emoji will resume the AI.
+              </p>
             </div>
-
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

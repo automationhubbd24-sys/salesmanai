@@ -275,8 +275,7 @@ exports.testGeminiPool = async (req, res) => {
             try {
                 const completion = await client.chat.completions.create({
                     model: testModel,
-                    messages: [{ role: 'user', content: testMessage }],
-                    max_tokens: 8
+                    messages: [{ role: 'user', content: testMessage }]
                 });
                 if (completion && completion.choices && completion.choices.length > 0) {
                     item.success = true;
@@ -367,8 +366,7 @@ exports.testApiPool = async (req, res) => {
             try {
                 const completion = await client.chat.completions.create({
                     model: testModel,
-                    messages: [{ role: 'user', content: testMessage }],
-                    max_tokens: 8
+                    messages: [{ role: 'user', content: testMessage }]
                 });
                 if (completion && completion.choices && completion.choices.length > 0) {
                     item.success = true;
