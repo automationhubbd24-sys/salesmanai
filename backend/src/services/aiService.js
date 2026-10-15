@@ -1449,13 +1449,14 @@ function extractImagesFromText(text) {
 function isDirectImageEmbeddingEnabled() {
     const raw = process.env.IMAGE_EMBEDDING_ENABLED;
     if (raw === '0' || raw === 'false') return false;
-    return Boolean(process.env.IMAGE_EMBEDDING_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY);
+    return Boolean(process.env.IMAGE_EMBEDDING_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY);
 }
 
 function getImageEmbeddingConfig() {
     return {
         provider: (process.env.IMAGE_EMBEDDING_PROVIDER || 'gemini').toLowerCase(),
-        apiKey: process.env.IMAGE_EMBEDDING_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY,
+        apiKey: process.env.IMAGE_EMBEDDING_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY,
+        baseURL: String(process.env.IMAGE_EMBEDDING_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
         model: process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview',
         dimension: Number(process.env.IMAGE_EMBEDDING_DIMENSION || 3072),
         timeoutMs: Number(process.env.IMAGE_EMBEDDING_TIMEOUT_MS || 12000)
@@ -1495,36 +1496,64 @@ async function urlToInlineData(imageUrl) {
 async function getDirectImageEmbedding(imageUrl, options = {}) {
     if (!imageUrl || !isDirectImageEmbeddingEnabled()) return null;
     const config = getImageEmbeddingConfig();
-    if (!config.apiKey || config.provider !== 'gemini') return null;
+    if (!config.apiKey || !['gemini', 'openrouter'].includes(config.provider)) return null;
 
     const useCache = options.cache === true;
-    const cacheKey = `${config.provider}:${config.model}:${imageUrl}`;
+    const cacheKey = `${config.provider}:${config.baseURL}:${config.model}:${imageUrl}`;
     if (useCache) {
         const cached = getCachedImageEmbedding(cacheKey);
         if (cached) return cached;
     }
 
     try {
-        const model = normalizeGeminiEmbeddingModel(config.model);
-        const inlineData = await withTimeout(urlToInlineData(imageUrl), Math.min(config.timeoutMs, 8000), 'image fetch');
-        const request = fetch(`https://generativelanguage.googleapis.com/v1beta/${model}:embedContent?key=${config.apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model,
-                content: { parts: [{ inlineData }] },
-                outputDimensionality: config.dimension
-            })
-        });
-        const res = await withTimeout(request, config.timeoutMs, 'image embedding');
-        const bodyText = await res.text();
-        let json = null;
-        try { json = JSON.parse(bodyText); } catch {}
-        if (!res.ok) throw new Error(json?.error?.message || bodyText);
-        const vector = json?.embedding?.values || json?.embeddings?.[0]?.values || null;
+        let vector = null;
+        let model = config.model;
+
+        if (config.provider === 'gemini') {
+            model = normalizeGeminiEmbeddingModel(config.model);
+            const inlineData = await withTimeout(urlToInlineData(imageUrl), Math.min(config.timeoutMs, 8000), 'image fetch');
+            const request = fetch(`https://generativelanguage.googleapis.com/v1beta/${model}:embedContent?key=${config.apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model,
+                    content: { parts: [{ inlineData }] },
+                    outputDimensionality: config.dimension
+                })
+            });
+            const res = await withTimeout(request, config.timeoutMs, 'image embedding');
+            const bodyText = await res.text();
+            let json = null;
+            try { json = JSON.parse(bodyText); } catch {}
+            if (!res.ok) throw new Error(json?.error?.message || bodyText);
+            vector = json?.embedding?.values || json?.embeddings?.[0]?.values || null;
+        } else {
+            const { mimeType, data } = await withTimeout(urlToInlineData(imageUrl), Math.min(config.timeoutMs, 8000), 'image fetch');
+            const request = fetch(`${config.baseURL}/embeddings`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${config.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model,
+                    input: [{ type: 'image_url', image_url: { url: `data:${mimeType};base64,${data}` } }],
+                    encoding_format: 'float',
+                    dimensions: config.dimension
+                })
+            });
+            const res = await withTimeout(request, config.timeoutMs, 'image embedding');
+            const bodyText = await res.text();
+            let json = null;
+            try { json = JSON.parse(bodyText); } catch {}
+            if (!res.ok) throw new Error(json?.error?.message || bodyText);
+            vector = json?.data?.[0]?.embedding || json?.embedding?.values || json?.embeddings?.[0]?.values || null;
+        }
+
         if (!Array.isArray(vector)) throw new Error('No direct image embedding vector returned');
+        if (vector.length !== config.dimension) throw new Error(`Unexpected image embedding dimension: expected ${config.dimension}, got ${vector.length}`);
         if (useCache) setCachedImageEmbedding(cacheKey, vector);
-        if (options.log !== false) console.log(`[AI Direct Image Embedding] ${model} dimension=${vector.length}${useCache ? ' cache=enabled' : ' cache=bypassed'}`);
+        if (options.log !== false) console.log(`[AI Direct Image Embedding] provider=${config.provider} model=${model} dimension=${vector.length}${useCache ? ' cache=enabled' : ' cache=bypassed'}`);
         return vector;
     } catch (e) {
         console.warn(`[AI Direct Image Embedding] skipped: ${e.message}`);
