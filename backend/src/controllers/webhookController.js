@@ -1518,14 +1518,14 @@ async function processWhatsAppBatch(bufferedMessages, config, pagePrompts, sende
     const resolvedPhoneNumberId = config.phone_number_id || phoneNumberId;
     const senderIdentity = {
         conversationId: String(identity.conversationId || senderId || '').trim(),
-        rawSenderId: String(identity.rawSenderId || senderId || '').trim(),
+        rawSenderId: String(identity.rawSenderId || '').trim(),
         waId: String(identity.waId || '').trim(),
         username: String(identity.username || '').trim(),
         businessScopedUserId: String(identity.businessScopedUserId || '').trim(),
         profileName: String(identity.profileName || senderName || '').trim()
     };
     const conversationId = senderIdentity.conversationId || senderIdentity.rawSenderId || senderIdentity.businessScopedUserId || senderIdentity.username || senderIdentity.waId;
-    const replyRecipientId = senderIdentity.rawSenderId || conversationId;
+    const replyRecipientId = senderIdentity.rawSenderId || senderIdentity.waId || senderIdentity.businessScopedUserId;
     const latestIncomingMessageId = [...bufferedMessages].reverse().map(msg => msg?.id).find(Boolean) || null;
     const controlConfig = {
         ...(config || {}),
