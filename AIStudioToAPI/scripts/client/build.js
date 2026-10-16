@@ -264,10 +264,79 @@ class RequestProcessor {
                 const requestUrl = this._constructUrl(requestSpec);
                 const requestConfig = this._buildRequestConfig(requestSpec, abortController.signal);
 
+                // #region debug-point B-C:google-generation-request
+                const debugReport = (hypothesisId, msg, data) =>
+                    fetch("http://127.0.0.1:7777/event", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            sessionId: "aistudio-invalid-argument",
+                            runId: "pre-fix",
+                            hypothesisId,
+                            location: "scripts/client/build.js:267",
+                            msg: `[DEBUG] ${msg}`,
+                            data,
+                            ts: Date.now(),
+                        }),
+                    }).catch(() => {});
+                const debugUrl = new URL(requestUrl);
+                const debugPathname = debugUrl.pathname;
+                const debugModel = debugPathname.match(/^\/v1beta\/models\/([^:]+):(generateContent|streamGenerateContent)$/)?.[1];
+                let debugBody = {};
+                try {
+                    debugBody = JSON.parse(typeof requestConfig.body === "string" ? requestConfig.body : "{}");
+                } catch {}
+                if (debugModel) {
+                    debugReport("B-C", "Google generation request", {
+                        method: requestConfig.method,
+                        pathname: debugPathname,
+                        model: debugModel,
+                        bodyKeys: Object.keys(debugBody),
+                        generationConfigKeys:
+                            debugBody.generationConfig && typeof debugBody.generationConfig === "object"
+                                ? Object.keys(debugBody.generationConfig)
+                                : [],
+                        safetySettingsCount: Array.isArray(debugBody.safetySettings) ? debugBody.safetySettings.length : 0,
+                        toolsCount: Array.isArray(debugBody.tools) ? debugBody.tools.length : 0,
+                    });
+                }
+                // #endregion
+
                 const response = await fetch(requestUrl, requestConfig);
+
+                // #region debug-point A-D:google-generation-response
+                if (debugModel) {
+                    debugReport("A-D", "Google generation response", {
+                        method: requestConfig.method,
+                        pathname: debugPathname,
+                        model: debugModel,
+                        status: response.status,
+                    });
+                }
+                // #endregion
 
                 if (!response.ok) {
                     const errorBody = await response.text();
+                    // #region debug-point C-E:google-generation-error
+                    if (debugModel) {
+                        let googleError = {};
+                        try {
+                            googleError = JSON.parse(errorBody)?.error || {};
+                        } catch {}
+                        const sanitizedMessage = String(googleError.message || "")
+                            .replace(/https?:\/\/[^\s"']+/g, "[url]")
+                            .replace(/(["'`])[^"'`]{1,512}\1/g, "$1[redacted]$1")
+                            .replace(/[A-Za-z0-9+/_-]{40,}={0,2}/g, "[redacted]")
+                            .slice(0, 512);
+                        debugReport("C-E", "Google generation error", {
+                            method: requestConfig.method,
+                            pathname: debugPathname,
+                            model: debugModel,
+                            status: response.status,
+                            googleErrorStatus: typeof googleError.status === "string" ? googleError.status : "",
+                            googleErrorMessage: sanitizedMessage,
+                        });
+                    }
+                    // #endregion
                     const error = new Error(
                         `Google API returned error: ${response.status} ${response.statusText} ${errorBody}`
                     );
