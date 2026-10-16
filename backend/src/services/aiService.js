@@ -1537,7 +1537,12 @@ async function getDirectImageEmbedding(imageUrl, options = {}) {
                 },
                 body: JSON.stringify({
                     model,
-                    input: [{ type: 'image_url', image_url: { url: `data:${mimeType};base64,${data}` } }],
+                    input: [{
+                        content: [{
+                            type: 'image_url',
+                            image_url: { url: `data:${mimeType};base64,${data}` }
+                        }]
+                    }],
                     encoding_format: 'float',
                     dimensions: config.dimension
                 })
