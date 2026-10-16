@@ -265,38 +265,46 @@ class RequestProcessor {
                 const requestConfig = this._buildRequestConfig(requestSpec, abortController.signal);
 
                 // #region debug-point B-C:google-generation-request
-                const debugReport = (hypothesisId, msg, data) =>
-                    fetch("http://127.0.0.1:7777/event", {
-                        method: "POST",
-                        body: JSON.stringify({
-                            sessionId: "aistudio-invalid-argument",
-                            runId: "pre-fix",
-                            hypothesisId,
-                            location: "scripts/client/build.js:267",
-                            msg: `[DEBUG] ${msg}`,
-                            data,
-                            ts: Date.now(),
-                        }),
-                    }).catch(() => {});
-                const debugUrl = new URL(requestUrl);
-                const debugPathname = debugUrl.pathname;
-                const debugModel = debugPathname.match(/^\/v1beta\/models\/([^:]+):(generateContent|streamGenerateContent)$/)?.[1];
-                let debugBody = {};
+                const diagnosticKeyNames = (value) =>
+                    value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
+                const diagnosticMethod = typeof requestConfig.method === "string" ? requestConfig.method : "";
+                const diagnosticUrl = new URL(requestUrl);
+                const diagnosticPathname = diagnosticUrl.pathname;
+                const diagnosticModel = diagnosticPathname.match(
+                    /^\/v1beta\/models\/([^:]+):(generateContent|streamGenerateContent)$/
+                )?.[1];
+                const logDiagnostics = (summary) => {
+                    try {
+                        Logger.info(`[AIStudioDiagnostics] ${JSON.stringify(summary)}`);
+                    } catch {
+                        Logger.info('[AIStudioDiagnostics] {"type":"serialization-error"}');
+                    }
+                };
+                let diagnosticBody = {};
                 try {
-                    debugBody = JSON.parse(typeof requestConfig.body === "string" ? requestConfig.body : "{}");
+                    diagnosticBody = JSON.parse(typeof requestConfig.body === "string" ? requestConfig.body : "{}");
                 } catch {}
-                if (debugModel) {
-                    debugReport("B-C", "Google generation request", {
-                        method: requestConfig.method,
-                        pathname: debugPathname,
-                        model: debugModel,
-                        bodyKeys: Object.keys(debugBody),
-                        generationConfigKeys:
-                            debugBody.generationConfig && typeof debugBody.generationConfig === "object"
-                                ? Object.keys(debugBody.generationConfig)
+                if (diagnosticModel) {
+                    const contents = Array.isArray(diagnosticBody.contents) ? diagnosticBody.contents : [];
+                    logDiagnostics({
+                        type: "request",
+                        method: diagnosticMethod,
+                        pathname: diagnosticPathname,
+                        model: diagnosticModel,
+                        bodyKeys: diagnosticKeyNames(diagnosticBody),
+                        generationConfigKeys: diagnosticKeyNames(diagnosticBody.generationConfig),
+                        safetySettingsCount: Array.isArray(diagnosticBody.safetySettings)
+                            ? diagnosticBody.safetySettings.length
+                            : 0,
+                        toolsCount: Array.isArray(diagnosticBody.tools) ? diagnosticBody.tools.length : 0,
+                        contentsCount: contents.length,
+                        contents: contents.map((content) => ({
+                            role: typeof content?.role === "string" ? content.role : "",
+                            partsCount: Array.isArray(content?.parts) ? content.parts.length : 0,
+                            parts: Array.isArray(content?.parts)
+                                ? content.parts.map((part) => diagnosticKeyNames(part))
                                 : [],
-                        safetySettingsCount: Array.isArray(debugBody.safetySettings) ? debugBody.safetySettings.length : 0,
-                        toolsCount: Array.isArray(debugBody.tools) ? debugBody.tools.length : 0,
+                        })),
                     });
                 }
                 // #endregion
@@ -304,11 +312,12 @@ class RequestProcessor {
                 const response = await fetch(requestUrl, requestConfig);
 
                 // #region debug-point A-D:google-generation-response
-                if (debugModel) {
-                    debugReport("A-D", "Google generation response", {
-                        method: requestConfig.method,
-                        pathname: debugPathname,
-                        model: debugModel,
+                if (diagnosticModel) {
+                    logDiagnostics({
+                        type: "response",
+                        method: diagnosticMethod,
+                        pathname: diagnosticPathname,
+                        model: diagnosticModel,
                         status: response.status,
                     });
                 }
@@ -317,23 +326,23 @@ class RequestProcessor {
                 if (!response.ok) {
                     const errorBody = await response.text();
                     // #region debug-point C-E:google-generation-error
-                    if (debugModel) {
+                    if (diagnosticModel) {
                         let googleError = {};
                         try {
                             googleError = JSON.parse(errorBody)?.error || {};
                         } catch {}
-                        const sanitizedMessage = String(googleError.message || "")
-                            .replace(/https?:\/\/[^\s"']+/g, "[url]")
-                            .replace(/(["'`])[^"'`]{1,512}\1/g, "$1[redacted]$1")
-                            .replace(/[A-Za-z0-9+/_-]{40,}={0,2}/g, "[redacted]")
-                            .slice(0, 512);
-                        debugReport("C-E", "Google generation error", {
-                            method: requestConfig.method,
-                            pathname: debugPathname,
-                            model: debugModel,
+                        const googleErrorStatus =
+                            typeof googleError.status === "string" && /^[A-Z_]{1,64}$/.test(googleError.status)
+                                ? googleError.status
+                                : "";
+                        logDiagnostics({
+                            type: "error",
+                            method: diagnosticMethod,
+                            pathname: diagnosticPathname,
+                            model: diagnosticModel,
                             status: response.status,
-                            googleErrorStatus: typeof googleError.status === "string" ? googleError.status : "",
-                            googleErrorMessage: sanitizedMessage,
+                            googleErrorStatus,
+                            googleErrorMessage: "[redacted]",
                         });
                     }
                     // #endregion
