@@ -1457,7 +1457,7 @@ function getImageEmbeddingConfig() {
         provider: (process.env.IMAGE_EMBEDDING_PROVIDER || 'gemini').toLowerCase(),
         apiKey: process.env.IMAGE_EMBEDDING_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GEMINI_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY,
         baseURL: String(process.env.IMAGE_EMBEDDING_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
-        model: process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview',
+        model: String(process.env.IMAGE_EMBEDDING_MODEL || 'gemini-embedding-2-preview').replace(/\s+/g, ''),
         dimension: Number(process.env.IMAGE_EMBEDDING_DIMENSION || 3072),
         timeoutMs: Number(process.env.IMAGE_EMBEDDING_TIMEOUT_MS || 12000)
     };
