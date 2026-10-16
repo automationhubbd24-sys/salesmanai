@@ -247,6 +247,16 @@ class ConnectionRegistry extends EventEmitter {
     _handleIncomingMessage(messageData, messageAuthIndex) {
         try {
             const parsedMessage = JSON.parse(messageData);
+            if (parsedMessage.event_type === "browser_diagnostic") {
+                const allowedLevels = new Set(["debug", "info", "warn", "error"]);
+                const level = allowedLevels.has(parsedMessage.level) ? parsedMessage.level : "warn";
+                const message = typeof parsedMessage.message === "string" ? parsedMessage.message : "";
+                const safeMessage = message.replace(/[\r\n]/g, " ").slice(0, 4000);
+                this.logger.warn(
+                    `[BrowserDiagnostic][authIndex=${messageAuthIndex}][${level.toUpperCase()}] ${safeMessage}`
+                );
+                return;
+            }
             const requestId = parsedMessage.request_id;
             if (!requestId) {
                 this.logger.warn("[Server] Received invalid message: missing request_id");

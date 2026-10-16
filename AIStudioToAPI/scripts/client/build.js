@@ -194,12 +194,33 @@ class ConnectionManager extends EventTarget {
 }
 
 class RequestProcessor {
-    constructor() {
+    constructor(connectionManager) {
         this.activeOperations = new Map();
         this.cancelledAttempts = new Set();
+        this.connectionManager = connectionManager;
         // [BrowserManager Injection Point] Do not modify the line below.
         // This line is dynamically replaced by BrowserManager.js based on TARGET_DOMAIN environment variable.
         this.targetDomain = "generativelanguage.googleapis.com";
+    }
+
+    _sendBrowserDiagnostic(summary) {
+        try {
+            let message;
+            try {
+                message = JSON.stringify(summary);
+            } catch {
+                message = '{"type":"serialization-error"}';
+            }
+            if (typeof message !== "string") {
+                message = '{"type":"serialization-error"}';
+            }
+            this.connectionManager.transmit({
+                event_type: "browser_diagnostic",
+                level: "warn",
+                code: "AI_STUDIO_GENERATION_DIAGNOSTIC",
+                message: message.slice(0, 4000),
+            });
+        } catch {}
     }
 
     _normalizeAttemptId(operationId, requestAttemptId) {
@@ -273,20 +294,14 @@ class RequestProcessor {
                 const diagnosticModel = diagnosticPathname.match(
                     /^\/v1beta\/models\/([^:]+):(generateContent|streamGenerateContent)$/
                 )?.[1];
-                const logDiagnostics = (summary) => {
-                    try {
-                        Logger.info(`[AIStudioDiagnostics] ${JSON.stringify(summary)}`);
-                    } catch {
-                        Logger.info('[AIStudioDiagnostics] {"type":"serialization-error"}');
-                    }
-                };
+                const sendDiagnostics = summary => this._sendBrowserDiagnostic(summary);
                 let diagnosticBody = {};
                 try {
                     diagnosticBody = JSON.parse(typeof requestConfig.body === "string" ? requestConfig.body : "{}");
                 } catch {}
                 if (diagnosticModel) {
                     const contents = Array.isArray(diagnosticBody.contents) ? diagnosticBody.contents : [];
-                    logDiagnostics({
+                    sendDiagnostics({
                         type: "request",
                         method: diagnosticMethod,
                         pathname: diagnosticPathname,
@@ -313,7 +328,7 @@ class RequestProcessor {
 
                 // #region debug-point A-D:google-generation-response
                 if (diagnosticModel) {
-                    logDiagnostics({
+                    sendDiagnostics({
                         type: "response",
                         method: diagnosticMethod,
                         pathname: diagnosticPathname,
@@ -335,14 +350,13 @@ class RequestProcessor {
                             typeof googleError.status === "string" && /^[A-Z_]{1,64}$/.test(googleError.status)
                                 ? googleError.status
                                 : "";
-                        logDiagnostics({
+                        sendDiagnostics({
                             type: "error",
                             method: diagnosticMethod,
                             pathname: diagnosticPathname,
                             model: diagnosticModel,
                             status: response.status,
                             googleErrorStatus,
-                            googleErrorMessage: "[redacted]",
                         });
                     }
                     // #endregion
@@ -728,7 +742,7 @@ class ProxySystem extends EventTarget {
     constructor(websocketEndpoint) {
         super();
         this.connectionManager = new ConnectionManager(websocketEndpoint);
-        this.requestProcessor = new RequestProcessor();
+        this.requestProcessor = new RequestProcessor(this.connectionManager);
         this._setupEventHandlers();
     }
 
