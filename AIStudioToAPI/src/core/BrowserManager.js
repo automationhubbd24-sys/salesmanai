@@ -2035,6 +2035,266 @@ class BrowserManager {
      * @param {boolean} isBackgroundTask - Whether this is a background preload task (can be aborted by _backgroundPreloadAbort)
      * @returns {Promise<{context, page}>}
      */
+    async _installMakerSuiteGenerateContentBridge(page, authIndex) {
+        const installScript = `(function () {
+            const makerSuite = window.default_MakerSuite;
+            if (!makerSuite || !makerSuite.Cn || !makerSuite.GB) return "not-ready";
+            if (!makerSuite.Cn.__generateContentBridge) {
+                const original = makerSuite.Cn;
+                const wrapped = function (tokenBridge) {
+                    if (tokenBridge && tokenBridge.mb) window.__generateContentTokenBridge = tokenBridge;
+                    return original.apply(this, arguments);
+                };
+                wrapped.__generateContentBridge = true;
+                makerSuite.Cn = wrapped;
+            }
+            if (!window.__callMakerSuiteGenerateContent) {
+                window.__callMakerSuiteGenerateContent = async function (body, text, apiKey, extraHeaders) {
+                    const tokenBridge = window.__generateContentTokenBridge;
+                    if (!tokenBridge) return JSON.stringify({ status: 503, body: "[14,\\\"token service not ready\\\"]" });
+                    const metadata = tokenBridge.getMetadata() || {};
+                    const webApiKey = metadata["X-Goog-Api-Key"];
+                    if (!apiKey) {
+                        const values = tokenBridge.mb || {};
+                        for (const name in values) {
+                            const value = values[name];
+                            if (typeof value === "string" && /^AIza[0-9A-Za-z_-]{30,}$/.test(value) && value !== webApiKey) {
+                                apiKey = value;
+                                break;
+                            }
+                        }
+                    }
+                    if (!apiKey) return JSON.stringify({ status: 503, body: "[14,\\\"page api key not found\\\"]" });
+                    body[4] = await makerSuite.Cn(tokenBridge, await makerSuite.GB(text));
+                    const headers = {
+                        "content-type": "application/json+protobuf",
+                        "x-user-agent": "grpc-web-javascript/0.1",
+                        "x-goog-api-key": apiKey,
+                        authorization: metadata.Authorization,
+                        "x-goog-authuser": metadata["X-Goog-AuthUser"] != null ? String(metadata["X-Goog-AuthUser"]) : "0",
+                    };
+                    let tier = extraHeaders && extraHeaders.tier;
+                    if (!tier) {
+                        if (window.__makerSuiteGenerateContentTier === undefined) {
+                            try {
+                                const tierResponse = await fetch(
+                                    "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GetAiStudioBenefitTier",
+                                    { method: "POST", credentials: "include", headers, body: "[]" }
+                                );
+                                const tierPayload = tierResponse.ok ? JSON.parse(await tierResponse.text()) : null;
+                                const tierValue = Array.isArray(tierPayload) ? tierPayload[0] : null;
+                                window.__makerSuiteGenerateContentTier = tierValue === 1 ? "TIER1" : tierValue === 2 ? "TIER2" : null;
+                            } catch {
+                                window.__makerSuiteGenerateContentTier = null;
+                            }
+                        }
+                        tier = window.__makerSuiteGenerateContentTier;
+                    }
+                    if (tier) headers["x-aistudio-g1-tier"] = tier;
+                    if (extraHeaders && extraHeaders.ext) headers["x-goog-ext-519733851-bin"] = extraHeaders.ext;
+                    const response = await fetch(
+                        "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
+                        { method: "POST", credentials: "include", headers, body: JSON.stringify(body) }
+                    );
+                    return JSON.stringify({ status: response.status, body: await response.text() });
+                };
+            }
+            return window.__generateContentTokenBridge ? "ok" : "waiting";
+        })()`;
+        const defaultWebApiKey = null;
+        let apiKey = null;
+        const extraHeaders = {};
+        const install = () => page.evaluate(script => window.eval(script), installScript).catch(() => null);
+        const interval = setInterval(() => {
+            if (page.isClosed()) clearInterval(interval);
+            else install();
+        }, 3000);
+        page.once("close", () => clearInterval(interval));
+
+        page.on("request", request => {
+            try {
+                if (!/alkalimakersuite-pa\.clients6\.google\.com\/\$rpc\/.*MakerSuiteService\//.test(request.url())) return;
+                const headers = request.headers();
+                const requestApiKey = headers["x-goog-api-key"];
+                if (requestApiKey && requestApiKey !== defaultWebApiKey && /^AIza/.test(requestApiKey)) apiKey = requestApiKey;
+                if (headers["x-aistudio-g1-tier"]) extraHeaders.tier = headers["x-aistudio-g1-tier"];
+                if (headers["x-goog-ext-519733851-bin"]) extraHeaders.ext = headers["x-goog-ext-519733851-bin"];
+            } catch {
+                // Request metadata is optional; the page bridge can obtain it when needed.
+            }
+        });
+
+        const categories = { HARM_CATEGORY_HARASSMENT: 7, HARM_CATEGORY_HATE_SPEECH: 8, HARM_CATEGORY_SEXUALLY_EXPLICIT: 9, HARM_CATEGORY_DANGEROUS_CONTENT: 10, HARM_CATEGORY_CIVIC_INTEGRITY: 11 };
+        const thresholds = { BLOCK_LOW_AND_ABOVE: 1, BLOCK_MEDIUM_AND_ABOVE: 2, BLOCK_ONLY_HIGH: 3, BLOCK_NONE: 4, OFF: 5 };
+        const finishReasons = { 1: "STOP", 2: "MAX_TOKENS", 3: "SAFETY", 4: "RECITATION", 5: "OTHER" };
+        const encodeValue = value => {
+            if (value == null) return [0];
+            if (typeof value === "number") return [null, value];
+            if (typeof value === "string") return [null, null, value];
+            if (typeof value === "boolean") return [null, null, null, value];
+            if (Array.isArray(value)) return [null, null, null, null, null, [value.map(encodeValue)]];
+            return [null, null, null, null, encodeStruct(value)];
+        };
+        const encodeStruct = object => [Object.entries(object || {}).filter(([, value]) => value !== undefined).map(([key, value]) => [key, encodeValue(value)])];
+        const decodeValue = value => {
+            if (!Array.isArray(value)) return null;
+            if (value[1] != null) return value[1];
+            if (value[2] != null) return value[2];
+            if (value[3] != null) return !!value[3];
+            if (value[4] != null) return decodeStruct(value[4]);
+            if (value[5] != null) return ((value[5] && value[5][0]) || []).map(decodeValue);
+            return null;
+        };
+        const decodeStruct = struct => Object.fromEntries(((struct && struct[0]) || []).filter(Array.isArray).map(([key, value]) => [key, decodeValue(value)]));
+        const schemaTypes = { string: 1, number: 2, integer: 3, boolean: 4, array: 5, object: 6 };
+        const encodeSchema = schema => {
+            if (!schema || typeof schema !== "object") return null;
+            const encoded = [];
+            encoded[0] = schemaTypes[String(schema.type || "object").toLowerCase()] || 6;
+            if (schema.format) encoded[1] = schema.format;
+            if (schema.description) encoded[2] = schema.description;
+            if (schema.nullable != null) encoded[3] = !!schema.nullable;
+            if (Array.isArray(schema.enum)) encoded[4] = schema.enum.map(String);
+            if (schema.items) encoded[5] = encodeSchema(schema.items);
+            if (schema.properties) encoded[6] = Object.entries(schema.properties).map(([key, value]) => [key, encodeSchema(value)]);
+            if (Array.isArray(schema.required)) encoded[7] = schema.required;
+            for (let i = 0; i < encoded.length; i++) if (encoded[i] === undefined) encoded[i] = null;
+            return encoded;
+        };
+        const encodeTools = tools => {
+            const declarations = [];
+            for (const tool of tools || []) for (const declaration of tool.functionDeclarations || tool.function_declarations || []) {
+                const encoded = [declaration.name, declaration.description || null];
+                const parameters = declaration.parameters || declaration.parametersJsonSchema;
+                if (parameters) encoded[2] = encodeSchema(parameters);
+                declarations.push(encoded);
+            }
+            return declarations.length ? [[null, declarations]] : null;
+        };
+        const toPart = part => {
+            if (part == null) return null;
+            const encoded = [];
+            const inlineData = part.inlineData || part.inline_data;
+            const functionCall = part.functionCall || part.function_call;
+            const functionResponse = part.functionResponse || part.function_response;
+            if (typeof part.text === "string") encoded[1] = part.text;
+            else if (inlineData) encoded[2] = [inlineData.mimeType || inlineData.mime_type, inlineData.data];
+            else if (functionCall) encoded[10] = [functionCall.name, encodeStruct(functionCall.args || {}), functionCall.id || null];
+            else if (functionResponse) encoded[11] = [functionResponse.name, encodeStruct(functionResponse.response || {}), functionResponse.id || null];
+            else return null;
+            if (part.thought) encoded[12] = true;
+            const signature = part.thoughtSignature || part.thought_signature;
+            if (signature) encoded[14] = signature;
+            else if (functionCall && !part.text) encoded[14] = "skip_thought_signature_validator";
+            for (let i = 0; i < encoded.length; i++) if (encoded[i] === undefined) encoded[i] = null;
+            return encoded;
+        };
+        const toContent = content => [(content.parts || []).map(toPart).filter(Boolean), content.role === "model" ? "model" : "user"];
+        const buildBody = (model, request) => {
+            const generationConfig = request.generationConfig || request.generation_config || {};
+            const thinkingConfig = generationConfig.thinkingConfig || generationConfig.thinking_config || {};
+            const config = [];
+            if (Array.isArray(generationConfig.stopSequences)) config[1] = generationConfig.stopSequences;
+            config[3] = generationConfig.maxOutputTokens || 65536;
+            config[4] = generationConfig.temperature != null ? generationConfig.temperature : 1;
+            config[5] = generationConfig.topP != null ? generationConfig.topP : 0.95;
+            config[6] = generationConfig.topK != null ? generationConfig.topK : 64;
+            if (generationConfig.responseMimeType) config[7] = generationConfig.responseMimeType;
+            config[13] = 1;
+            const thinking = [thinkingConfig.includeThoughts === false ? 0 : 1];
+            if (typeof thinkingConfig.thinkingBudget === "number") thinking[1] = thinkingConfig.thinkingBudget;
+            const level = String(thinkingConfig.thinkingLevel || "").toLowerCase();
+            if (level === "low") thinking[3] = 1;
+            else if (level === "high" || thinking[1] == null) thinking[3] = 2;
+            config[16] = thinking;
+            for (let i = 0; i < config.length; i++) if (config[i] === undefined) config[i] = null;
+            for (let i = 0; i < thinking.length; i++) if (thinking[i] === undefined) thinking[i] = null;
+            const safety = Array.isArray(request.safetySettings) && request.safetySettings.length
+                ? request.safetySettings.map(setting => [null, null, categories[setting.category] || 7, thresholds[setting.threshold] || 5])
+                : [7, 8, 9, 10].map(category => [null, null, category, 5]);
+            const contents = (request.contents || []).map(toContent).filter(content => content[0].length);
+            const systemInstruction = request.systemInstruction || request.system_instruction;
+            const system = systemInstruction && (systemInstruction.parts || []).length ? [(systemInstruction.parts || []).map(toPart).filter(Boolean), "user"] : null;
+            return {
+                body: ["models/" + model, contents, safety, config, null, system, encodeTools(request.tools), null, null, null, 1, null, null, [[null, null, "UTC"]]],
+                text: contents.flatMap(content => content[0]).map(part => part[1] != null ? part[1] : (part[2] ? part[2][1] : "")).join(" "),
+            };
+        };
+        const convertChunk = message => {
+            if (!Array.isArray(message) || !Array.isArray(message[0])) return null;
+            const result = { candidates: message[0].map((candidate, index) => {
+                const parts = (Array.isArray(candidate && candidate[0] && candidate[0][0]) ? candidate[0][0] : []).map(part => {
+                    if (!part) return null;
+                    const converted = {};
+                    if (typeof part[1] === "string") converted.text = part[1];
+                    if (Array.isArray(part[2])) converted.inlineData = { mimeType: part[2][0], data: part[2][1] };
+                    if (Array.isArray(part[10])) { converted.functionCall = { name: part[10][0], args: decodeStruct(part[10][1]) }; if (part[10][2]) converted.functionCall.id = part[10][2]; }
+                    if (part[12] === 1 || part[12] === true) converted.thought = true;
+                    if (typeof part[14] === "string" && part[14]) converted.thoughtSignature = part[14];
+                    return Object.keys(converted).length ? converted : null;
+                }).filter(Boolean);
+                const converted = { content: { parts, role: "model" }, index };
+                if (candidate && candidate[1]) converted.finishReason = finishReasons[candidate[1]] || "OTHER";
+                return converted;
+            }) };
+            if (Array.isArray(message[2])) result.usageMetadata = { promptTokenCount: message[2][0] || 0, candidatesTokenCount: message[2][1] || 0, totalTokenCount: message[2][2] || 0, thoughtsTokenCount: message[2][9] || 0 };
+            if (typeof message[7] === "string") result.responseId = message[7];
+            return result;
+        };
+        const mergeChunks = chunks => {
+            const parts = []; let finishReason; let usageMetadata; let responseId;
+            for (const chunk of chunks) {
+                const candidate = chunk.candidates && chunk.candidates[0];
+                if (candidate) {
+                    if (candidate.finishReason) finishReason = candidate.finishReason;
+                    for (const part of candidate.content.parts) {
+                        const previous = parts[parts.length - 1];
+                        if (part.text != null && previous && previous.text != null && !!previous.thought === !!part.thought && !previous.thoughtSignature) { previous.text += part.text; if (part.thoughtSignature) previous.thoughtSignature = part.thoughtSignature; }
+                        else if (part.text === "" && part.thoughtSignature && previous) previous.thoughtSignature = part.thoughtSignature;
+                        else parts.push({ ...part });
+                    }
+                }
+                if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
+                if (chunk.responseId) responseId = chunk.responseId;
+            }
+            const result = { candidates: [{ content: { parts, role: "model" }, finishReason: finishReason || "STOP", index: 0 }] };
+            if (usageMetadata) result.usageMetadata = usageMetadata;
+            if (responseId) result.responseId = responseId;
+            return result;
+        };
+        const isChunk = value => Array.isArray(value) && Array.isArray(value[0]) && Array.isArray(value[0][0]) && Array.isArray(value[0][0][0]) && value[0][0][0][1] === "model";
+
+        await page.route(/MakerSuiteService\/Proxy(Unary|Streamed)Call/, async route => {
+            const request = route.request();
+            let payload;
+            try { payload = JSON.parse(request.postData() || ""); } catch { return route.continue(); }
+            const match = Array.isArray(payload) && typeof payload[0] === "string" && payload[0].match(/models\/([^:/?]+):(stream)?generateContent/i);
+            if (!match) return route.continue();
+            const streamed = /ProxyStreamedCall/.test(request.url());
+            try {
+                const generateRequest = JSON.parse(payload[1] || "{}");
+                const { body, text } = buildBody(match[1], generateRequest);
+                await install();
+                const raw = await Promise.race([
+                    page.evaluate(({ body, text, apiKey, extraHeaders }) => window.__callMakerSuiteGenerateContent(body, text, apiKey, extraHeaders), { body, text, apiKey, extraHeaders }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("GenerateContent timeout")), 600000)),
+                ]);
+                const response = JSON.parse(raw);
+                if (response.status !== 200) return route.fulfill({ status: response.status, contentType: "application/json+protobuf; charset=UTF-8", body: response.body });
+                const decoded = JSON.parse(response.body);
+                const messages = Array.isArray(decoded) && decoded.some(isChunk) ? decoded : (Array.isArray(decoded) && Array.isArray(decoded[0]) ? decoded[0] : []);
+                const chunks = messages.map(convertChunk).filter(chunk => chunk && chunk.candidates && chunk.candidates.length);
+                const bodyText = streamed
+                    ? "[[" + chunks.map(chunk => JSON.stringify([JSON.stringify(chunk)])).concat(messages.length && !isChunk(messages[messages.length - 1]) ? [JSON.stringify(messages[messages.length - 1])] : []).join(",") + "]]"
+                    : JSON.stringify([JSON.stringify(mergeChunks(chunks))]);
+                return route.fulfill({ status: 200, contentType: "application/json+protobuf; charset=UTF-8", body: bodyText });
+            } catch (error) {
+                this.logger.warn(`[Context#${authIndex}] GenerateContent bridge failed: ${error.message}`);
+                return route.fulfill({ status: 500, contentType: "application/json+protobuf; charset=UTF-8", body: JSON.stringify([13, "GenerateContent bridge request failed"]) });
+            }
+        });
+    }
+
     async _initializeContext(authIndex, isBackgroundTask = false) {
         let context = null;
         let page = null;
@@ -2082,6 +2342,9 @@ class BrowserManager {
             await context.addInitScript(privacyScript);
 
             page = await context.newPage();
+
+            // Route only this page's MakerSuite generateContent proxy calls before navigation.
+            await this._installMakerSuiteGenerateContentBridge(page, authIndex);
 
             // Pure JS Wakeup (Focus & Mouse Movement)
             // Skip focus operations for background tasks to avoid window focus conflicts
