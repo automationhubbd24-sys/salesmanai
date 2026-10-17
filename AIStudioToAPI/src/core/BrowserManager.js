@@ -2050,6 +2050,10 @@ class BrowserManager {
             }
             if (!window.__callMakerSuiteGenerateContent) {
                 window.__callMakerSuiteGenerateContent = async function (body, text, apiKey, extraHeaders) {
+                    const currentMakerSuite = window.default_MakerSuite;
+                    if (!currentMakerSuite || !currentMakerSuite.Cn || !currentMakerSuite.GB) {
+                        return JSON.stringify({ status: 503, body: "[14,\\\"MakerSuite service not ready\\\"]" });
+                    }
                     const tokenBridge = window.__generateContentTokenBridge;
                     if (!tokenBridge) return JSON.stringify({ status: 503, body: "[14,\\\"token service not ready\\\"]" });
                     const metadata = tokenBridge.getMetadata() || {};
@@ -2065,7 +2069,7 @@ class BrowserManager {
                         }
                     }
                     if (!apiKey) return JSON.stringify({ status: 503, body: "[14,\\\"page api key not found\\\"]" });
-                    body[4] = await makerSuite.Cn(tokenBridge, await makerSuite.GB(text));
+                    body[4] = await currentMakerSuite.Cn(tokenBridge, await currentMakerSuite.GB(text));
                     const headers = {
                         "content-type": "application/json+protobuf",
                         "x-user-agent": "grpc-web-javascript/0.1",
@@ -2279,7 +2283,12 @@ class BrowserManager {
                 const { body, text } = buildBody(match[1], generateRequest);
                 await install();
                 const raw = await Promise.race([
-                    page.evaluate(({ body, text, apiKey, extraHeaders }) => window.__callMakerSuiteGenerateContent(body, text, apiKey, extraHeaders), { body, text, apiKey, extraHeaders }),
+                    page.evaluate(({ body, text, apiKey, extraHeaders }) => {
+                        const target = window.wrappedJSObject || window;
+                        return target.eval(
+                            `window.__callMakerSuiteGenerateContent(${JSON.stringify(body)},${JSON.stringify(text)},${JSON.stringify(apiKey)},${JSON.stringify(extraHeaders)})`
+                        );
+                    }, { body, text, apiKey, extraHeaders }),
                     new Promise((_, reject) => setTimeout(() => reject(new Error("GenerateContent timeout")), 600000)),
                 ]);
                 const response = JSON.parse(raw);
