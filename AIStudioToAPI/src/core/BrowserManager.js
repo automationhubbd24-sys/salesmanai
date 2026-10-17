@@ -2104,7 +2104,10 @@ class BrowserManager {
         const defaultWebApiKey = null;
         let apiKey = null;
         const extraHeaders = {};
-        const install = () => page.evaluate(script => window.eval(script), installScript).catch(() => null);
+        const install = () => page.evaluate(script => {
+            const target = window.wrappedJSObject || window;
+            return target.eval(script);
+        }, installScript).catch(() => null);
         const interval = setInterval(() => {
             if (page.isClosed()) clearInterval(interval);
             else install();
