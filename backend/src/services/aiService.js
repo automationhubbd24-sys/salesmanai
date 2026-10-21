@@ -2057,6 +2057,23 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 top_p: top_p
             };
 
+            // Native function calling is opt-in for safety so providers without
+            // tool support keep their existing request behavior.
+            const nativeToolCallingEnabled =
+                !pageConfig?.is_external_api &&
+                Array.isArray(tools) &&
+                tools.length > 0 &&
+                (
+                    process.env.ENABLE_NATIVE_TOOL_CALLING === 'true' ||
+                    String(model || '').trim().toLowerCase() === 'salesmanchatbot-v1'
+                );
+
+            if (nativeToolCallingEnabled) {
+                params.tools = tools;
+                params.tool_choice = 'auto';
+                console.log('[AgentLoop] Native tool calling enabled for model:', model);
+            }
+
             // --- STRATEGIC JSON ENFORCEMENT (Structured Outputs) ---
             // User Request: Stable JSON for Lite models without restrictive prompts.
             // Logic: Use response_format for supported providers.
@@ -2071,7 +2088,7 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
                 pBase.includes('mistral.ai') ||
                 (isGoogle && pBase.includes('v1beta')); // Gemini v1beta supports json_schema
 
-            if (supportsStructured) {
+            if (supportsStructured && !nativeToolCallingEnabled) {
                 params.response_format = {
                     type: "json_schema",
                     json_schema: {
@@ -2180,50 +2197,49 @@ async function runAgentLoop({ apiKey, baseURL, model, messages, tools, pageConfi
             // Strategy: If the AI provided a 'reply_text' AND tool calls in the same turn, 
             // we execute the tools in background and return the reply IMMEDIATELY.
             
-            const aiText = responseMessage.content || "";
-            let structured = null;
-            try {
-                const firstBrace = aiText.indexOf('{');
-                const lastBrace = aiText.lastIndexOf('}');
-                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                    structured = JSON.parse(aiText.substring(firstBrace, lastBrace + 1));
-                }
-            } catch (e) {}
+            if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+                console.log(`[AgentLoop] AI requested ${toolCalls.length} tool call(s).`);
 
-            if (toolCalls && toolCalls.length > 0) {
-                console.log(`[AgentLoop] AI requested ${toolCalls.length} tool calls.`);
-                
-                // Execute tools in background (don't wait for 2nd LLM call if we have a reply)
+                // Execute each tool, then return the result to the model as a
+                // standard OpenAI-compatible tool message. Do not answer using
+                // pre-tool text when the reply needs verified tool data.
                 for (const toolCall of toolCalls) {
+                    if (!toolCall?.function?.name) {
+                        console.warn('[AgentLoop] Skipping malformed tool call.');
+                        continue;
+                    }
+
                     agentTrace.tool_calls.push(toolCall);
-                    const result = await executeTool(toolCall, pageConfig, userId, platform);
-                    agentTrace.tool_results.push({ tool_call: toolCall, result });
-                    if (result.product) foundProducts.push(result.product);
+
+                    const result = await executeTool(
+                        toolCall,
+                        pageConfig,
+                        userId,
+                        platform
+                    );
+
+                    agentTrace.tool_results.push({
+                        tool_call: toolCall,
+                        result
+                    });
+
+                    if (result?.product) {
+                        foundProducts.push(result.product);
+                    }
+
+                    const toolCallId = String(
+                        toolCall.id || `call_${crypto.randomUUID()}`
+                    );
+
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: toolCallId,
+                        name: toolCall.function.name,
+                        content: JSON.stringify(result ?? null)
+                    });
                 }
 
-                // If AI already gave us a reply_text in this first turn, RETURN IT NOW.
-                // This saves 1 full API call cost.
-                if (structured && structured.reply_text) {
-                    const normalized = normalizeStructuredAiResponse(structured);
-                    console.log(`[AgentLoop] Single-Call Success: Returning reply and executing tools in background.`);
-                    return { 
-                        reply: normalized?.reply_text || structured.reply_text, 
-                        action: normalized?.action || structured.action || "NONE",
-                        product_id: normalized?.product_id || structured.product_id || null,
-                        image_urls: normalized?.image_urls || (Array.isArray(structured.image_urls) ? structured.image_urls : []),
-                        video_urls: normalized?.video_urls || (Array.isArray(structured.video_urls) ? structured.video_urls : []),
-                        photo_decision: normalized?.photo_decision || structured.photo_decision || null,
-                        items: normalized?.items || [],
-                        order_details: structured.order_details || null,
-                        token_usage: (completionUsage?.total_tokens || 0) + totalTokensInLoop, 
-                        model: model, 
-                        foundProducts,
-                        agent_trace: agentTrace
-                    };
-                }
-                
-                // If NO reply_text was provided, we MUST continue to get one (rare for good models)
-                totalTokensInLoop += (completionUsage?.total_tokens || 0);
+                totalTokensInLoop += completionUsage?.total_tokens || 0;
                 continue;
             }
 
