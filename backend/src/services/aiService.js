@@ -331,16 +331,52 @@ function getProPlusFallbackEndpoint() {
     };
 }
 
+function getProPlusFallbackEndpoints() {
+    const indexes = Object.keys(process.env)
+        .map(key => key.match(/^PRO_PLUS_PINNED_MODEL_FALLBACK_(\d+)$/))
+        .filter(Boolean)
+        .map(match => Number(match[1]))
+        .sort((a, b) => a - b);
+
+    if (indexes.length === 0) {
+        const fallbackEndpoint = getProPlusFallbackEndpoint();
+        return fallbackEndpoint ? [fallbackEndpoint] : [];
+    }
+
+    const inheritedBaseURL = normalizeProPlusBaseUrl(getFirstEnvValue([
+        'PRO_PLUS_FALLBACK_OPENAI_BASE_URL',
+        'FALLBACK_AISTUDIO_OPENAI_BASE_URL',
+        'PRO_PLUS_FALLBACK_BASE_URL'
+    ]));
+    const inheritedApiKey = getFirstEnvValue([
+        'PRO_PLUS_FALLBACK_INTERNAL_KEY',
+        'PRO_PLUS_FALLBACK_API_KEY',
+        'FALLBACK_AISTUDIO_INTERNAL_KEY'
+    ]);
+
+    return indexes.map(index => {
+        const model = normalizeProPlusPinnedModel(process.env[`PRO_PLUS_PINNED_MODEL_FALLBACK_${index}`]);
+        const baseURL = normalizeProPlusBaseUrl(process.env[`PRO_PLUS_FALLBACK_OPENAI_BASE_URL_${index}`]) || inheritedBaseURL;
+        const apiKey = getFirstEnvValue([
+            `PRO_PLUS_FALLBACK_INTERNAL_KEY_${index}`,
+            `PRO_PLUS_FALLBACK_API_KEY_${index}`
+        ]) || inheritedApiKey;
+        if (!model || !baseURL || !apiKey) return null;
+
+        return { index: `fallback-${index}`, baseURL, apiKey, model, isFallback: true };
+    }).filter(Boolean);
+}
+
 function getNextProPlusEndpoint() {
     const endpoints = getProPlusEndpoints();
     if (endpoints.length === 0) {
         throw new Error('AISTUDIO_INTERNAL_KEY env is missing for Pro Plus mode. Use AISTUDIO_INTERNAL_KEY or indexed AISTUDIO_INTERNAL_KEY_1, AISTUDIO_INTERNAL_KEY_2, etc.');
     }
 
-    const fallbackEndpoint = getProPlusFallbackEndpoint();
-    const signature = endpoints.map(endpoint => `${endpoint.index}:${endpoint.baseURL}:${endpoint.model}`).join('|') + (fallbackEndpoint ? `|fallback:${fallbackEndpoint.baseURL}:${fallbackEndpoint.model}` : '');
+    const fallbackEndpoints = getProPlusFallbackEndpoints();
+    const signature = endpoints.map(endpoint => `${endpoint.index}:${endpoint.baseURL}:${endpoint.model}`).join('|') + fallbackEndpoints.map(endpoint => `|${endpoint.index}:${endpoint.baseURL}:${endpoint.model}`).join('');
     if (loggedProPlusEndpointSignature !== signature) {
-        console.log(`[Pro Plus] Loaded ${endpoints.length} AIStudio endpoint(s): ${endpoints.map(endpoint => `#${endpoint.index || 1}:${endpoint.model}`).join(', ')}${fallbackEndpoint ? ` + fallback:${fallbackEndpoint.model}` : ''}`);
+        console.log(`[Pro Plus] Loaded ${endpoints.length} AIStudio endpoint(s): ${endpoints.map(endpoint => `#${endpoint.index || 1}:${endpoint.model}`).join(', ')}${fallbackEndpoints.length ? ` + fallback(s):${fallbackEndpoints.map(endpoint => endpoint.model).join(', ')}` : ''}`);
         loggedProPlusEndpointSignature = signature;
     }
 
@@ -2472,45 +2508,50 @@ async function runProPlusChatChain({ messages, pageConfig, totalTokenUsage, user
     } catch (err) {
         await handleAiError(err, endpoint.apiKey, endpoint.model, 'text');
 
-        const fallbackEndpoint = getProPlusFallbackEndpoint();
-        if (!fallbackEndpoint) throw err;
+        const fallbackEndpoints = getProPlusFallbackEndpoints();
+        if (fallbackEndpoints.length === 0) throw err;
 
-        console.warn(`[Pro Plus] Primary AIStudio endpoint failed, trying fallback engine (${fallbackEndpoint.model}): ${err?.message || 'Unknown error'}`);
-        recordAiRuntimeStage(pageConfig, 'pro_plus_fallback_endpoint_selected', aiTraceStartedAt, { model: fallbackEndpoint.model });
+        let lastFallbackError = err;
+        for (const fallbackEndpoint of fallbackEndpoints) {
+            console.warn(`[Pro Plus] Primary AIStudio endpoint failed, trying fallback engine (${fallbackEndpoint.model}): ${lastFallbackError?.message || 'Unknown error'}`);
+            recordAiRuntimeStage(pageConfig, 'pro_plus_fallback_endpoint_selected', aiTraceStartedAt, { model: fallbackEndpoint.model, endpointIndex: fallbackEndpoint.index });
 
-        try {
-            const fallbackResult = await runAgentLoop({
-                apiKey: fallbackEndpoint.apiKey,
-                baseURL: fallbackEndpoint.baseURL,
-                model: fallbackEndpoint.model,
-                messages: [...messages],
-                tools: [],
-                pageConfig,
-                proxyAgent: null,
-                totalTokenUsage,
-                foundProducts: [],
-                userId,
-                temperature,
-                top_p: topP,
-                pageId,
-                requestDeadlineAt,
-                aiTraceStartedAt
-            });
+            try {
+                const fallbackResult = await runAgentLoop({
+                    apiKey: fallbackEndpoint.apiKey,
+                    baseURL: fallbackEndpoint.baseURL,
+                    model: fallbackEndpoint.model,
+                    messages: [...messages],
+                    tools: [],
+                    pageConfig,
+                    proxyAgent: null,
+                    totalTokenUsage,
+                    foundProducts: [],
+                    userId,
+                    temperature,
+                    top_p: topP,
+                    pageId,
+                    requestDeadlineAt,
+                    aiTraceStartedAt
+                });
 
-            let fallbackTokensToRecord = fallbackResult.token_usage || 0;
-            if (fallbackTokensToRecord === 0 && fallbackResult.reply) {
-                fallbackTokensToRecord = estimateTokenUsage(messages, fallbackResult.reply, 0);
+                let fallbackTokensToRecord = fallbackResult.token_usage || 0;
+                if (fallbackTokensToRecord === 0 && fallbackResult.reply) {
+                    fallbackTokensToRecord = estimateTokenUsage(messages, fallbackResult.reply, 0);
+                }
+
+                return {
+                    ...fallbackResult,
+                    token_usage: fallbackTokensToRecord,
+                    model: fallbackEndpoint.model
+                };
+            } catch (fallbackErr) {
+                await handleAiError(fallbackErr, fallbackEndpoint.apiKey, fallbackEndpoint.model, 'text');
+                lastFallbackError = fallbackErr;
             }
-
-            return {
-                ...fallbackResult,
-                token_usage: fallbackTokensToRecord,
-                model: fallbackEndpoint.model
-            };
-        } catch (fallbackErr) {
-            await handleAiError(fallbackErr, fallbackEndpoint.apiKey, fallbackEndpoint.model, 'text');
-            throw fallbackErr;
         }
+
+        throw lastFallbackError;
     }
 }
 
